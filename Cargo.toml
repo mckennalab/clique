@@ -1,0 +1,18 @@
+[package]
+name = "clique"
+version = "0.1.0"
+authors = ["aaronmck <aaronatwpi@gmail.com>"]
+
+[dependencies]
+bio = "*"
+clap = "~2.32"
+lazy_static = "1.4.0"
+csv = "1.1"
+rand = "*"
+needletail = "0.4"
+
+[profile.release]
+debug = true
+
+[build]
+rustflags = "-C target-cpu=native"
