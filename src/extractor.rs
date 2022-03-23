@@ -1,4 +1,4 @@
-use std::collections::{HashMap};
+use std::collections::{HashMap, BTreeMap};
 use std::fmt::Write; // needed by the `write!` macro
 
 use bio::alignment::{Alignment, AlignmentMode, AlignmentOperation, TextSlice};
@@ -143,8 +143,8 @@ pub fn align_forward_read_u8(read1: &[u8], reference: &[u8]) -> (Alignment, Stri
 }
 
 // return a list of
-pub fn extract_tagged_sequences(aligned_read: &String, aligned_ref: &String) -> HashMap<String, String> {
-    let mut special_values: HashMap<u8, Vec<u8>> = HashMap::new();
+pub fn extract_tagged_sequences(aligned_read: &String, aligned_ref: &String) -> BTreeMap<String, String> {
+    let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let empty = &Vec::new(); // ugh this is dumb
 
     for (b, c) in std::iter::zip(aligned_ref.as_bytes(), aligned_read.as_bytes()) {
