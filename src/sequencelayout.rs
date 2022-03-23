@@ -1,8 +1,8 @@
 use std::collections::{HashMap};
 use std::str;
-use knownlist::{KeyValueDualMapping, read_known_list_file};
+use crate::knownlist::{KeyValueDualMapping, read_known_list_file};
 use std::str::FromStr;
-use knownlist::read_lines;
+use crate::knownlist::read_lines;
 
 pub enum BarcodeType {
     STATIC,
