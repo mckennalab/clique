@@ -11,11 +11,12 @@ lazy_static = "1.4.0"
 csv = "1.1"
 rand = "*"
 needletail = "0.4"
-actix = "0.12"
-actix-rt = "1.1"
-tokio = { version = "1.17.0", features = ["full"] }
+rayon = "1.5.1"
+fastq = "*"
+seq_io = "*"
 
 [profile.release]
+lto = true
 
 [build]
 rustflags = "-C target-cpu=native"
