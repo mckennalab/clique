@@ -69,8 +69,7 @@ fn main() {
         let output = Arc::clone(&output);
         let mut output = output.lock().unwrap();
 
-        write!(output, ">read1\n{}\n", aligned_read1.2).unwrap();
+        write!(output, ">read1_{}\n{}\n", features.iter().map(|(s,t)| format!("{}{}",&**s,&**t)).collect::<Vec<_>>().join(","), aligned_read1.2).unwrap();
         write!(output, ">ref\n{}\n", aligned_read1.1).unwrap();
-        write!(output, ">special\n{}\n", features.iter().map(|(s,t)| format!("{}{}",&**s,&**t)).collect::<Vec<_>>().join(", ")).unwrap();
     });
 }
