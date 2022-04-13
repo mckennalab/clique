@@ -62,10 +62,10 @@ fn main() {
         let mut output = output.lock().unwrap();
 
         if parameters.outputupper {
-            write!(output, ">read1_{}\n{}\n", features.iter().filter(|(s,_t)| **s != "r".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","), features.get(&"r".to_string()).unwrap()).unwrap();
+            write!(output, ">read1_{}\n{}\n", features.iter().filter(|(s,_t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","), features.get(&"r".to_string()).unwrap()).unwrap();
             write!(output, ">ref\n{}\n", features.get(&"e".to_string()).unwrap()).unwrap();
         } else {
-            write!(output, ">read1_{}\n{}\n", features.iter().filter(|(s,_t)| **s != "r".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","), aligned_read1.2).unwrap();
+            write!(output, ">read1_{}\n{}\n", features.iter().filter(|(s,_t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","), aligned_read1.2).unwrap();
             write!(output, ">ref\n{}\n", aligned_read1.1).unwrap();
         }
     });
