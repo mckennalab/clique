@@ -3,24 +3,15 @@ extern crate lazy_static;
 extern crate needletail;
 extern crate seq_io;
 
-use std::borrow::Borrow;
-use std::collections::HashMap;
 use std::fs::File;
 use std::str;
-use std::sync::mpsc;
-use std::time::{Duration, SystemTime};
 use std::io::Write;
-use std::sync::mpsc::sync_channel;
-use std::thread;
-
-use needletail::{parse_fastx_file, Sequence};
 
 use bio::io::fasta;
 
 use seq_io::fastq::{Reader,Record};
-use std::io;
 use clap::Parser;
-use extractor::{align_unknown_orientation_read_u8_ref, extract_tagged_sequences, align_unknown_orientation_read};
+use extractor::{extract_tagged_sequences, align_unknown_orientation_read};
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
@@ -51,13 +42,11 @@ fn main() {
     let _reference = reader.records().next().unwrap().unwrap().clone();
     let reference = _reference.seq();
     let ref_string = str::from_utf8(&reference).unwrap().to_string();
-    let counter = Arc::new(Mutex::new(0));
-
 
     let output = Arc::new(Mutex::new(File::create(parameters.output).unwrap()));
 
     //let mut reader1 = Reader::new(parameters.read);
-    let mut f = File::open(parameters.read).unwrap();
+    let f = File::open(parameters.read).unwrap();
     let mut reader = Reader::new(f);
 
     reader.records().par_bridge().for_each(|x| {

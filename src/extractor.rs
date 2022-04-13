@@ -146,13 +146,17 @@ pub fn align_forward_read_u8(read1: &[u8], reference: &[u8]) -> (Alignment, Stri
 pub fn extract_tagged_sequences(aligned_read: &String, aligned_ref: &String) -> BTreeMap<String, String> {
     let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let empty = &Vec::new(); // ugh this is dumb
+    for (reference_base, read_base) in std::iter::zip(aligned_ref.as_bytes(), aligned_read.as_bytes()) {
+        if !KNOWNBASESPLUSINSERT.contains_key(&reference_base) {
+            let mut current_code = special_values.get(&reference_base).unwrap_or(empty).clone();
+            current_code.push(read_base.clone());
 
-    for (b, c) in std::iter::zip(aligned_ref.as_bytes(), aligned_read.as_bytes()) {
-        if !KNOWNBASESPLUSINSERT.contains_key(&b) {
-            let mut current_code = special_values.get(&b).unwrap_or(empty).clone();
-            current_code.push(c.clone());
+            special_values.insert(*reference_base, current_code.clone());
+        } else if reference_base.is_ascii_uppercase() {
+            let mut current_code = special_values.get(&('r' as u8)).unwrap_or(empty).clone();
+            current_code.push(read_base.clone());
 
-            special_values.insert(*b, current_code.clone());
+            special_values.insert(*reference_base, current_code.clone());
         }
     }
     special_values.iter().map(|(key, value)| {
