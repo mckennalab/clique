@@ -34,6 +34,9 @@ struct Args {
 
     #[clap(long, default_value_t = 1)]
     threads: usize,
+
+    #[clap(long)]
+    outputupper: bool,
 }
 
 fn main() {
@@ -58,7 +61,12 @@ fn main() {
         let output = Arc::clone(&output);
         let mut output = output.lock().unwrap();
 
-        write!(output, ">read1_{}\n{}\n", features.iter().map(|(s,t)| format!("{}{}",&**s,&**t)).collect::<Vec<_>>().join(","), aligned_read1.2).unwrap();
-        write!(output, ">ref\n{}\n", aligned_read1.1).unwrap();
+        if parameters.outputupper {
+            write!(output, ">read1_{}\n{}\n", features.iter().filter(|(s,_t)| **s != "r".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","), features.get(&"r".to_string()).unwrap()).unwrap();
+            write!(output, ">ref\n{}\n", aligned_read1.1).unwrap();
+        } else {
+            write!(output, ">read1_{}\n{}\n", features.iter().filter(|(s,_t)| **s != "r".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","), aligned_read1.2).unwrap();
+            write!(output, ">ref\n{}\n", aligned_read1.1).unwrap();
+        }
     });
 }
