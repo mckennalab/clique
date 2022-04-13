@@ -156,7 +156,7 @@ pub fn extract_tagged_sequences(aligned_read: &String, aligned_ref: &String) -> 
             let mut current_code = special_values.get(&('r' as u8)).unwrap_or(empty).clone();
             current_code.push(read_base.clone());
 
-            special_values.insert(*reference_base, current_code.clone());
+            special_values.insert('r' as u8, current_code.clone());
         }
     }
     special_values.iter().map(|(key, value)| {
