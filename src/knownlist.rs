@@ -149,8 +149,8 @@ mod tests {
 
     #[test]
     fn test_mutate_base() {
-        let tenX = String::from("A");
-        let mut_string = mutation_set(tenX);
+        let ten_x = String::from("A");
+        let mut_string = mutation_set(ten_x);
 
         assert_eq!(3, mut_string.len());
         let mut all_combinations = HashSet::new();
@@ -164,8 +164,8 @@ mod tests {
 
     #[test]
     fn test_mutate_two_bases() {
-        let tenX = String::from("AA");
-        let mut_string = mutation_set(tenX);
+        let ten_x = String::from("AA");
+        let mut_string = mutation_set(ten_x);
 
         assert_eq!(6, mut_string.len());
         let mut all_combinations = HashSet::new();
@@ -183,16 +183,16 @@ mod tests {
 
     #[test]
     fn test_large_10x_values() {
-        let tenX = String::from("data/100_barcode_test.txt");
-        let key_value = read_key_value_file(&tenX);
+        let ten_x = String::from("data/100_barcode_test.txt");
+        let key_value = read_key_value_file(&ten_x);
 
         assert_eq!(100, key_value.key_to_value.len());
     }
 
     #[test]
     fn test_errors_10x_values() {
-        let tenX = String::from("data/1_barcode_test.txt");
-        let key_value = read_key_value_file(&tenX);
+        let ten_x = String::from("data/1_barcode_test.txt");
+        let key_value = read_key_value_file(&ten_x);
 
         let all_errors = create_known_errors(key_value);
         assert_eq!(1, all_errors.key_to_value.len());
@@ -200,9 +200,9 @@ mod tests {
     }
 
     #[test]
-    fn test_errors_100_keys_GESTALT_values() {
-        let tenX = String::from("data/gestalt_3_level_RT.txt");
-        let key_value = read_value_file(&tenX);
+    fn test_errors_100_keys_gestalt_values() {
+        let ten_x = String::from("data/gestalt_3_level_RT.txt");
+        let key_value = read_value_file(&ten_x);
 
         let all_errors = create_known_errors(key_value);
         assert_eq!(384, all_errors.key_to_value.len());

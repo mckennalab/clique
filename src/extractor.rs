@@ -3,6 +3,7 @@ use std::fmt::Write; // needed by the `write!` macro
 
 use bio::alignment::{Alignment, AlignmentMode, AlignmentOperation, TextSlice};
 use bio::alignment::pairwise::{Aligner, MIN_SCORE, Scoring};
+use bio::alphabets;
 
 // Two sets of known characters: our standard DNA alphabet and a second version with known gaps.
 // These are used to mask known values when looking for extractable UMI/ID/barcode sequences
@@ -52,7 +53,7 @@ lazy_static! {
 
 // reverse complement a string of DNA nucleotides, with non canonical (ACGT) bases converted to N
 // when reverse complemented
-pub fn reverse_complement_string(sequence: &String) -> String {
+pub fn reverse_complement_string(sequence: &Vec<u8>) -> String {
     let mut rev_comp: String = String::with_capacity(sequence.len());
     // iterate through the input &str
     let mut bytes = sequence.as_bytes().to_owned();
@@ -142,7 +143,6 @@ pub fn align_forward_read_u8(read1: &[u8], reference: &[u8]) -> (Alignment, Stri
     (alignment, alignment_string.0.replace(" ", "-"), alignment_string.1.replace(" ", "-"))
 }
 
-// return a list of
 pub fn extract_tagged_sequences(aligned_read: &String, aligned_ref: &String) -> BTreeMap<String, String> {
     let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let empty = &Vec::new(); // ugh this is dumb
@@ -318,7 +318,6 @@ mod tests {
     fn tagged_sequence_test() {
         let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC##########ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN##########CTGTAGGTAGTTTGTC");
         let test_read = String::from("AATGATACGGCGACCAGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC");
-        let test_read_aligned = String::from("AATGATACGGCGACC----AGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC");
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);
         for (key, value) in keyvalues {
@@ -328,15 +327,13 @@ mod tests {
 
     #[test]
     fn tagged_sequence_test_space() {
-        for n in 1..100 {
+        for _n in 1..100 {
             let reference = String::from("AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--CAGTTCGATCTA");
             let test_read = String::from("                               CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC           ");
 
             let keyvalues = extract_tagged_sequences(&test_read, &reference);
-            for (key, value) in keyvalues {
-                assert_eq!(key, "*");
-                assert_eq!(value, "CACCGTAAG");
-            }
+            assert_eq!(keyvalues.get("*").unwrap(),"CACCGTAAG");
+
         }
     }
 

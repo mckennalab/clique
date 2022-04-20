@@ -2,6 +2,8 @@
 extern crate lazy_static;
 extern crate needletail;
 extern crate seq_io;
+extern crate petgraph;
+extern crate rand;
 
 use std::fs::File;
 use std::str;
@@ -18,6 +20,8 @@ use std::sync::{Arc, Mutex};
 pub mod extractor;
 pub mod knownlist;
 pub mod sequencelayout;
+mod sequenceclustering;
+mod bronkerbosch;
 
 
 #[derive(Parser, Debug)]

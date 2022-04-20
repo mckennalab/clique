@@ -14,9 +14,11 @@ needletail = "0.4"
 rayon = "1.5.1"
 fastq = "*"
 seq_io = "*"
+petgraph = "*"
 
 [profile.release]
 lto = true
 
 [build]
 rustflags = "-C target-cpu=native"
+
