@@ -116,9 +116,9 @@ mod tests {
         for i in 0..length {
             for b in bases {
                 if base_str.chars()[i] != b {
-                    let front = base_str[0..i];
-                    let character =
-                    let back  = base_str[i..base_str.len()];
+                    //let front = base_str[0..i];
+                    //let character =
+                    //let back  = base_str[i..base_str.len()];
 
                     ret.push(base_str[0..i].append(!vec[b]).append(base_str.chars()[i..base_str.len()]).into_iter().collect());
                 }

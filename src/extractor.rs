@@ -4,20 +4,21 @@ use std::fmt::Write; // needed by the `write!` macro
 use bio::alignment::{Alignment, AlignmentMode, AlignmentOperation, TextSlice};
 use bio::alignment::pairwise::{Aligner, MIN_SCORE, Scoring};
 use bio::alphabets;
+use bio::alphabets::dna::revcomp;
 
 // Two sets of known characters: our standard DNA alphabet and a second version with known gaps.
 // These are used to mask known values when looking for extractable UMI/ID/barcode sequences
 lazy_static! {
-    static ref KNOWNBASES: HashMap<u8, char> = {
+    static ref KNOWNBASES: HashMap<u8, u8> = {
         let mut hashedvalues = HashMap::new();
-        hashedvalues.insert(b'a', 'A');
-        hashedvalues.insert(b'A', 'A');
-        hashedvalues.insert(b'c', 'C');
-        hashedvalues.insert(b'C', 'C');
-        hashedvalues.insert(b'g', 'G');
-        hashedvalues.insert(b'G', 'G');
-        hashedvalues.insert(b't', 'T');
-        hashedvalues.insert(b'T', 'T');
+        hashedvalues.insert(b'a', b'A');
+        hashedvalues.insert(b'A', b'A');
+        hashedvalues.insert(b'c', b'C');
+        hashedvalues.insert(b'C', b'C');
+        hashedvalues.insert(b'g', b'G');
+        hashedvalues.insert(b'G', b'G');
+        hashedvalues.insert(b't', b'T');
+        hashedvalues.insert(b'T', b'T');
         hashedvalues
     };
 
@@ -51,48 +52,13 @@ lazy_static! {
         };
 }
 
-// reverse complement a string of DNA nucleotides, with non canonical (ACGT) bases converted to N
-// when reverse complemented
-pub fn reverse_complement_string(sequence: &Vec<u8>) -> String {
-    let mut rev_comp: String = String::with_capacity(sequence.len());
-    // iterate through the input &str
-    let mut bytes = sequence.as_bytes().to_owned();
-    bytes.reverse();
-    for c in bytes {
-        // test the input
-        match c {
-            x if REVERSECOMP.contains_key(&c) => write!(rev_comp, "{:02x}", REVERSECOMP[&x]).unwrap(),
-            _ => rev_comp.push('N')
-        }
-    }
-    rev_comp
-}
 
-
-// reverse complement a string of DNA nucleotides, with non canonical (ACGT) bases converted to N
-// when reverse complemented
-pub fn reverse_complement_u8(sequence: &[u8]) -> String {
-    let mut rev_comp: String = String::with_capacity(sequence.len());
-    // iterate through the input &str
-
-    let mut chars = sequence.to_owned();
-    chars.reverse();
-
-    for c in chars {
-        // test the input
-        match c {
-            x if REVERSECOMP.contains_key(&c) => rev_comp.push(REVERSECOMP[&x] as char),
-            _ => rev_comp.push('N')
-        }
-    }
-    rev_comp
-}
 
 // return the aligned strings for a forward read and the reference
-pub fn align_unknown_orientation_read(read: &String, reference: &String) -> (Alignment, String, String) {
+pub fn align_unknown_orientation_read(read: &Vec<u8>, reference: &Vec<u8>) -> (Alignment, Vec<u8>, Vec<u8>) {
 
     let fwd = align_forward_read(read,reference);
-    let rev = align_forward_read(&reverse_complement_string(read), reference);
+    let rev = align_forward_read(&bio::alphabets::dna::revcomp(read), reference);
 
     if rev.0.score > fwd.0.score {
         rev
@@ -101,34 +67,25 @@ pub fn align_unknown_orientation_read(read: &String, reference: &String) -> (Ali
     }
 }
 
-
-// return the aligned strings for a forward read and the reference
-pub fn align_unknown_orientation_read_u8_ref(read: &[u8], reference: &[u8]) -> (Alignment, String, String) {
-
-    let fwd = align_forward_read_u8(read,reference);
-    let rev = align_forward_read_u8(&reverse_complement_u8(read).as_bytes(), reference);
-
-    if rev.0.score > fwd.0.score {
-        rev
-    } else {
-        fwd
-    }
-}
-
-// reverse complement a read before aligning it to the reference
-pub fn align_reverse_read(read2: &String, reference: &String) -> (Alignment, String, String) {
-    align_forward_read(&reverse_complement_string(read2), reference)
+/// align two sequences of `Vec<u8>`, typically a read and a reference, generating a
+/// tuple `(Alignment, String, String)` of an alignment and two `Vec[u8]>`
+///
+/// # Examples
+///
+/// ```
+/// use crate::extractor::*;
+///
+/// let tuple_alignment = crate::extractor::align_forward_read(read, reference)
+pub fn align_reverse_read(read2: &Vec<u8>, reference: &Vec<u8>) -> (Alignment, Vec<u8>, Vec<u8>) {
+    align_forward_read(&bio::alphabets::dna::revcomp(read2), reference)
 }
 
 // return the aligned strings for a forward read and the reference
-pub fn align_forward_read(read1: &String, reference: &String) -> (Alignment, String, String) {
-    let ref_bytes = reference.as_bytes();
-    let read_bytes = read1.as_bytes();
-
-    align_forward_read_u8(read_bytes,ref_bytes)
+pub fn align_forward_read(read1: &Vec<u8>, reference: &Vec<u8>) -> (Alignment, Vec<u8>, Vec<u8>) {
+    align_forward_read_u8(read1,reference)
 }
 
-pub fn align_forward_read_u8(read1: &[u8], reference: &[u8]) -> (Alignment, String, String) {
+pub fn align_forward_read_u8(read1: &[u8], reference: &[u8]) -> (Alignment, Vec<u8>, Vec<u8>) {
 
         let scoring = Scoring::new(-20, -1, &custom_umi_score) // Gap open, gap extend and our custom match score function
         .xclip(MIN_SCORE) // Clipping penalty for x set to 'negative infinity', hence global in x
@@ -140,13 +97,13 @@ pub fn align_forward_read_u8(read1: &[u8], reference: &[u8]) -> (Alignment, Stri
     let alignment = aligner.custom(reference, read1); // The custom aligner invocation
     let alignment_string = alignment_strings(&alignment, reference, read1);
 
-    (alignment, alignment_string.0.replace(" ", "-"), alignment_string.1.replace(" ", "-"))
+    (alignment, alignment_string.0, alignment_string.1)
 }
 
-pub fn extract_tagged_sequences(aligned_read: &String, aligned_ref: &String) -> BTreeMap<String, String> {
+pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -> BTreeMap<String, String> {
     let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let empty = &Vec::new(); // ugh this is dumb
-    for (reference_base, read_base) in std::iter::zip(aligned_ref.as_bytes(), aligned_read.as_bytes()) {
+    for (reference_base, read_base) in std::iter::zip(aligned_ref, aligned_read) {
         if !KNOWNBASESPLUSINSERT.contains_key(&reference_base) {
             let mut current_code = special_values.get(&reference_base).unwrap_or(empty).clone();
             current_code.push(read_base.clone());
@@ -171,10 +128,10 @@ pub fn extract_tagged_sequences(aligned_read: &String, aligned_ref: &String) -> 
 
 
 // A mangled version of the Rust::bio alignment code, to just return the strings from the two alignments
-pub fn alignment_strings(alignment: &Alignment, x: TextSlice, y: TextSlice) -> (String, String) {
-    let mut x_pretty = String::new();
-    let mut y_pretty = String::new();
-    let mut inb_pretty = String::new();
+pub fn alignment_strings(alignment: &Alignment, x: TextSlice, y: TextSlice) -> (Vec<u8>, Vec<u8>) {
+    let mut x_pretty = Vec::new();
+    let mut y_pretty = Vec::new();
+    let mut inb_pretty = Vec::new();
 
     if !alignment.operations.is_empty() {
         let mut x_i: usize;
@@ -191,14 +148,14 @@ pub fn alignment_strings(alignment: &Alignment, x: TextSlice, y: TextSlice) -> (
                 x_i = alignment.xstart;
                 y_i = alignment.ystart;
                 for k in x.iter().take(alignment.xstart) {
-                    x_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[*k])));
-                    inb_pretty.push(' ');
-                    y_pretty.push(' ')
+                    x_pretty.push(*k);
+                    inb_pretty.push(b'-');
+                    y_pretty.push(b' ')
                 }
                 for k in y.iter().take(alignment.ystart) {
-                    y_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[*k])));
-                    inb_pretty.push(' ');
-                    x_pretty.push(' ')
+                    y_pretty.push(*k);
+                    inb_pretty.push(b'-');
+                    x_pretty.push(b' ')
                 }
             }
         }
@@ -207,57 +164,57 @@ pub fn alignment_strings(alignment: &Alignment, x: TextSlice, y: TextSlice) -> (
         for i in 0..alignment.operations.len() {
             match alignment.operations[i] {
                 AlignmentOperation::Match => {
-                    x_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[x[x_i]])));
+                    x_pretty.push(x[x_i]);
                     x_i += 1;
 
-                    inb_pretty.push('|');
+                    inb_pretty.push(b'|');
 
-                    y_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[y[y_i]])));
+                    y_pretty.push(y[y_i]);
                     y_i += 1;
                 }
                 AlignmentOperation::Subst => {
-                    x_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[x[x_i]])));
+                    x_pretty.push(x[x_i]);
                     x_i += 1;
 
-                    inb_pretty.push('\\');
+                    inb_pretty.push(b'\\');
 
-                    y_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[y[y_i]])));
+                    y_pretty.push(y[y_i]);
                     y_i += 1;
                 }
                 AlignmentOperation::Del => {
-                    x_pretty.push('-');
+                    x_pretty.push(b'-');
 
-                    inb_pretty.push('x');
+                    inb_pretty.push(b'x');
 
-                    y_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[y[y_i]])));
+                    y_pretty.push(y[y_i]);
                     y_i += 1;
                 }
                 AlignmentOperation::Ins => {
-                    x_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[x[x_i]])));
+                    x_pretty.push(x[x_i]);
                     x_i += 1;
 
-                    inb_pretty.push('+');
+                    inb_pretty.push(b'+');
 
-                    y_pretty.push('-');
+                    y_pretty.push(b'-');
                 }
                 AlignmentOperation::Xclip(len) => {
                     for k in x.iter().take(len) {
-                        x_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[*k])));
+                        x_pretty.push(*k);
                         x_i += 1;
 
-                        inb_pretty.push(' ');
+                        inb_pretty.push(b'-');
 
-                        y_pretty.push(' ')
+                        y_pretty.push(b'-')
                     }
                 }
                 AlignmentOperation::Yclip(len) => {
                     for k in y.iter().take(len) {
-                        y_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[*k])));
+                        y_pretty.push(*k);
                         y_i += 1;
 
-                        inb_pretty.push(' ');
+                        inb_pretty.push(b'-');
 
-                        x_pretty.push(' ')
+                        x_pretty.push(b'-')
                     }
                 }
             }
@@ -269,14 +226,14 @@ pub fn alignment_strings(alignment: &Alignment, x: TextSlice, y: TextSlice) -> (
             AlignmentMode::Custom => {}
             _ => {
                 for k in x.iter().take(alignment.xlen).skip(x_i) {
-                    x_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[*k])));
-                    inb_pretty.push(' ');
-                    y_pretty.push(' ')
+                    x_pretty.push(*k);
+                    inb_pretty.push(b' ');
+                    y_pretty.push(b' ')
                 }
                 for k in y.iter().take(alignment.ylen).skip(y_i) {
-                    y_pretty.push_str(&format!("{}", String::from_utf8_lossy(&[*k])));
-                    inb_pretty.push(' ');
-                    x_pretty.push(' ')
+                    y_pretty.push(*k);
+                    inb_pretty.push(b' ');
+                    x_pretty.push(b' ')
                 }
             }
         }
