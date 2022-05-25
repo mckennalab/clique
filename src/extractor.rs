@@ -251,7 +251,7 @@ pub fn custom_umi_score(a: u8, b: u8) -> i32 {
     match (a, b) {
         (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && KNOWNBASES[&a] == KNOWNBASES[&b] => { 10 }
         (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) => { -8 }
-        _ => { 10 }
+        _ => { 7 }
     }
 }
 
