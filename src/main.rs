@@ -81,7 +81,12 @@ fn main() {
         if parameters.outputupper {
             write!(output, ">@{}_{}\n{}\n", rec.id().unwrap(), features.iter().filter(|(s,_t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","), features.get(&"r".to_string()).unwrap()).unwrap();
             write!(output, ">ref\n{}\n", features.get(&"e".to_string()).unwrap()).unwrap();
+            write!(output, ">@{}_{}\n{}\n", rec2.id().unwrap(), features2.iter().filter(|(s,_t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","), features2.get(&"r".to_string()).unwrap()).unwrap();
+            write!(output, ">ref\n{}\n", features2.get(&"e".to_string()).unwrap()).unwrap();
+
         } else {
+            write!(output, ">@{}_{}\n{}\n", rec.id().unwrap(), features.iter().filter(|(s,_t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),&format!("{}", String::from_utf8_lossy(aligned_read1.2.as_slice()))).unwrap();
+            write!(output, ">ref\n{}\n", &format!("{}", String::from_utf8_lossy(aligned_read1.1.as_slice())));
             write!(output, ">@{}_{}\n{}\n", rec2.id().unwrap(), features2.iter().filter(|(s,_t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),&format!("{}", String::from_utf8_lossy(aligned_read2.2.as_slice()))).unwrap();
             write!(output, ">ref\n{}\n", &format!("{}", String::from_utf8_lossy(aligned_read2.1.as_slice())));
         }
