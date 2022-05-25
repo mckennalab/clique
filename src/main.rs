@@ -23,6 +23,7 @@ pub mod knownlist;
 pub mod sequencelayout;
 mod sequenceclustering;
 mod bronkerbosch;
+mod simple_umi_clustering;
 
 
 #[derive(Parser, Debug)]
@@ -35,7 +36,10 @@ struct Args {
     output: String,
 
     #[clap(long)]
-    read: String,
+    read1: String,
+
+    #[clap(long)]
+    read2: String,
 
     #[clap(long, default_value_t = 1)]
     threads: usize,
@@ -54,10 +58,13 @@ fn main() {
     let output = Arc::new(Mutex::new(File::create(parameters.output).unwrap()));
 
     //let mut reader1 = Reader::new(parameters.read);
-    let f = File::open(parameters.read).unwrap();
-    let mut reader = Reader::new(f);
+    let f1 = File::open(parameters.read1).unwrap();
+    let mut reader1 = Reader::new(f1);
 
-    reader.records().par_bridge().for_each(|x| {
+    let f2 = File::open(parameters.read2).unwrap();
+    let mut reader2 = Reader::new(f2);
+
+    reader1.records().zip(reader2.records()).par_bridge().for_each(|(x,y)| {
         let rec = x.unwrap();
         let norm_seq1 = rec.seq().to_vec();
         let aligned_read1 = align_unknown_orientation_read(&norm_seq1, &ref_string);
