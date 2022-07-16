@@ -15,6 +15,7 @@ rayon = "1.5.1"
 fastq = "*"
 seq_io = "*"
 petgraph = "*"
+flate2 = "1.0"
 
 [profile.release]
 lto = true
