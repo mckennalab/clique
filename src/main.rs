@@ -5,6 +5,7 @@ extern crate seq_io;
 extern crate petgraph;
 extern crate rand;
 extern crate bio;
+extern crate flate2;
 
 use std::fs::File;
 use std::str;
@@ -24,6 +25,8 @@ use std::collections::BTreeMap;
 use bio::alignment::Alignment;
 use bio::io::fasta::Records;
 use std::borrow::BorrowMut;
+use std::io::prelude::*;
+use flate2::read::GzDecoder;
 
 pub mod extractor;
 pub mod knownlist;
@@ -58,29 +61,27 @@ struct Args {
 fn main() {
     let parameters = Args::parse();
 
-    // load the reference file
+    // reference loading / checking
     let mut reader = Reader::from_path(parameters.reference).unwrap();
-    //let reader = fasta::Reader::from_file(parameters.reference).unwrap();
-    //let fasta_entries = reader.records().into_iter().collect();
     let fasta_entries: Vec<OwnedRecord> = reader.records().map(|f| f.unwrap()).collect();
-    //Result<Vec<_>, _>
     assert_eq!(fasta_entries.len(), 1, "We can only run with single entry FASTA files");
-
     let ref_string = fasta_entries.get(0).unwrap().seq.clone();
 
-    // create the output file
     let output = Arc::new(Mutex::new(File::create(parameters.output).unwrap()));
 
     // open read one
     let f1 = File::open(parameters.read1).unwrap();
-    let mut readers = Readers{first: Some(Fastq::new(f1)), second: None};
+    let f1gz = GzDecoder::new(f1);
+    let mut readers = Readers{first: Some(Fastq::new(f1gz)), second: None};
 
     // check for a second read file
     let f2 = File::open(parameters.read2);
     if f2.is_ok() {
-        readers.second = Some(Fastq::new(f2.unwrap()));
+        let f2gz = GzDecoder::new(f2.unwrap());
+        readers.second = Some(Fastq::new(f2gz));
     }
 
+    // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
 
