@@ -81,6 +81,9 @@ fn main() {
         readers.second = Some(Fastq::new(f2.unwrap()));
     }
 
+    rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
+
+
     // This is a little ugly since we're wrapping in the para_bridge, which introduces some scope issues
     if readers.second.is_some() {
         readers.first.unwrap().records().zip(readers.second.unwrap().records()).par_bridge().for_each(|(xx, yy)| {
