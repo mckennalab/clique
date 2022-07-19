@@ -27,6 +27,8 @@ use bio::io::fasta::Records;
 use std::borrow::BorrowMut;
 use std::io::prelude::*;
 use flate2::read::GzDecoder;
+use flate2::GzBuilder;
+use flate2::Compression;
 
 pub mod extractor;
 pub mod knownlist;
@@ -67,7 +69,12 @@ fn main() {
     assert_eq!(fasta_entries.len(), 1, "We can only run with single entry FASTA files");
     let ref_string = fasta_entries.get(0).unwrap().seq.clone();
 
-    let output = Arc::new(Mutex::new(File::create(parameters.output).unwrap()));
+
+    let output_file = File::create(parameters.output).unwrap();
+    let mut gz = GzBuilder::new()
+        .comment("aligned fasta file")
+        .write(output_file, Compression::best());
+    let output = Arc::new(Mutex::new(gz));
 
     // open read one
     let f1 = File::open(parameters.read1).unwrap();
