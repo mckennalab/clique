@@ -278,6 +278,7 @@ pub fn alignment_strings(alignment: &Alignment, x: TextSlice, y: TextSlice) -> (
 
     assert_eq!(x_pretty.len(), inb_pretty.len());
     assert_eq!(y_pretty.len(), inb_pretty.len());
+    assert_eq!(x_pretty.len(), y_pretty.len());
 
     (x_pretty, y_pretty)
 }
