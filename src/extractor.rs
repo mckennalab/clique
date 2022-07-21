@@ -6,7 +6,7 @@ use bio::alignment::pairwise::{Aligner, MIN_SCORE, Scoring};
 use bio::alphabets;
 use bio::alphabets::dna::revcomp;
 
-// Two sets of known characters: our standard DNA alphabet and a second version with known gaps.
+// sets of known characters: our standard DNA alphabet and a second version with known gaps.
 // These are used to mask known values when looking for extractable UMI/ID/barcode sequences
 lazy_static! {
     static ref KNOWNBASES: HashMap<u8, u8> = {
@@ -19,6 +19,43 @@ lazy_static! {
         hashedvalues.insert(b'G', b'G');
         hashedvalues.insert(b't', b'T');
         hashedvalues.insert(b'T', b'T');
+        hashedvalues
+    };
+
+    static ref DEGENERATEBASES: HashMap<u8, HashMap<u8,bool>> = {
+        let mut hashedvalues = HashMap::new();
+        hashedvalues.insert(b'R', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
+        hashedvalues.insert(b'r', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
+
+        hashedvalues.insert(b'Y', HashMap::from([('C' as u8, true), ('c' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+        hashedvalues.insert(b'y', HashMap::from([('C' as u8, true), ('c' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+
+        hashedvalues.insert(b'K', HashMap::from([('G' as u8, true), ('g' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+        hashedvalues.insert(b'k', HashMap::from([('G' as u8, true), ('g' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+
+        hashedvalues.insert(b'M', HashMap::from([('A' as u8, true), ('a' as u8, true), ('C' as u8, true), ('c' as u8, true)]));
+        hashedvalues.insert(b'm', HashMap::from([('A' as u8, true), ('a' as u8, true), ('C' as u8, true), ('c' as u8, true)]));
+
+        hashedvalues.insert(b'S', HashMap::from([('C' as u8, true), ('c' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
+        hashedvalues.insert(b's', HashMap::from([('C' as u8, true), ('c' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
+
+        hashedvalues.insert(b'W', HashMap::from([('A' as u8, true), ('a' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+        hashedvalues.insert(b'w', HashMap::from([('A' as u8, true), ('a' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+
+        hashedvalues.insert(b'B', HashMap::from([('C' as u8, true), ('c' as u8, true), ('G' as u8, true), ('g' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+        hashedvalues.insert(b'b', HashMap::from([('C' as u8, true), ('c' as u8, true), ('G' as u8, true), ('g' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+
+        hashedvalues.insert(b'D', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+        hashedvalues.insert(b'd', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+
+        hashedvalues.insert(b'H', HashMap::from([('A' as u8, true), ('a' as u8, true), ('C' as u8, true), ('c' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+        hashedvalues.insert(b'h', HashMap::from([('A' as u8, true), ('a' as u8, true), ('C' as u8, true), ('c' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+
+        hashedvalues.insert(b'V', HashMap::from([('A' as u8, true), ('a' as u8, true), ('C' as u8, true), ('c' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
+        hashedvalues.insert(b'v', HashMap::from([('A' as u8, true), ('a' as u8, true), ('C' as u8, true), ('c' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
+
+        hashedvalues.insert(b'N', HashMap::from([('A' as u8, true), ('a' as u8, true), ('C' as u8, true), ('c' as u8, true), ('G' as u8, true), ('g' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
+        hashedvalues.insert(b'n', HashMap::from([('A' as u8, true), ('a' as u8, true), ('C' as u8, true), ('c' as u8, true), ('G' as u8, true), ('g' as u8, true), ('T' as u8, true), ('t' as u8, true)]));
         hashedvalues
     };
 
@@ -94,7 +131,7 @@ pub fn align_forward_read_u8(read1: &[u8], reference: &[u8]) -> (Alignment, Vec<
 
     let mut aligner = Aligner::with_scoring(scoring);
 
-    let alignment = aligner.custom(reference, read1); // The custom aligner invocation
+    let alignment = aligner.custom(reference, read1);
     let alignment_string = alignment_strings(&alignment, reference, read1);
 
     (alignment, alignment_string.0, alignment_string.1)
@@ -250,10 +287,13 @@ pub fn alignment_strings(alignment: &Alignment, x: TextSlice, y: TextSlice) -> (
 pub fn custom_umi_score(a: u8, b: u8) -> i32 {
     match (a, b) {
         (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && KNOWNBASES[&a] == KNOWNBASES[&b] => { 10 }
+        (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && DEGENERATEBASES.contains_key(&a) && DEGENERATEBASES[&a].contains_key(&b) => { 10 }
+        (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && DEGENERATEBASES.contains_key(&b) && DEGENERATEBASES[&b].contains_key(&a) => { 10 }
         (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) => { -8 }
-        _ => { 7 }
+        _ => { 7 } // special characters here
     }
 }
+
 
 #[cfg(test)]
 mod tests {
