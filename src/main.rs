@@ -142,7 +142,7 @@ fn to_two_line_fasta(alignFeatures: AlignedWithFeatures, output_upper: bool) -> 
         format!(">@{}_{}\n{}\n>ref\n{}\n",
                 alignFeatures.read_id,
                 alignFeatures.features.iter().filter(|(s, _t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),
-                 &format!("{}", String::from_utf8_lossy(alignFeatures.read.as_slice())),
+                &format!("{}", String::from_utf8_lossy(alignFeatures.read.as_slice())),
                 &format!("{}", String::from_utf8_lossy(alignFeatures.reference.as_slice())))
     }
 }
@@ -154,8 +154,8 @@ fn process_read_into_enriched_obj(read_id:&String, read_rec: &Vec<u8>, reference
     AlignedWithFeatures{
         alignment: aligned_read.0,
         read_id: read_id.clone(),
-        read: read_rec.clone(),
-        reference: reference.clone(),
+        read: aligned_read.2,
+        reference: aligned_read.1,
         features: features.clone()
     }
 }
