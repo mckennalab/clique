@@ -141,7 +141,7 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
     let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let empty = &Vec::new(); // ugh this is dumb
     for (reference_base, read_base) in std::iter::zip(aligned_ref, aligned_read) {
-        if !KNOWNBASESPLUSINSERT.contains_key(&reference_base) {
+        if !KNOWNBASESPLUSINSERT.contains_key(&reference_base) && !DEGENERATEBASES.contains_key(&reference_base) {
             let mut current_code = special_values.get(&reference_base).unwrap_or(empty).clone();
             current_code.push(read_base.clone());
 
