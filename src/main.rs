@@ -6,7 +6,6 @@ extern crate petgraph;
 extern crate rand;
 extern crate bio;
 extern crate flate2;
-extern crate bgzip;
 extern crate rust_htslib;
 
 use std::fs::File;
@@ -31,7 +30,7 @@ use std::io::prelude::*;
 use flate2::read::GzDecoder;
 use flate2::GzBuilder;
 use flate2::Compression;
-use bgzip::{BGZFReader, BGZFError};
+
 
 pub mod extractor;
 pub mod knownlist;
