@@ -80,13 +80,13 @@ fn main() {
 
     // open read one
     let f1 = File::open(parameters.read1).unwrap();
-    let f1gz = BGZFReader::new(f1);
+    let f1gz = GzDecoder::new(f1);
     let mut readers = Readers{first: Some(Fastq::new(f1gz)), second: None};
 
     // check for a second read file
     let f2 = File::open(parameters.read2);
     if f2.is_ok() {
-        let f2gz = BGZFReader::new(f2.unwrap());
+        let f2gz = GzDecoder::new(f2.unwrap());
         readers.second = Some(Fastq::new(f2gz));
     }
 
