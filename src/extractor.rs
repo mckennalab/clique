@@ -124,7 +124,7 @@ pub fn align_forward_read(read1: &Vec<u8>, reference: &Vec<u8>) -> (Alignment, V
 
 pub fn align_forward_read_u8(read1: &[u8], reference: &[u8]) -> (Alignment, Vec<u8>, Vec<u8>) {
 
-        let scoring = Scoring::new(-20, -1, &custom_umi_score) // Gap open, gap extend and our custom match score function
+        let scoring = Scoring::new(-40, -1, &custom_umi_score) // Gap open, gap extend and our custom match score function
         .xclip(MIN_SCORE) // Clipping penalty for x set to 'negative infinity', hence global in x
         .yclip(0); // Clipping penalty for y set to 0, hence local in y
 
