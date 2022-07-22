@@ -16,6 +16,7 @@ fastq = "*"
 seq_io = "*"
 petgraph = "*"
 flate2 = "1.0"
+bgzip = "0.2.1"
 
 [profile.release]
 lto = true
