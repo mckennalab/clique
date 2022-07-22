@@ -7,11 +7,12 @@ extern crate rand;
 extern crate bio;
 extern crate flate2;
 extern crate bgzip;
+extern crate rust_htslib;
 
 use std::fs::File;
 use std::str;
 use std::io::Write;
-
+use rust_htslib::bgzf::Reader as HtslibReader;
 use seq_io::fasta::{Reader, Record, OwnedRecord};
 use seq_io::fastq::Reader as Fastq;
 use seq_io::fastq::Record as FastqRecord;
@@ -79,14 +80,14 @@ fn main() {
     let output = Arc::new(Mutex::new(gz));
 
     // open read one
-    let f1 = File::open(parameters.read1).unwrap();
-    let f1gz = GzDecoder::new(f1);
+    //let f1 = File::open(parameters.read1).unwrap();
+    let f1gz = HtslibReader::from_path(parameters.read1).unwrap();
     let mut readers = Readers{first: Some(Fastq::new(f1gz)), second: None};
 
     // check for a second read file
-    let f2 = File::open(parameters.read2);
+    let f2 = File::open(parameters.read2.clone());
     if f2.is_ok() {
-        let f2gz = GzDecoder::new(f2.unwrap());
+        let f2gz = HtslibReader::from_path(parameters.read2).unwrap();
         readers.second = Some(Fastq::new(f2gz));
     }
 
@@ -95,7 +96,7 @@ fn main() {
 
     // This is a little ugly since we're wrapping in the para_bridge, which introduces some scope issues
     if readers.second.is_some() {
-        readers.first.unwrap().records().zip(readers.second.unwrap().records()).par_bridge().for_each(|(xx, yy)| {
+        readers.first.unwrap().records().zip(readers.second.unwrap().records()).for_each(|(xx, yy)| {
             let x = xx.unwrap().clone();
             let y = yy.unwrap().clone();
             let alignment1 = process_read_into_enriched_obj(&x.id().unwrap().to_string(), &x.seq().to_vec(), &ref_string);
@@ -108,7 +109,7 @@ fn main() {
             write!(output,"{}",to_two_line_fasta(alignment2,parameters.outputupper));
         });
     } else {
-        readers.first.unwrap().records().par_bridge().for_each(|(xx)| {
+        readers.first.unwrap().records().for_each(|(xx)| {
             let x = xx.unwrap().clone();
             let alignment1 = process_read_into_enriched_obj(&x.id().unwrap().to_string(),&x.seq().to_vec(), &ref_string);
 

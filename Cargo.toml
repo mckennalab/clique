@@ -17,6 +17,7 @@ seq_io = "*"
 petgraph = "*"
 flate2 = { version = "1.0.23", features = ["zlib-ng"], default-features = false }
 bgzip = "0.2.1"
+rust-htslib = "*"
 
 [profile.release]
 lto = true
