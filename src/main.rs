@@ -6,15 +6,17 @@ extern crate petgraph;
 extern crate rand;
 extern crate bio;
 extern crate flate2;
-extern crate rust_htslib;
 
 use std::fs::File;
 use std::str;
-use std::io::Write;
-use rust_htslib::bgzf::Reader as HtslibReader;
+use std::io::{Write, BufReader};
+//use rust_htslib::bgzf::Reader as HtslibReader;
 use seq_io::fasta::{Reader, Record, OwnedRecord};
-use seq_io::fastq::Reader as Fastq;
-use seq_io::fastq::Record as FastqRecord;
+//use seq_io::fastq::Reader as Fastq;
+//use seq_io::fastq::Record as FastqRecord;
+use noodles_fastq as Fastq;
+
+
 
 use std::io;
 
@@ -62,6 +64,7 @@ struct Args {
     outputupper: bool,
 }
 
+
 fn main() {
     let parameters = Args::parse();
 
@@ -80,14 +83,19 @@ fn main() {
 
     // open read one
     //let f1 = File::open(parameters.read1).unwrap();
-    let f1gz = HtslibReader::from_path(parameters.read1).unwrap();
-    let mut readers = Readers{first: Some(Fastq::new(f1gz)), second: None};
+
+    let f1gz = File::open(parameters.read1)
+        .map(BufReader::new)
+        .map(Fastq::Reader::new).unwrap();
+    let mut readers = Readers{first: Some(f1gz), second: None};
 
     // check for a second read file
     let f2 = File::open(parameters.read2.clone());
     if f2.is_ok() {
-        let f2gz = HtslibReader::from_path(parameters.read2).unwrap();
-        readers.second = Some(Fastq::new(f2gz));
+        let f2gz = File::open(parameters.read2)
+            .map(BufReader::new)
+            .map(Fastq::Reader::new).unwrap();
+        readers.second = Some(f2gz);
     }
 
     // setup our thread pool
@@ -95,11 +103,11 @@ fn main() {
 
     // This is a little ugly since we're wrapping in the para_bridge, which introduces some scope issues
     if readers.second.is_some() {
-        readers.first.unwrap().records().zip(readers.second.unwrap().records()).for_each(|(xx, yy)| {
+        readers.first.unwrap().records().into_iter().zip(readers.second.unwrap().records()).par_bridge().for_each(|(xx, yy)| {
             let x = xx.unwrap().clone();
             let y = yy.unwrap().clone();
-            let alignment1 = process_read_into_enriched_obj(&x.id().unwrap().to_string(), &x.seq().to_vec(), &ref_string);
-            let alignment2 = process_read_into_enriched_obj(&y.id().unwrap().to_string(), &y.seq().to_vec(), &ref_string);
+            let alignment1 = process_read_into_enriched_obj(&String::from_utf8_lossy(&x.name()).to_string(), &x.sequence().to_vec(), &ref_string);
+            let alignment2 = process_read_into_enriched_obj(&String::from_utf8_lossy(&y.name()).to_string(), &y.sequence().to_vec(), &ref_string);
 
             let output = Arc::clone(&output);
             let mut output = output.lock().unwrap();
@@ -108,9 +116,9 @@ fn main() {
             write!(output,"{}",to_two_line_fasta(alignment2,parameters.outputupper));
         });
     } else {
-        readers.first.unwrap().records().for_each(|(xx)| {
+        readers.first.unwrap().records().par_bridge().for_each(|xx| {
             let x = xx.unwrap().clone();
-            let alignment1 = process_read_into_enriched_obj(&x.id().unwrap().to_string(),&x.seq().to_vec(), &ref_string);
+            let alignment1 = process_read_into_enriched_obj(&String::from_utf8_lossy(&x.name()).to_string(),&x.sequence().to_vec(), &ref_string);
 
             let output = Arc::clone(&output);
             let mut output = output.lock().unwrap();
@@ -121,8 +129,8 @@ fn main() {
 }
 
 struct Readers<R: io::Read> {
-    first: Option<Fastq<R>>,
-    second:Option<Fastq<R>>,
+    first: Option<Fastq::Reader<R>>,
+    second:Option<Fastq::Reader<R>>,
 }
 
 struct AlignedWithFeatures {

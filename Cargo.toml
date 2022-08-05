@@ -16,7 +16,8 @@ fastq = "*"
 seq_io = "*"
 petgraph = "*"
 flate2 = "1.0.23"
-rust-htslib = "*"
+noodles-fastq = "*"
+
 
 [profile.release]
 lto = true
