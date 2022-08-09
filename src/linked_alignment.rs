@@ -70,7 +70,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
                     return_hits.push(MatchedPosition { search_start: position, ref_start: *ref_position as usize, length: extended_hit_size });
                     println!("adding {},{},{}",position, *ref_position as usize, extended_hit_size);
                     position += extended_hit_size;
-                    highest_ref_pos = ref_position + &(extended_hit_size as usize);
+                    highest_ref_pos = ref_position + &(extended_hit_size as u32);
                 }
             }
         }
