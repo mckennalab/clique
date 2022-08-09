@@ -68,7 +68,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
                 let extended_hit_size = extend_hit(search_string, position, reference, *ref_position as usize);
                 if extended_hit_size > longest_hit {
                     return_hits.push(MatchedPosition { search_start: position, ref_start: *ref_position as usize, length: extended_hit_size });
-                    println!("adding {},{},{}",position, *ref_position as usize, extended_hit_size);
+                    //println!("adding {},{},{}",position, *ref_position as usize, extended_hit_size);
                     position += extended_hit_size;
                     highest_ref_pos = ref_position + &(extended_hit_size as u32);
                 }
@@ -85,21 +85,21 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &
     let mut ref_alignment_last_position: usize = 0;
 
     for overlap in &overlaps.positions {
-        println!("read_alignment_last_position : {},{}({}) ref_alignment_last_position : {},{}({}), length {}",read_alignment_last_position,overlap.search_start,search_string.len(),ref_alignment_last_position,overlap.ref_start,reference.len(),overlap.length);
+        //println!("read_alignment_last_position : {},{}({}) ref_alignment_last_position : {},{}({}), length {}",read_alignment_last_position,overlap.search_start,search_string.len(),ref_alignment_last_position,overlap.ref_start,reference.len(),overlap.length);
         assert!(read_alignment_last_position <= overlap.search_start,"READ START FAILURE: {} and {}",read_alignment_last_position,overlap.search_start);
         assert!(ref_alignment_last_position <= overlap.ref_start,"REF START FAILURE: {} and {} from {}",ref_alignment_last_position,overlap.ref_start,overlap.length);
 
         // look back to see what segment we haven't aligned in the read
         let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, overlap.search_start);
         let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, overlap.ref_start);
-        println!("sizes {} and {} ",read_slice.len(), ref_slice.len());
+        //println!("sizes {} and {} ",read_slice.len(), ref_slice.len());
 
         let alignment = unaligned_segment_to_alignment(&read_slice, &ref_slice, min_alignment_seg_length);
 
         let read_ref_aligned_length = read_ref_alignment_lengths(&alignment);
         read_alignment_last_position += read_ref_aligned_length.0;
         ref_alignment_last_position += read_ref_aligned_length.1;
-        println!("22 read_alignment_last_position : {} ref_alignment_last_position : {} OVERLAP {}",read_alignment_last_position,ref_alignment_last_position,overlap.length);
+        //println!("22 read_alignment_last_position : {} ref_alignment_last_position : {} OVERLAP {}",read_alignment_last_position,ref_alignment_last_position,overlap.length);
         alignmentTags.extend(alignment);
 
         // now add the matching segment
