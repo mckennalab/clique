@@ -17,7 +17,8 @@ seq_io = "*"
 petgraph = "*"
 flate2 = "1.0.23"
 noodles-fastq = "*"
-
+ndarray = "0.15.0"
+suffix = "1.2"
 
 [profile.release]
 lto = true

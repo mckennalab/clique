@@ -60,7 +60,7 @@ fn graph_to_clique(string_graph: &StringGraph) {
     bronker.compute();
     println!("CLIQWUES {}",bronker.max_cliques.len());
 }
-
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,7 +120,7 @@ mod tests {
                     //let character =
                     //let back  = base_str[i..base_str.len()];
 
-                    ret.push(base_str[0..i].append(!vec[b]).append(base_str.chars()[i..base_str.len()]).into_iter().collect());
+                    ret.push(base_str[0..i].append(vec![b]).append(base_str.chars()[i..base_str.len()]).into_iter().collect());
                 }
             }
         }
@@ -171,4 +171,4 @@ mod tests {
         graph_to_clique(&graph);
 
     }
-}
+}*/

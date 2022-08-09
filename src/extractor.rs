@@ -9,7 +9,7 @@ use bio::alphabets::dna::revcomp;
 // sets of known characters: our standard DNA alphabet and a second version with known gaps.
 // These are used to mask known values when looking for extractable UMI/ID/barcode sequences
 lazy_static! {
-    static ref KNOWNBASES: HashMap<u8, u8> = {
+    pub static ref KNOWNBASES: HashMap<u8, u8> = {
         let mut hashedvalues = HashMap::new();
         hashedvalues.insert(b'a', b'A');
         hashedvalues.insert(b'A', b'A');
@@ -22,8 +22,18 @@ lazy_static! {
         hashedvalues
     };
 
-    static ref DEGENERATEBASES: HashMap<u8, HashMap<u8,bool>> = {
+    pub static ref DEGENERATEBASES: HashMap<u8, HashMap<u8,bool>> = {
         let mut hashedvalues = HashMap::new();
+        hashedvalues.insert(b'a', HashMap::from([(b'A', true)]));
+        hashedvalues.insert(b'A', HashMap::from([(b'A', true)]));
+        hashedvalues.insert(b'c', HashMap::from([(b'C', true)]));
+        hashedvalues.insert(b'C', HashMap::from([(b'C', true)]));
+        hashedvalues.insert(b'g', HashMap::from([(b'G', true)]));
+        hashedvalues.insert(b'G', HashMap::from([(b'G', true)]));
+        hashedvalues.insert(b't', HashMap::from([(b'T', true)]));
+        hashedvalues.insert(b'T', HashMap::from([(b'T', true)]));
+        hashedvalues.insert(b'-', HashMap::from([(b'-', true)]));
+
         hashedvalues.insert(b'R', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
         hashedvalues.insert(b'r', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
 
@@ -59,7 +69,7 @@ lazy_static! {
         hashedvalues
     };
 
-    static ref KNOWNBASESPLUSINSERT: HashMap<u8, u8> = {
+    pub static ref KNOWNBASESPLUSINSERT: HashMap<u8, u8> = {
         let mut hashedvalues = HashMap::new();
         hashedvalues.insert(b'a', b'A');
         hashedvalues.insert(b'A', b'A');
@@ -75,7 +85,7 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref REVERSECOMP: HashMap<u8, u8> = {
+    pub static ref REVERSECOMP: HashMap<u8, u8> = {
             let mut hashedvalues: HashMap<u8,u8> = HashMap::new();
             hashedvalues.insert(b'a', b'T');
             hashedvalues.insert(b'A', b'T');
@@ -302,9 +312,9 @@ mod tests {
 
     #[test]
     fn alignment_basic_test() {
-        let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC##########ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN##########CTGTAGGTAGTTTGTC");
-        let test_read = String::from("AATGATACGGCGACCAGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC");
-        let test_read_aligned = String::from("AATGATACGGCGACC----AGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC");
+        let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC##########ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN##########CTGTAGGTAGTTTGTC").as_bytes().to_owned();
+        let test_read = String::from("AATGATACGGCGACCAGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC").as_bytes().to_owned();
+        let test_read_aligned = String::from("AATGATACGGCGACC----AGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC").as_bytes().to_owned();
 
         let aligned_string = align_forward_read(&test_read, &reference);
         assert_eq!(aligned_string.1, reference);
@@ -314,8 +324,8 @@ mod tests {
 
     #[test]
     fn tagged_sequence_test() {
-        let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC##########ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN##########CTGTAGGTAGTTTGTC");
-        let test_read = String::from("AATGATACGGCGACCAGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC");
+        let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC##########ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN##########CTGTAGGTAGTTTGTC").as_bytes().to_owned();
+        let test_read = String::from("AATGATACGGCGACCAGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC").as_bytes().to_owned();
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);
         for (key, value) in keyvalues {
@@ -326,8 +336,8 @@ mod tests {
     #[test]
     fn tagged_sequence_test_space() {
         for _n in 1..100 {
-            let reference = String::from("AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--CAGTTCGATCTA");
-            let test_read = String::from("                               CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC           ");
+            let reference = String::from("AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--CAGTTCGATCTA").as_bytes().to_owned();
+            let test_read = String::from("                               CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC           ").as_bytes().to_owned();
 
             let keyvalues = extract_tagged_sequences(&test_read, &reference);
             assert_eq!(keyvalues.get("*").unwrap(),"CACCGTAAG");

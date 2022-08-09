@@ -1,3 +1,4 @@
-mod alignment;
+
+//use fasta_comparisons::*;
 
 // use crate::foo::{MyStruct,Another};

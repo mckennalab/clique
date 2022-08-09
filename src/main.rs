@@ -7,6 +7,9 @@ extern crate rand;
 extern crate bio;
 extern crate flate2;
 
+mod alignment;
+
+
 use std::fs::File;
 use std::str;
 use std::io::{Write, BufReader};
@@ -15,7 +18,6 @@ use seq_io::fasta::{Reader, Record, OwnedRecord};
 //use seq_io::fastq::Reader as Fastq;
 //use seq_io::fastq::Record as FastqRecord;
 use noodles_fastq as Fastq;
-
 
 
 use std::io;
@@ -32,6 +34,7 @@ use std::io::prelude::*;
 use flate2::read::GzDecoder;
 use flate2::GzBuilder;
 use flate2::Compression;
+use linked_alignment::{find_seeds, align_with_anchors, is_forward_orientation};
 
 
 pub mod extractor;
@@ -40,7 +43,7 @@ pub mod sequencelayout;
 mod sequenceclustering;
 mod bronkerbosch;
 mod simple_umi_clustering;
-
+mod linked_alignment;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -73,13 +76,14 @@ fn main() {
     let fasta_entries: Vec<OwnedRecord> = reader.records().map(|f| f.unwrap()).collect();
     assert_eq!(fasta_entries.len(), 1, "We can only run with single entry FASTA files");
     let ref_string = fasta_entries.get(0).unwrap().seq.clone();
-
+    let ref_name = fasta_entries.get(0).unwrap().id().unwrap();
 
     let output_file = File::create(parameters.output).unwrap();
     let mut gz = GzBuilder::new()
         .comment("aligned fasta file")
         .write(output_file, Compression::best());
-    let output = Arc::new(Mutex::new(gz));
+    write!(gz,"@HD VN:1.6\n@SQ SN:{} LN:{}\n",ref_name,ref_string.len());
+
 
     // open read one
     //let f1 = File::open(parameters.read1).unwrap();
@@ -97,6 +101,9 @@ fn main() {
             .map(Fastq::Reader::new).unwrap();
         readers.second = Some(f2gz);
     }
+
+    let reference_lookup = find_seeds(&ref_string,20);
+    let output = Arc::new(Mutex::new(gz));
 
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
@@ -118,12 +125,27 @@ fn main() {
     } else {
         readers.first.unwrap().records().par_bridge().for_each(|xx| {
             let x = xx.unwrap().clone();
-            let alignment1 = process_read_into_enriched_obj(&String::from_utf8_lossy(&x.name()).to_string(),&x.sequence().to_vec(), &ref_string);
+            let name = &String::from_utf8_lossy(&x.name()).to_string();
+            let seq = &String::from_utf8_lossy(&x.sequence()).to_string();
+            let qual = &String::from_utf8_lossy(&x.quality_scores()).to_string();
 
-            let output = Arc::clone(&output);
-            let mut output = output.lock().unwrap();
+            let is_forward = is_forward_orientation(&x.sequence().to_vec(), &ref_string, &reference_lookup);
 
-            write!(output,"{}",to_two_line_fasta(alignment1,parameters.outputupper));
+            if is_forward.0 {
+                let alignment = align_with_anchors(&x.sequence().to_vec(), &ref_string, &reference_lookup, 10, &is_forward.1);
+                let alignment_string: String = alignment.into_iter().map(|m| m.to_string()).collect();
+                let output = Arc::clone(&output);
+                let mut output = output.lock().unwrap();
+                write!(output,"{}\t0\t{}\t0\t250\t{}\t*\t*\t{}\t{}\t{}\n",name,ref_name,alignment_string,&x.sequence().len(),seq,qual);
+
+            } else {
+                let alignment = align_with_anchors(&bio::alphabets::dna::revcomp(&x.sequence().to_vec()), &ref_string, &reference_lookup, 10, &is_forward.2);
+                let alignment_string: String = alignment.into_iter().map(|m| m.to_string()).collect();
+                let output = Arc::clone(&output);
+                let mut output = output.lock().unwrap();
+                write!(output,"{}\t16\t{}\t0\t250\t{}\t*\t*\t{}\t{}\t{}\n",name,ref_name,alignment_string,&x.sequence().len(),seq,qual);
+            }
+
         });
     }
 }
