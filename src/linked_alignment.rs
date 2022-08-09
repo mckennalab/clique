@@ -86,8 +86,8 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &
 
     for overlap in &overlaps.positions {
         println!("read_alignment_last_position : {},{}({}) ref_alignment_last_position : {},{}({}), length {}",read_alignment_last_position,overlap.search_start,search_string.len(),ref_alignment_last_position,overlap.ref_start,reference.len(),overlap.length);
-        assert!(read_alignment_last_position < overlap.search_start,"READ START FAILURE: {} and {}",read_alignment_last_position,overlap.search_start);
-        assert!(ref_alignment_last_position < overlap.ref_start,"REF START FAILURE: {} and {} from {}",ref_alignment_last_position,overlap.ref_start,overlap.length);
+        assert!(read_alignment_last_position <= overlap.search_start,"READ START FAILURE: {} and {}",read_alignment_last_position,overlap.search_start);
+        assert!(ref_alignment_last_position <= overlap.ref_start,"REF START FAILURE: {} and {} from {}",ref_alignment_last_position,overlap.ref_start,overlap.length);
 
         // look back to see what segment we haven't aligned in the read
         let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, overlap.search_start);
