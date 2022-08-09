@@ -89,14 +89,14 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &
         // look back to see what segment we haven't aligned in the read
         let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, overlap.search_start);
         let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, overlap.ref_start);
-        //println!("sizes {} and {} ",read_slice.len(), ref_slice.len());
+        println!("sizes {} and {} ",read_slice.len(), ref_slice.len());
 
         let alignment = unaligned_segment_to_alignment(&read_slice, &ref_slice, min_alignment_seg_length);
 
         let read_ref_aligned_length = read_ref_alignment_lengths(&alignment);
         read_alignment_last_position += read_ref_aligned_length.0;
         ref_alignment_last_position += read_ref_aligned_length.1;
-        //println!("22 read_alignment_last_position : {} ref_alignment_last_position : {} OVERLAP {}",read_alignment_last_position,ref_alignment_last_position,overlap.length);
+        println!("22 read_alignment_last_position : {} ref_alignment_last_position : {} OVERLAP {}",read_alignment_last_position,ref_alignment_last_position,overlap.length);
         alignmentTags.extend(alignment);
 
         // now add the matching segment
