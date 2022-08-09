@@ -28,20 +28,12 @@ use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::collections::BTreeMap;
 use bio::alignment::Alignment;
-use bio::io::fasta::Records;
-use std::borrow::BorrowMut;
-use std::io::prelude::*;
-use flate2::read::GzDecoder;
 use flate2::GzBuilder;
 use flate2::Compression;
 use linked_alignment::{find_seeds, align_with_anchors, is_forward_orientation};
 
 
 pub mod extractor;
-pub mod knownlist;
-pub mod sequencelayout;
-mod sequenceclustering;
-mod bronkerbosch;
 mod simple_umi_clustering;
 mod linked_alignment;
 
@@ -82,7 +74,7 @@ fn main() {
     let mut gz = GzBuilder::new()
         .comment("aligned fasta file")
         .write(output_file, Compression::best());
-    write!(gz,"@HD\tVN:1.6\n@SQ\tSN:{}\tLN:{}\n",ref_name,ref_string.len());
+    write!(gz,"@HD\tVN:1.6\n@SQ\tSN:{}\tLN:{}\n",ref_name,ref_string.len()).expect("Unable to write to output file");
 
 
     // open read one
@@ -119,8 +111,8 @@ fn main() {
             let output = Arc::clone(&output);
             let mut output = output.lock().unwrap();
 
-            write!(output,"{}",to_two_line_fasta(alignment1,parameters.outputupper));
-            write!(output,"{}",to_two_line_fasta(alignment2,parameters.outputupper));
+            write!(output,"{}",to_two_line_fasta(alignment1,parameters.outputupper)).expect("Unable to write to output file");
+            write!(output,"{}",to_two_line_fasta(alignment2,parameters.outputupper)).expect("Unable to write to output file");
         });
     } else {
         readers.first.unwrap().records().par_bridge().for_each(|xx| {
@@ -132,18 +124,18 @@ fn main() {
             let is_forward = is_forward_orientation(&x.sequence().to_vec(), &ref_string, &reference_lookup);
 
             if is_forward.0 {
-                let alignment = align_with_anchors(&x.sequence().to_vec(), &ref_string, &reference_lookup, 10, &is_forward.1);
+                let alignment = align_with_anchors(&x.sequence().to_vec(), &ref_string, 10, &is_forward.1);
                 let alignment_string: String = alignment.into_iter().map(|m| m.to_string()).collect();
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual);
+                write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
 
             } else {
-                let alignment = align_with_anchors(&bio::alphabets::dna::revcomp(&x.sequence().to_vec()), &ref_string, &reference_lookup, 10, &is_forward.2);
+                let alignment = align_with_anchors(&bio::alphabets::dna::revcomp(&x.sequence().to_vec()), &ref_string, 10, &is_forward.2);
                 let alignment_string: String = alignment.into_iter().map(|m| m.to_string()).collect();
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                write!(output,"{}\t16\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual);
+                write!(output,"{}\t16\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
             }
 
         });
@@ -155,6 +147,7 @@ struct Readers<R: io::Read> {
     second:Option<Fastq::Reader<R>>,
 }
 
+#[allow(dead_code)]
 struct AlignedWithFeatures {
     alignment: Alignment,
     read_id: String,
@@ -163,19 +156,19 @@ struct AlignedWithFeatures {
     features: BTreeMap<String,String>
 }
 
-fn to_two_line_fasta(alignFeatures: AlignedWithFeatures, output_upper: bool) -> String {
+fn to_two_line_fasta(align_features: AlignedWithFeatures, output_upper: bool) -> String {
     if output_upper {
-        format!(">@{}_{}\n{}\n>ref\n{}\n",alignFeatures.read_id,
-                alignFeatures.features.iter().filter(|(s, _t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),
-                alignFeatures.features.get(&"r".to_string()).unwrap(),
-                alignFeatures.features.get(&"e".to_string()).unwrap())
+        format!(">@{}_{}\n{}\n>ref\n{}\n", align_features.read_id,
+                align_features.features.iter().filter(|(s, _t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),
+                align_features.features.get(&"r".to_string()).unwrap(),
+                align_features.features.get(&"e".to_string()).unwrap())
 
     } else {
         format!(">@{}_{}\n{}\n>ref\n{}\n",
-                alignFeatures.read_id,
-                alignFeatures.features.iter().filter(|(s, _t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),
-                &format!("{}", String::from_utf8_lossy(alignFeatures.read.as_slice())),
-                &format!("{}", String::from_utf8_lossy(alignFeatures.reference.as_slice())))
+                align_features.read_id,
+                align_features.features.iter().filter(|(s, _t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),
+                &format!("{}", String::from_utf8_lossy(align_features.read.as_slice())),
+                &format!("{}", String::from_utf8_lossy(align_features.reference.as_slice())))
     }
 }
 

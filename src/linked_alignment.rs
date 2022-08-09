@@ -1,13 +1,13 @@
 use std::{str, fmt};
 
-use bio::alignment::{Alignment, AlignmentOperation};
+use bio::alignment::AlignmentOperation;
 
 use suffix::SuffixTable;
 
 use crate::extractor::*;
 
 pub struct SuffixTableLookup<'s, 't> {
-    suffixTable: SuffixTable<'s, 't>,
+    suffix_table: SuffixTable<'s, 't>,
     seed_size: usize,
 }
 
@@ -41,7 +41,7 @@ impl fmt::Display for AlignmentTags {
 
 
 pub fn find_seeds(reference: &Vec<u8>, seed_size: usize) -> SuffixTableLookup {
-    return SuffixTableLookup { suffixTable: SuffixTable::new(String::from_utf8(reference.clone()).unwrap()), seed_size };
+    return SuffixTableLookup { suffix_table: SuffixTable::new(String::from_utf8(reference.clone()).unwrap()), seed_size };
 }
 
 
@@ -61,7 +61,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
     let mut highest_ref_pos = 0;
 
     while position < search_string.len() - seeds.seed_size {
-        let ref_positions = seeds.suffixTable.positions(str::from_utf8(&search_string[position..(position + seeds.seed_size)]).unwrap());
+        let ref_positions = seeds.suffix_table.positions(str::from_utf8(&search_string[position..(position + seeds.seed_size)]).unwrap());
         let mut longest_hit = 0;
         for ref_position in ref_positions {
             if ref_position >= &highest_ref_pos {
@@ -71,6 +71,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
                     //println!("adding {},{},{}",position, *ref_position as usize, extended_hit_size);
                     position += extended_hit_size;
                     highest_ref_pos = ref_position + &(extended_hit_size as u32);
+                    longest_hit = extended_hit_size;
                 }
             }
         }
@@ -79,8 +80,8 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
     MatchedPositions { positions: return_hits }
 }
 
-pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &SuffixTableLookup, min_alignment_seg_length: usize, overlaps: &MatchedPositions) -> Vec<AlignmentTags> {
-    let mut alignmentTags: Vec<AlignmentTags> = Vec::new();
+pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, min_alignment_seg_length: usize, overlaps: &MatchedPositions) -> Vec<AlignmentTags> {
+    let mut alignment_tags: Vec<AlignmentTags> = Vec::new();
     let mut read_alignment_last_position: usize = 0;
     let mut ref_alignment_last_position: usize = 0;
 
@@ -100,17 +101,16 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &
         read_alignment_last_position += read_ref_aligned_length.0;
         ref_alignment_last_position += read_ref_aligned_length.1;
         //println!("22 read_alignment_last_position : {} ref_alignment_last_position : {} OVERLAP {}",read_alignment_last_position,ref_alignment_last_position,overlap.length);
-        alignmentTags.extend(alignment);
+        alignment_tags.extend(alignment);
 
         // now add the matching segment
-        alignmentTags.push(AlignmentTags::MatchMismatch(overlap.length));
+        alignment_tags.push(AlignmentTags::MatchMismatch(overlap.length));
         read_alignment_last_position += overlap.length;
         ref_alignment_last_position += overlap.length;
     }
 
     if overlaps.positions.len() > 0 {
         let read_stop = overlaps.positions[overlaps.positions.len() - 1].search_start + overlaps.positions[overlaps.positions.len() - 1].length;
-        let ref_stop = overlaps.positions[overlaps.positions.len() - 1].ref_start + overlaps.positions[overlaps.positions.len() - 1].length;
         //println!("LASTBIT read_alignment_last_position : {} ref_alignment_last_position : {}",read_stop,ref_stop);
         if read_stop < search_string.len() {
 
@@ -119,15 +119,15 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &
             let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, reference.len());
             let alignment = unaligned_segment_to_alignment(&read_slice, &ref_slice, min_alignment_seg_length);
 
-            alignmentTags.extend(alignment);
+            alignment_tags.extend(alignment);
         }
     } else {
         let alignment = unaligned_segment_to_alignment(&search_string, &reference, min_alignment_seg_length);
 
-        alignmentTags.extend(alignment);
+        alignment_tags.extend(alignment);
     }
 
-    alignmentTags
+    alignment_tags
 }
 
 pub fn read_ref_alignment_lengths(alignment_tags: &Vec<AlignmentTags>) -> (usize, usize) {
@@ -309,8 +309,8 @@ mod tests {
     fn suffix_array_test() {
         let refseq = String::from("AATGATACGG").as_bytes().to_owned();
         let reference = find_seeds(&refseq, 20);
-        assert!(reference.suffixTable.contains("AAT"));
-        assert!(!reference.suffixTable.contains("TAAT"));
+        assert!(reference.suffix_table.contains("AAT"));
+        assert!(!reference.suffix_table.contains("TAAT"));
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod tests {
 
         let fwd_score_mp = find_greedy_non_overlapping_segments(&read, &refseq, &reference);
 
-        let hits = align_with_anchors(&read, &refseq, &reference, 10, &fwd_score_mp);
+        let hits = align_with_anchors(&read, &refseq,  10, &fwd_score_mp);
 
         for hit in hits {
             print!("{}",hit);
