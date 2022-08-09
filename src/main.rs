@@ -123,7 +123,7 @@ fn main() {
             write!(output,"{}",to_two_line_fasta(alignment2,parameters.outputupper));
         });
     } else {
-        readers.first.unwrap().records().par_bridge().for_each(|xx| {
+        readers.first.unwrap().records().for_each(|xx| {
             let x = xx.unwrap().clone();
             let name = &String::from_utf8_lossy(&x.name()).to_string();
             let seq = &String::from_utf8_lossy(&x.sequence()).to_string();
