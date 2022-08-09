@@ -63,10 +63,12 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
         let ref_positions = seeds.suffixTable.positions(str::from_utf8(&search_string[position..(position + seeds.seed_size)]).unwrap());
         let mut longest_hit = 0;
         for ref_position in ref_positions {
-            let extended_hit_size = extend_hit(search_string, position, reference, *ref_position as usize);
-            if extended_hit_size > longest_hit {
-                return_hits.push(MatchedPosition { search_start: position, ref_start: *ref_position as usize, length: extended_hit_size });
-                position += extended_hit_size;
+            if ref_position >= &(position as u32) {
+                let extended_hit_size = extend_hit(search_string, position, reference, *ref_position as usize);
+                if extended_hit_size > longest_hit {
+                    return_hits.push(MatchedPosition { search_start: position, ref_start: *ref_position as usize, length: extended_hit_size });
+                    position += extended_hit_size;
+                }
             }
         }
         position += 1;
