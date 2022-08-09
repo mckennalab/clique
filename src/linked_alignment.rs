@@ -58,17 +58,19 @@ pub fn is_forward_orientation(search_string: &Vec<u8>, reference: &Vec<u8>, seed
 pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &SuffixTableLookup) -> MatchedPositions {
     let mut return_hits: Vec<MatchedPosition> = Vec::new();
     let mut position = 0;
+    let mut highest_ref_pos = 0;
 
     while position < search_string.len() - seeds.seed_size {
         let ref_positions = seeds.suffixTable.positions(str::from_utf8(&search_string[position..(position + seeds.seed_size)]).unwrap());
         let mut longest_hit = 0;
         for ref_position in ref_positions {
-            if ref_position >= &(position as u32) {
+            if ref_position >= highest_ref_pos {
                 let extended_hit_size = extend_hit(search_string, position, reference, *ref_position as usize);
                 if extended_hit_size > longest_hit {
                     return_hits.push(MatchedPosition { search_start: position, ref_start: *ref_position as usize, length: extended_hit_size });
                     println!("adding {},{},{}",position, *ref_position as usize, extended_hit_size);
                     position += extended_hit_size;
+                    highest_ref_pos = ref_start + extended_hit_size;
                 }
             }
         }
