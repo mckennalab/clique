@@ -119,12 +119,12 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &
             let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, reference.len());
             let alignment = unaligned_segment_to_alignment(&read_slice, &ref_slice, min_alignment_seg_length);
 
-            let read_ref_aligned_length = read_ref_alignment_lengths(&alignment);
-            read_alignment_last_position += read_ref_aligned_length.0;
-            ref_alignment_last_position += read_ref_aligned_length.1;
-
             alignmentTags.extend(alignment);
         }
+    } else {
+        let alignment = unaligned_segment_to_alignment(&search_string, &reference, min_alignment_seg_length);
+
+        alignmentTags.extend(alignment);
     }
 
     alignmentTags
