@@ -67,6 +67,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
                 let extended_hit_size = extend_hit(search_string, position, reference, *ref_position as usize);
                 if extended_hit_size > longest_hit {
                     return_hits.push(MatchedPosition { search_start: position, ref_start: *ref_position as usize, length: extended_hit_size });
+                    println!("adding {},{},{}",position, *ref_position as usize, extended_hit_size);
                     position += extended_hit_size;
                 }
             }
