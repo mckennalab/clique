@@ -136,14 +136,14 @@ fn main() {
                 let alignment_string: String = alignment.into_iter().map(|m| m.to_string()).collect();
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                write!(output,"{}\t0\t{}\t0\t250\t{}\t*\t1\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual);
+                write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual);
 
             } else {
                 let alignment = align_with_anchors(&bio::alphabets::dna::revcomp(&x.sequence().to_vec()), &ref_string, &reference_lookup, 10, &is_forward.2);
                 let alignment_string: String = alignment.into_iter().map(|m| m.to_string()).collect();
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                write!(output,"{}\t16\t{}\t0\t250\t{}\t*\t1\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual);
+                write!(output,"{}\t16\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual);
             }
 
         });
