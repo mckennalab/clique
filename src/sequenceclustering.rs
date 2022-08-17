@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use petgraph::csr::Csr;
 use petgraph::prelude::*;
 use std::cmp::Ordering::Less;
 use crate::bronkerbosch::BronKerbosch;

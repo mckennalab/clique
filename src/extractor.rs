@@ -1,10 +1,7 @@
 use std::collections::{HashMap, BTreeMap};
-use std::fmt::Write; // needed by the `write!` macro
 
 use bio::alignment::{Alignment, AlignmentMode, AlignmentOperation, TextSlice};
 use bio::alignment::pairwise::{Aligner, MIN_SCORE, Scoring};
-use bio::alphabets;
-use bio::alphabets::dna::revcomp;
 
 // sets of known characters: our standard DNA alphabet and a second version with known gaps.
 // These are used to mask known values when looking for extractable UMI/ID/barcode sequences

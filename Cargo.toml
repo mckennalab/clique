@@ -19,6 +19,9 @@ flate2 = "1.0.23"
 noodles-fastq = "*"
 ndarray = "0.15.0"
 suffix = "1.2"
+num-traits = "*"
+float-cmp = "*"
+priority-queue = "*"
 
 [profile.release]
 lto = true

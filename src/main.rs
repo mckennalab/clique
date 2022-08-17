@@ -6,17 +6,14 @@ extern crate petgraph;
 extern crate rand;
 extern crate bio;
 extern crate flate2;
-
-mod alignment;
-
+extern crate suffix;
+extern crate ndarray;
+extern crate num_traits;
 
 use std::fs::File;
 use std::str;
 use std::io::{Write, BufReader};
-//use rust_htslib::bgzf::Reader as HtslibReader;
 use seq_io::fasta::{Reader, Record, OwnedRecord};
-//use seq_io::fastq::Reader as Fastq;
-//use seq_io::fastq::Record as FastqRecord;
 use noodles_fastq as Fastq;
 
 
@@ -30,12 +27,23 @@ use std::collections::BTreeMap;
 use bio::alignment::Alignment;
 use flate2::GzBuilder;
 use flate2::Compression;
-use linked_alignment::{find_seeds, align_with_anchors, is_forward_orientation};
 
+use crate::alignment::*;
+use alignment::alignment_matrix::*;
+use alignment::scoring_functions::*;
 
+mod linked_alignment;
+use crate::linked_alignment::*;
 pub mod extractor;
 mod simple_umi_clustering;
-mod linked_alignment;
+
+
+mod alignment {
+    pub mod alignment_matrix;
+    pub mod fasta_bit_encoding;
+    pub mod scoring_functions;
+}
+
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -121,18 +129,18 @@ fn main() {
             let seq = &String::from_utf8_lossy(&x.sequence()).to_string();
             let qual = &String::from_utf8_lossy(&x.quality_scores()).to_string();
 
-            let is_forward = is_forward_orientation(&x.sequence().to_vec(), &ref_string, &reference_lookup);
+            let is_forward = orient_by_longest_segment(&x.sequence().to_vec(), &ref_string, &reference_lookup);
 
             if is_forward.0 {
                 let alignment = align_with_anchors(&x.sequence().to_vec(), &ref_string, 10, &is_forward.1);
-                let alignment_string: String = alignment.into_iter().map(|m| m.to_string()).collect();
+                let alignment_string: String = alignment.alignment_tags.into_iter().map(|m| m.to_string()).collect();
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
                 write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
 
             } else {
                 let alignment = align_with_anchors(&bio::alphabets::dna::revcomp(&x.sequence().to_vec()), &ref_string, 10, &is_forward.2);
-                let alignment_string: String = alignment.into_iter().map(|m| m.to_string()).collect();
+                let alignment_string: String = alignment.alignment_tags.into_iter().map(|m| m.to_string()).collect();
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
                 write!(output,"{}\t16\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
