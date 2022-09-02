@@ -33,6 +33,7 @@ pub fn orient_by_longest_segment(search_string: &Vec<u8>, reference: &Vec<u8>, s
 /// * `search_string` - a u8 Vec representing the search string
 /// * `reference` - a u8 Vec representing the reference string
 /// * `alignment` - contains the starting position and the alignment CIGAR strings
+#[allow(dead_code)]
 pub fn cigar_alignment_to_full_string(read: &Vec<u8>, reference: &Vec<u8>, alignment: &AlignmentCigar) -> (String, String) {
     let mut read_align = String::new();
     let mut ref_align = String::new();
@@ -117,6 +118,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
 /// * `search_string` - a u8 Vec representing the search string
 /// * `reference` - a u8 Vec representing the reference string
 /// * `seeds` - a suffix array lookup object
+#[allow(dead_code)]
 pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, min_alignment_seg_length: usize, overlaps: &SharedSegments) -> AlignmentCigar {
     let mut alignment_tags: Vec<AlignmentTag> = Vec::new();
     let mut read_alignment_last_position: usize = 0;

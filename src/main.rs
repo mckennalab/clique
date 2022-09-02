@@ -39,7 +39,6 @@ mod simple_umi_clustering;
 
 mod alignment {
     pub mod alignment_matrix;
-    pub mod fasta_bit_encoding;
     pub mod scoring_functions;
 }
 
@@ -152,9 +151,8 @@ fn main() {
 
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                //write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
                 write!(output,">ref{}\n{}\n>{}\n{}\n",ref_name,str::from_utf8(&results.1).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.0).unwrap()).expect("Unable to write to output file");
-                output.flush();
+                output.flush().expect("Unable to flush output");
             } else {
                 let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &ref_string, &reference_lookup);
 
@@ -162,9 +160,8 @@ fn main() {
 
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                //write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
                 write!(output,">ref{}\n{}\n>{}\n{}\n",ref_name,str::from_utf8(&results.0).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.1).unwrap()).expect("Unable to write to output file");
-                output.flush();
+                output.flush().expect("Unable to flush output");
             }
 
         });

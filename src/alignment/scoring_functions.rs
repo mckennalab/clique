@@ -5,6 +5,7 @@ pub trait ScoringFunction {
     fn gap(&self, length: usize) -> f64;
 }
 
+#[allow(dead_code)]
 pub struct SimpleScoring {
     pub(crate) match_score: f64,
     pub(crate) mismatch_score: f64,
@@ -27,6 +28,7 @@ pub trait ConvexScoringFunction {
     fn gap(&self, length: usize) -> f64;
 }
 
+#[allow(dead_code)]
 pub struct ConvexScoring {
     pub(crate) match_score: f64,
     pub(crate) mismatch_score: f64,
