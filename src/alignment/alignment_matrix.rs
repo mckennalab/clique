@@ -525,9 +525,13 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
             (alignment.scores[[x - 1, y - 1, 2]] + match_score, AlignmentDirection::LEFT(1)),
             (*max_match_mismatch, AlignmentDirection::DIAG(1)),
             (if alignment_inversion.contains_key(&pos.clone()) {
-                let inversion = alignment_inversion.get(&pos.clone()).unwrap();
-                let first_path = &inversion.path[0];
-                inversion.score + alignment.scores[[first_path.x - 1, first_path.y - 1, 0]] + scoring_function.inversion_cost()
+                let inversion = alignment_inversion.get(&pos.clone());
+                if inversion.is_some() {
+                    let first_path = &inversion.unwrap().path[0];
+                    inversion.unwrap().score + alignment.scores[[first_path.x - 1, first_path.y - 1, 0]] + scoring_function.inversion_cost()
+                } else {
+                    MAX_NEG_SCORE
+                }
             } else { MAX_NEG_SCORE }, AlignmentDirection::INV(1, 1, 1, 1)) // placeholder
         ];
 
