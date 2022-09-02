@@ -1,12 +1,10 @@
-use std::{str, fmt, cmp};
+use std::{str, cmp};
 
 use bio::alignment::AlignmentOperation;
 
 
 use crate::extractor::*;
 use std::convert::TryFrom;
-use crate::alignment::alignment_matrix;
-use crate::AlignmentType;
 use crate::SuffixTableLookup;
 use crate::*;
 
@@ -50,24 +48,27 @@ pub fn cigar_alignment_to_full_string(read: &Vec<u8>, reference: &Vec<u8>, align
     // now process the CIGAR string's individual tokens
     for token in alignment.alignment_tags.clone() {
         match token {
-            AlignmentTags::MatchMismatch(size) => {
+            AlignmentTag::MatchMismatch(size) => {
                 read_align.push_str(str::from_utf8(&read[current_read_pos..(current_read_pos + size)]).unwrap());
                 ref_align.push_str(str::from_utf8(&reference[current_ref_pos..(current_ref_pos + size)]).unwrap());
                 current_read_pos += size;
                 current_ref_pos += size;
             }
-            AlignmentTags::Del(size) => {
+            AlignmentTag::Del(size) => {
                 read_align.push_str(String::from_utf8(vec![b'-'; size]).unwrap().as_str());
                 ref_align.push_str(str::from_utf8(&reference[current_ref_pos..(current_ref_pos + size)]).unwrap());
                 current_ref_pos += size;
             }
-            AlignmentTags::Ins(size) => {
+            AlignmentTag::Ins(size) => {
                 ref_align.push_str(String::from_utf8(vec![b'-'; size]).unwrap().as_str());
                 read_align.push_str(str::from_utf8(&read[current_read_pos..(current_read_pos + size)]).unwrap());
                 current_read_pos += size;
             }
-            AlignmentTags::Inversion(_size) => {
-                assert_eq!(0, 1);
+            AlignmentTag::InversionOpen => {
+                panic!("unclear how to handle InversionOpen");
+            }
+            AlignmentTag::InversionClose => {
+                panic!("unclear how to handle InversionClose");
             }
         }
     }
@@ -117,7 +118,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
 /// * `reference` - a u8 Vec representing the reference string
 /// * `seeds` - a suffix array lookup object
 pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, min_alignment_seg_length: usize, overlaps: &SharedSegments) -> AlignmentCigar {
-    let mut alignment_tags: Vec<AlignmentTags> = Vec::new();
+    let mut alignment_tags: Vec<AlignmentTag> = Vec::new();
     let mut read_alignment_last_position: usize = 0;
     let mut ref_alignment_last_position: usize = 0;
 
@@ -128,7 +129,7 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, min_alig
 
         // look back to see what segment we haven't aligned in the read
         let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, overlap.search_start);
-        let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, overlap.ref_start);
+        let ref_slice  = slice_for_alignment(&reference, ref_alignment_last_position, overlap.ref_start);
         //println!("sizes {} and {} ",read_slice.len(), ref_slice.len());
 
         let alignment = unaligned_segment_to_alignment(&read_slice, &ref_slice, min_alignment_seg_length);
@@ -140,7 +141,7 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, min_alig
         alignment_tags.extend(alignment);
 
         // now add the matching segment
-        alignment_tags.push(AlignmentTags::MatchMismatch(overlap.length));
+        alignment_tags.push(AlignmentTag::MatchMismatch(overlap.length));
         read_alignment_last_position += overlap.length;
         ref_alignment_last_position += overlap.length;
     }
@@ -165,24 +166,87 @@ pub fn align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, min_alig
     AlignmentCigar{alignment_start: 0, alignment_tags}
 }
 
-pub fn read_ref_alignment_lengths(alignment_tags: &Vec<AlignmentTags>) -> (usize, usize) {
+
+/// find a series of exact matches between the search string and the reference
+///
+/// # Arguments
+///
+/// * `search_string` - a u8 Vec representing the search string
+/// * `reference` - a u8 Vec representing the reference string
+/// * `seeds` - a suffix array lookup object
+pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, overlaps: &SharedSegments, my_score: &InversionScoring, my_aff_score: &AffineScoring) -> (Vec<u8>,Vec<u8>) {
+    let mut alignment_ref: Vec<u8> = Vec::new();
+    let mut alignment_read: Vec<u8> = Vec::new();
+    let mut read_alignment_last_position: usize = 0;
+    let mut ref_alignment_last_position: usize = 0;
+
+    for overlap in &overlaps.alignment_cigar {
+        assert!(read_alignment_last_position <= overlap.search_start,"READ START FAILURE: {} and {}",read_alignment_last_position,overlap.search_start);
+        assert!(ref_alignment_last_position <= overlap.ref_start,"REF START FAILURE: {} and {} from {}",ref_alignment_last_position,overlap.ref_start,overlap.length);
+
+        // look back to see what segment we haven't aligned in the read
+        let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, overlap.search_start);
+        let ref_slice  = slice_for_alignment(&reference, ref_alignment_last_position, overlap.ref_start);
+
+        //let alignment = unaligned_segment_to_alignment(&read_slice, &ref_slice, min_alignment_seg_length);
+        let alignment = inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false);
+        read_alignment_last_position += read_slice.len();
+        ref_alignment_last_position += ref_slice.len();
+
+        alignment_ref.extend(alignment.alignment_string2);
+        alignment_read.extend(alignment.alignment_string1);
+
+        alignment_ref.extend_from_slice(&reference[overlap.ref_start..overlap.ref_start+overlap.length]);
+        alignment_read.extend_from_slice(&search_string[overlap.search_start..overlap.search_start+overlap.length]);
+        // now add the matching segment
+
+        read_alignment_last_position += overlap.length;
+        ref_alignment_last_position += overlap.length;
+    }
+
+    if overlaps.alignment_cigar.len() > 0 {
+        let read_stop = overlaps.alignment_cigar[overlaps.alignment_cigar.len() - 1].search_start + overlaps.alignment_cigar[overlaps.alignment_cigar.len() - 1].length;
+        if read_stop < search_string.len() {
+
+            // look back to see what segment we haven't aligned in the read
+            let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, search_string.len());
+            let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, reference.len());
+            let alignment = inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false);
+
+            alignment_ref.extend(alignment.alignment_string2);
+            alignment_read.extend(alignment.alignment_string1);
+        }
+    } else {
+        let alignment = inversion_alignment(&search_string, &reference, my_score, my_aff_score,true);
+
+        alignment_ref.extend(alignment.alignment_string2);
+        alignment_read.extend(alignment.alignment_string1);
+    }
+    //println!("alignment length {} and {}, {} {}",alignment_ref.len(),alignment_read.len(),str::from_utf8(&alignment_ref).unwrap(),str::from_utf8(&alignment_read).unwrap());
+    (alignment_ref,alignment_read)
+}
+
+pub fn read_ref_alignment_lengths(alignment_tags: &Vec<AlignmentTag>) -> (usize, usize) {
     let mut read_len = 0;
     let mut ref_len = 0;
     for tag in alignment_tags {
         //println!("TAG {}",tag);
         match tag {
-            AlignmentTags::MatchMismatch(s) => {
+            AlignmentTag::MatchMismatch(s) => {
                 read_len += s;
                 ref_len += s;
             }
-            AlignmentTags::Del(s) => {
+            AlignmentTag::Del(s) => {
                 ref_len += s;
             }
-            AlignmentTags::Ins(s) => {
+            AlignmentTag::Ins(s) => {
                 read_len += s;
             }
-            AlignmentTags::Inversion(_size) => {
-                assert_eq!(0, 1);
+            AlignmentTag::InversionOpen => {
+                // do nothing
+            }
+            AlignmentTag::InversionClose => {
+                // do nothing
             }
         }
     }
@@ -195,81 +259,83 @@ pub fn slice_for_alignment(read: &Vec<u8>, read_start: usize, read_stop: usize) 
     read[read_start..read_stop].to_vec()
 }
 
-pub fn unaligned_segment_to_alignment(read_segment: &Vec<u8>, reference_segment: &Vec<u8>, min_alignment_size: usize) -> Vec<AlignmentTags> {
+pub fn unaligned_segment_to_alignment(read_segment: &Vec<u8>, reference_segment: &Vec<u8>, min_alignment_size: usize) -> Vec<AlignmentTag> {
     if read_segment.len() == reference_segment.len() && read_segment.len() <= min_alignment_size {
-        vec!(AlignmentTags::MatchMismatch(read_segment.len()))
+        vec!(AlignmentTag::MatchMismatch(read_segment.len()))
     } else if read_segment.len() < min_alignment_size && reference_segment.len() > 1 { // TODO: THIS IS VERY LAX AND WRONG BUT OK FOR TODAY
         let mut vec = Vec::new();
-        vec.push(AlignmentTags::MatchMismatch(read_segment.len()));
-        vec.push(AlignmentTags::Del(reference_segment.len()-read_segment.len()));
+        vec.push(AlignmentTag::MatchMismatch(read_segment.len()));
+        vec.push(AlignmentTag::Del(reference_segment.len()-read_segment.len()));
         vec
     } else {
         let alignment = align_forward_read( reference_segment, read_segment );
         convert_alignments(&alignment.0.operations)
+
+
     }
 }
 
 
-pub fn convert_alignments(bio: &Vec<AlignmentOperation>) -> Vec<AlignmentTags> {
+pub fn convert_alignments(bio: &Vec<AlignmentOperation>) -> Vec<AlignmentTag> {
     let mut new_tags = Vec::new();
     if bio.len() == 0 {
         return new_tags
     }
-    let mut last_tag = AlignmentTags::MatchMismatch(0);
+    let mut last_tag = AlignmentTag::MatchMismatch(0);
     for tag in bio {
         match tag {
             AlignmentOperation::Match | AlignmentOperation::Subst => {
                 match last_tag {
-                    AlignmentTags::MatchMismatch(size) => {
-                        last_tag = AlignmentTags::MatchMismatch(size + 1);
+                    AlignmentTag::MatchMismatch(size) => {
+                        last_tag = AlignmentTag::MatchMismatch(size + 1);
                     }
                     _ => {
-                        if last_tag != AlignmentTags::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTags::MatchMismatch(1);
+                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
+                        last_tag = AlignmentTag::MatchMismatch(1);
                     }
                 }
             }
             AlignmentOperation::Del => {
                 match last_tag {
-                    AlignmentTags::Del(size) => {
-                        last_tag = AlignmentTags::Del(size + 1);
+                    AlignmentTag::Del(size) => {
+                        last_tag = AlignmentTag::Del(size + 1);
                     }
                     _ => {
-                        if last_tag != AlignmentTags::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTags::Del(1);
+                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
+                        last_tag = AlignmentTag::Del(1);
                     }
                 }
             }
             AlignmentOperation::Ins => {
                 match last_tag {
-                    AlignmentTags::Ins(size) => {
-                        last_tag = AlignmentTags::Ins(size + 1);
+                    AlignmentTag::Ins(size) => {
+                        last_tag = AlignmentTag::Ins(size + 1);
                     }
                     _ => {
-                        if last_tag != AlignmentTags::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTags::Ins(1);
+                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
+                        last_tag = AlignmentTag::Ins(1);
                     }
                 }
             }
             AlignmentOperation::Xclip(xclip_size) => {
                 match last_tag {
-                    AlignmentTags::Ins(size) => {
-                        last_tag = AlignmentTags::Ins(size + xclip_size);
+                    AlignmentTag::Ins(size) => {
+                        last_tag = AlignmentTag::Ins(size + xclip_size);
                     }
                     _ => {
-                        if last_tag != AlignmentTags::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTags::Ins(*xclip_size);
+                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
+                        last_tag = AlignmentTag::Ins(*xclip_size);
                     }
                 }
             }
             AlignmentOperation::Yclip(yclip_size) => {
                 match last_tag {
-                    AlignmentTags::Del(size) => {
-                        last_tag = AlignmentTags::Del(size + yclip_size);
+                    AlignmentTag::Del(size) => {
+                        last_tag = AlignmentTag::Del(size + yclip_size);
                     }
                     _ => {
-                        if last_tag != AlignmentTags::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTags::Del(*yclip_size);
+                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
+                        last_tag = AlignmentTag::Del(*yclip_size);
                     }
                 }
             }
@@ -364,7 +430,7 @@ mod tests {
             println!("SEEEEEDS ref: {} search: {}, length: {}, endref: {}, endsearch: {}\n", hit.ref_start, hit.search_start, hit.length, hit.ref_start + hit.length, hit.search_start + hit.length);
         }
     }
-    /* align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &SuffixTableLookup, min_alignment_seg_length: usize)
+    //align_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &SuffixTableLookup, min_alignment_seg_length: usize)
     #[test]
     fn test_basic_align_with_anchors() {
         let refseq = String::from("NNNNNNNNCATGGTCCTGCTGGAGTTCGTGACCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGAGCTACAGGAACGATGTTTGATTAGAGTAAGCAGAGGACAAGGGCTCGCGTGCAGCCGAAGTTTGGCCGGTACTCTCCAACCGTTAACAACAACACCTTTCATCGAAATCCGCTTGGTAACAACACTAGGATGTTTCGACGCACTCGATAACCGGGAAACCAAGAGAAGTTTCCGAGCGCCACAGCCCAACTTAACTTCGCCATGTTTGAGACACGCGATCGGGACCACAAGACGTTACTCTTTGGGACCGCCGTAAGCGAGTATAAGCAGATTGTGTTTCGGCGTCCAAGTTGCCGTCAAAAGCTTACTGAGTTTCGCTGCCGGCGGAATGCTATTAATCGCGCCTACTTTCATGGAAGACGTTTCCGCTAAAATGGACTGGTGTTTCATGTCGGGAGCCGCTTTGTAAGATGGAGCTACTTTCCAGTCTGAGTTCATGCGAGAACACCACGAGAGTTTCATGAGTGGCCTCTCGAATCAACAGTCTACAAGTTTGGAGTTATCCGACACATCAAAACCAGCCATTCGTTTCATGAGATGGATCGCATACTAACCTTAACGGAGTTTGTAGTCACGGACGAACGATAAACGAGCATAATCTTTCGAGTCGGAGGCGAGTACTTAACGGATATAACGTTTCGTGCCAATGTTAACCGGTCAACTACCACTCAGTTTCTTGTTCATCATAACACTGAAACTGAGATCGTCTTTGGTGCAATTCCAATACGGCTAACTTACGCATACTTTGATGACGCCGTGATTATATCAAGAACCTACCGCTTTCATGGCGGTAACGGTATCCAAAGAATTGGTGTGTTTCGTGCATGCAGTGTCGGACTAAGACTAGGAATGTTTGCAGTGGCCGCAGTTATTCCAAGAGGATGCTTCTTTCCAGCTAACGGTCGCCTAATAAGATGTAACTGGTTTCTTGAGGAGGCATGTACCCGAAGCTTAGAGTAGTCTCCTCTATGAATACTGAAGGACTTGCGTAGTTATGTACAAGCTCACCAACGGACGGGTGCTTCCACATATAACGTTAGCATCTCGTGTGCTATTCGTAAGAGTTTCTAGTCACGGACGAACGATAAAGTACCAACGCCTTTCATGAGTGGCCTCTCGAATCAAGTGATCGGACCTTTGGACGCACTCGATAACCGGGAAGTTATCCAGACTTTCGTGCCAATGTTAACCGGTCAATAAGAGCTACCTTTGATGACGCCGTGATTATATCAATACGCTTCTGGTTTGGGCGTCCAAGTTGCCGTCAAATAGTAGTGACCTTTGCAGTCTGAGTTCATGCGAGAATCACCGCGAAGTTTGTTGTTCATCATAACACTGAAATCCGCAATTAGTTTCCAGCTAACGGTCGCCTAATAATCGGTAGCACGTTTCCGAGCGCCACAGCCCAACTTATCTTACACACGTTTCATCGAAATCCGCTTGGTAACATGCAAGTGTAGTTTGCAGTGGCCGCAGTTATTCCAATGTGTGTGAGCTTTCGAGTTATCCGACACATCAAACAACCGATTAACTTTCGTGCATGCAGTGTCGGACTACAAGAATAGTGCTTTGATGGCGGTAACGGTATCCAACACACTATTACCTTTCATGTCGGGAGCCGCTTTGTACAGTGTGCTACCTTTGGTGCAATTCCAATACGGCTACATAGCTAACGGTTTCTTGAGGAGGCATGTACCCGACCGCCTTATTCGTTTGATGGAAGACGTTTCCGCTAACCGGTTCTAAGGTTTCGGACCGCCGTAAGCGAGTATCCTAGTACATGGTTTCGCTGCCGGCGGAATGCTATTCCTGCTAACGAGTTTCATGAGATGGATCGCATACTACGAAGCGTCATGTTTGGCCGGTACTCTCCAACCGTTCGAGCTTCTTCCTTTCGAGTCGGAGGCGAGTACTTACGATGATAGAGCTTTCAGACACGCGATCGGGACCACCGCAGCTAACAGTAATAGGACCGACCGACCGTTCGATTCAGGGAGATTGCCCTACACTATGCGGCAGCTGGCATAGACTCCTAAGGAGATGCGTACTTGTTAAATAGGACTCTTTCATCGAAATCCGCTTGGTAACCGCTAGGTTACGTTTGTTGTTCATCATAACACTGAACGTAACTATGTCTTTCGAGTTATCCGACACATCAAACTAAGTATGAGCTTTCCGAGCGCCACAGCCCAACTTCTAGCTAATCTCTTTGGCCGGTACTCTCCAACCGTTCTATTATGCCTGTTTGGCTGCCGGCGGAATGCTATTCTCCTGCTACACTTTGTAGTCACGGACGAACGATAACTGCTTAGAACCTTTGCAGTGGCCGCAGTTATTCCACTTAACGCGGAGTTTGGACGCACTCGATAACCGGGAGAACATTAGCTCTTTCATGAGATGGATCGCATACTAGAAGACATTAGGTTTCATGACGCCGTGATTATATCAGAAGTGTTACGGTTTCGGCGTCCAAGTTGCCGTCAAGAATTGATGAGCTTTCGTGCCAATGTTAACCGGTCAGACATTATAGCCTTTGGTGCAATTCCAATACGGCTAGACTCACACGACTTTGGAGTCGGAGGCGAGTACTTAGAGTTGTTGACGTTTCCAGCTAACGGTCGCCTAATAGATGATAGAACGTTTGCAGTCTGAGTTCATGCGAGAGCAATAAGCTACTTTCGGACCGCCGTAAGCGAGTATGCGATTAAGTAGTTTGATGTCGGGAGCCGCTTTGTAGGATACTCGACGTTTCAGACACGCGATCGGGACCACGGTAATATGACGTTTCTTGAGGAGGCATGTACCCGAGGTGTTGCATGGTTTCATGGAAGACGTTTCCGCTAAGTAACGGTATTCTTTGATGAGTGGCCTCTCGAATCAGTACCAGACTTGTTTCATGGCGGTAACGGTATCCAAGTAGCATAATCGTTTGGTGCATGCAGTGTCGGACTAGTATGCTATCGCAGGAGGATGGGGCAGGACAGGACGCGGCCACCCCAGGCCTTTCCAGAGCAAACCTGGAGAAGATTCACAATAGACAGGCCAAGAAACCCGGTGCTTCCTCCAGAGCCGTTTAAAGCTGATATGAGGAAATAAAGAGTGAACTGGAAGGATCCGATATCGCCACCGTGGCTGAATGAGACTGGTGTCGACCTGTGCCT").as_bytes().to_owned();
@@ -394,7 +460,7 @@ mod tests {
         let alignment_strings = cigar_alignment_to_full_string(&read, &refseq, &hits);
 
         print!("ref:  {}\nread: {}\n",alignment_strings.0,alignment_strings.1);
-    }*/
+    }
 
 
     //unaligned_segment_to_alignment(read_segment: &Vec<u8>, reference_segment: &Vec<u8>, min_alignment_size: usize)
@@ -406,7 +472,7 @@ mod tests {
         let hits = unaligned_segment_to_alignment(&read, &refseq, 10);
 
         assert_eq!(hits.len(),1);
-        assert_eq!(hits[0],AlignmentTags::MatchMismatch(10));
+        assert_eq!(hits[0], AlignmentTag::MatchMismatch(10));
     }
 
     //unaligned_segment_to_alignment(read_segment: &Vec<u8>, reference_segment: &Vec<u8>, min_alignment_size: usize)
@@ -418,9 +484,9 @@ mod tests {
         let hits = unaligned_segment_to_alignment(&read, &refseq, 10);
 
         assert_eq!(hits.len(),3);
-        assert_eq!(hits[0],AlignmentTags::MatchMismatch(5));
-        assert_eq!(hits[1],AlignmentTags::Del(3));
-        assert_eq!(hits[2],AlignmentTags::MatchMismatch(7));
+        assert_eq!(hits[0], AlignmentTag::MatchMismatch(5));
+        assert_eq!(hits[1], AlignmentTag::Del(3));
+        assert_eq!(hits[2], AlignmentTag::MatchMismatch(7));
     }
 }
 

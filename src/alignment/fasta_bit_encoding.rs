@@ -1,4 +1,4 @@
-use std::ops::BitXor;
+
 
 /// Encodings for all FASTA bases
 const FASTA_N: u64 = 0xF;

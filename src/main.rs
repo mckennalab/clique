@@ -25,10 +25,9 @@ use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::collections::BTreeMap;
 use bio::alignment::Alignment;
-use flate2::GzBuilder;
-use flate2::Compression;
+//use flate2::GzBuilder;
+//use flate2::Compression;
 
-use crate::alignment::*;
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
 
@@ -79,10 +78,10 @@ fn main() {
     let ref_name = fasta_entries.get(0).unwrap().id().unwrap();
 
     let output_file = File::create(parameters.output).unwrap();
-    let mut gz = GzBuilder::new()
-        .comment("aligned fasta file")
-        .write(output_file, Compression::best());
-    write!(gz,"@HD\tVN:1.6\n@SQ\tSN:{}\tLN:{}\n",ref_name,ref_string.len()).expect("Unable to write to output file");
+    //let mut gz = GzBuilder::new()
+     //   .comment("aligned fasta file")
+     //   .write(output_file, Compression::best());
+    //write!(gz,"@HD\tVN:1.6\n@SQ\tSN:{}\tLN:{}\n",ref_name,ref_string.len()).expect("Unable to write to output file");
 
 
     // open read one
@@ -103,10 +102,27 @@ fn main() {
     }
 
     let reference_lookup = find_seeds(&ref_string,20);
-    let output = Arc::new(Mutex::new(gz));
+    let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
 
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
+
+
+    let my_score = InversionScoring {
+        match_score: 10.0,
+        mismatch_score: -11.0,
+        gap_open: -15.0,
+        gap_extend: -5.0,
+        inversion_penalty: -2.0,
+    };
+
+
+    let my_aff_score = AffineScoring {
+        match_score: 10.0,
+        mismatch_score: -11.0,
+        gap_open: -15.0,
+        gap_extend: -5.0,
+    };
 
     // This is a little ugly since we're wrapping in the para_bridge, which introduces some scope issues
     if readers.second.is_some() {
@@ -126,24 +142,29 @@ fn main() {
         readers.first.unwrap().records().par_bridge().for_each(|xx| {
             let x = xx.unwrap().clone();
             let name = &String::from_utf8_lossy(&x.name()).to_string();
-            let seq = &String::from_utf8_lossy(&x.sequence()).to_string();
-            let qual = &String::from_utf8_lossy(&x.quality_scores()).to_string();
 
             let is_forward = orient_by_longest_segment(&x.sequence().to_vec(), &ref_string, &reference_lookup);
 
             if is_forward.0 {
-                let alignment = align_with_anchors(&x.sequence().to_vec(), &ref_string, 10, &is_forward.1);
-                let alignment_string: String = alignment.alignment_tags.into_iter().map(|m| m.to_string()).collect();
-                let output = Arc::clone(&output);
-                let mut output = output.lock().unwrap();
-                write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
+                let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &ref_string, &reference_lookup);
+                let results = align_string_with_anchors(&x.sequence().to_vec(), &ref_string, &fwd_score_mp, &my_score,&my_aff_score);
+                //let alignment_string: String = alignment.alignment_tags.into_iter().map(|m| m.to_string()).collect();
 
-            } else {
-                let alignment = align_with_anchors(&bio::alphabets::dna::revcomp(&x.sequence().to_vec()), &ref_string, 10, &is_forward.2);
-                let alignment_string: String = alignment.alignment_tags.into_iter().map(|m| m.to_string()).collect();
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                write!(output,"{}\t16\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
+                //write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
+                write!(output,">ref{}\n{}\n>{}\n{}\n",ref_name,str::from_utf8(&results.1).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.0).unwrap()).expect("Unable to write to output file");
+                output.flush();
+            } else {
+                let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &ref_string, &reference_lookup);
+
+                let results = align_string_with_anchors(&reverse_complement(&x.sequence().to_vec()), &ref_string, &fwd_score_mp, &my_score,&my_aff_score);
+
+                let output = Arc::clone(&output);
+                let mut output = output.lock().unwrap();
+                //write!(output,"{}\t0\t{}\t1\t250\t{}\t*\t0\t{}\t{}\t{}\n",str::replace(name," ","_"),ref_name,alignment_string,&x.sequence().len(),seq,qual).expect("Unable to write to output file");
+                write!(output,">ref{}\n{}\n>{}\n{}\n",ref_name,str::from_utf8(&results.0).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.1).unwrap()).expect("Unable to write to output file");
+                output.flush();
             }
 
         });

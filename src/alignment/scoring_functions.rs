@@ -53,6 +53,7 @@ pub trait AffineScoringFunction {
     fn gap_open(&self) -> f64;
     fn gap_extend(&self) -> f64;
 }
+
 pub struct AffineScoring {
     pub(crate) match_score: f64,
     pub(crate) mismatch_score: f64,
@@ -72,5 +73,38 @@ impl AffineScoringFunction for AffineScoring {
 
     fn gap_extend(&self) -> f64 {
         self.gap_extend as f64
+    }
+}
+
+
+pub trait InversionScoringFunction {
+    fn match_mismatch(&self, a: &u8, b: &u8) -> f64;
+    fn gap_open(&self) -> f64;
+    fn gap_extend(&self) -> f64;
+    fn inversion_cost(&self) -> f64;
+}
+pub struct InversionScoring {
+    pub(crate) match_score: f64,
+    pub(crate) mismatch_score: f64,
+    pub(crate) gap_open: f64,
+    pub(crate) gap_extend: f64,
+    pub(crate) inversion_penalty: f64,
+}
+
+
+impl InversionScoringFunction for InversionScoring {
+    fn match_mismatch(&self, a: &u8, b: &u8) -> f64 {
+        if a == b { self.match_score } else { self.mismatch_score }
+    }
+
+    fn gap_open(&self) -> f64 {
+        self.gap_open as f64
+    }
+
+    fn gap_extend(&self) -> f64 {
+        self.gap_extend as f64
+    }
+    fn inversion_cost(&self) -> f64 {
+        self.inversion_penalty as f64
     }
 }
