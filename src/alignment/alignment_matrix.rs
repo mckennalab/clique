@@ -547,6 +547,7 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
                     let score = align.score + alignment.scores[[start_pos.x - 1, start_pos.y - 1, 0]] + scoring_function.inversion_cost();
                     (score, inv)
                 } else {
+                    println!("SCORES: {},{},{},{}",alignment.scores[[x - 1, y - 1, 1]] + match_score,alignment.scores[[x - 1, y - 1, 2]] + match_score,max_match_mismatch,best_match.0);
                     panic!("Unable to unwrap alignment for inversion!");
                 }
             }
