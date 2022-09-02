@@ -539,11 +539,16 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
 
         best_match = match best_match.1 {
             AlignmentDirection::INV(_x1, _y1, _x2, _y2) => {
-                let align = &alignment_inversion.get(&pos.clone()).unwrap();
-                let start_pos = &align.path.get(0).unwrap();
-                let inv = AlignmentDirection::INV(start_pos.x, start_pos.y, x, y);
-                let score = align.score + alignment.scores[[start_pos.x - 1, start_pos.y - 1, 0]] + scoring_function.inversion_cost();
-                (score, inv)
+                let align = &alignment_inversion.get(&pos.clone());
+                if align.is_some() {
+                    let align = align.unwrap();
+                    let start_pos = &align.path.get(0).unwrap();
+                    let inv = AlignmentDirection::INV(start_pos.x, start_pos.y, x, y);
+                    let score = align.score + alignment.scores[[start_pos.x - 1, start_pos.y - 1, 0]] + scoring_function.inversion_cost();
+                    (score, inv)
+                } else {
+                    panic!("Unable to unwrap alignment for inversion!");
+                }
             }
             _ => {
                 best_match
