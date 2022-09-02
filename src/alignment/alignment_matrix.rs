@@ -17,6 +17,7 @@ pub struct SuffixTableLookup<'s, 't> {
 
 pub const MAX_NEG_SCORE: f64 = -100000.0;
 
+
 /// Find the suffix array 'seeds' given a reference sequence
 ///
 /// # Arguments
@@ -521,9 +522,6 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
         let max_match_mismatch = max_match_mismatch.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
 
         let best_match = vec![
-            (alignment.scores[[x - 1, y - 1, 1]] + match_score, AlignmentDirection::UP(1)),
-            (alignment.scores[[x - 1, y - 1, 2]] + match_score, AlignmentDirection::LEFT(1)),
-            (*max_match_mismatch, AlignmentDirection::DIAG(1)),
             (if alignment_inversion.contains_key(&pos.clone()) {
                 let inversion = alignment_inversion.get(&pos.clone());
                 if inversion.is_some() {
@@ -532,7 +530,10 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
                 } else {
                     MAX_NEG_SCORE
                 }
-            } else { MAX_NEG_SCORE }, AlignmentDirection::INV(1, 1, 1, 1)) // placeholder
+            } else { MAX_NEG_SCORE }, AlignmentDirection::INV(1, 1, 1, 1)), // placeholder
+            (*max_match_mismatch, AlignmentDirection::DIAG(1)),
+            (alignment.scores[[x - 1, y - 1, 1]] + match_score, AlignmentDirection::UP(1)),
+            (alignment.scores[[x - 1, y - 1, 2]] + match_score, AlignmentDirection::LEFT(1)),
         ];
 
         let mut best_match = best_match.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap().clone();
