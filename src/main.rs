@@ -36,6 +36,10 @@ use crate::linked_alignment::*;
 pub mod extractor;
 mod simple_umi_clustering;
 
+mod umis {
+    pub mod bronkerbosch;
+    pub mod sequenceclustering;
+}
 
 mod alignment {
     pub mod alignment_matrix;

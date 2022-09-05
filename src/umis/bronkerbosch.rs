@@ -1,22 +1,25 @@
 use std::collections::HashSet;
-use petgraph::graphmap::{GraphMap,NodeTrait};
+
+use petgraph::graphmap::{GraphMap, NodeTrait};
 use petgraph::Undirected;
+
+use petgraph::graphmap::UnGraphMap;
 
 /// Implementation according to "Algorithm 457: Finding All Cliques of an Undirected Graph"
 /// by Bronand Kerbosch; http://doi.acm.org/10.1145/362342.362367
 ///
 /// connected is a symmetrical bolean matrix, N the number of nodes in the graph,
 /// values of the diagonal should be true.
-pub struct BronKerbosch<N: NodeTrait,E> {
-    pub graph: GraphMap<N,E, Undirected>,
-    pub max_cliques: Vec<HashSet<N>>
+pub struct BronKerbosch<N: NodeTrait, E> {
+    pub graph: GraphMap<N, E, Undirected>,
+    pub max_cliques: Vec<HashSet<N>>,
 }
 
-impl<N: NodeTrait,E> BronKerbosch<N,E> {
-    pub fn new(graphmap: GraphMap<N,E, Undirected>) -> BronKerbosch<N,E> {
+impl<N: NodeTrait, E> BronKerbosch<N, E> {
+    pub fn new(graphmap: GraphMap<N, E, Undirected>) -> BronKerbosch<N, E> {
         BronKerbosch {
             graph: graphmap,
-            max_cliques: Vec::new()
+            max_cliques: Vec::new(),
         }
     }
 
@@ -56,6 +59,33 @@ impl<N: NodeTrait,E> BronKerbosch<N,E> {
             p_fp.remove(v);
             x_fp.insert(*v);
         }
-
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn simple_wikipedia_test() {
+
+        let mut g = UnGraphMap::new();
+
+        // example from https://en.wikipedia.org/wiki/Bron%E2%80%93Kerbosch_algorithm
+        g.add_edge("6", "4", 1);
+        g.add_edge("4", "5", 1);
+        g.add_edge("4", "3", 1);
+        g.add_edge("3", "2", 1);
+        g.add_edge("5", "2", 1);
+        g.add_edge("5", "1", 1);
+        g.add_edge("2", "1", 1);
+
+        let mut bk = BronKerbosch::new(g);
+        bk.compute();
+
+        for clique in bk.cliques() {
+            println!("Clique {:?}", clique);
+        }
+    }
+
 }

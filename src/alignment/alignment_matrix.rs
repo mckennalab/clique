@@ -1161,7 +1161,7 @@ fn reverse_base(base: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use std::str;
 // find_max_value_2d_array(matrix: Array::<f64, Ix2>) -> Option<(AlignmentLocation,f64)>
 
     #[test]
@@ -1187,7 +1187,7 @@ mod tests {
         };
 
         let mut alignment_mat = create_scoring_record_2d(reference.len() + 1, test_read.len() + 1, AlignmentType::SIMPLE, false);
-        let aligned = perform_simple_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+        perform_simple_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_2d_global_traceback(&mut alignment_mat, &reference, &test_read);
         assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "AA-AA");
@@ -1206,7 +1206,7 @@ mod tests {
         };
 
         let mut alignment_mat = create_scoring_record_2d(reference.len() + 1, test_read.len() + 1, AlignmentType::SIMPLE, true);
-        let aligned = perform_simple_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+        perform_simple_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         pretty_print_2d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_2d_global_traceback(&mut alignment_mat, &reference, &test_read);
@@ -1227,7 +1227,7 @@ mod tests {
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
-        let aligned = perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+        perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
@@ -1255,7 +1255,7 @@ mod tests {
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
-        let aligned = perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+        perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
         assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "CCAATCTACT");
@@ -1274,7 +1274,7 @@ mod tests {
         };
 
         let mut alignment_mat = create_scoring_record_2d(reference.len() + 1, test_read.len() + 1, AlignmentType::SIMPLE, true);
-        let aligned = perform_simple_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+        perform_simple_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_2d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_2d_global_traceback(&mut alignment_mat, &reference, &test_read);
@@ -1303,7 +1303,7 @@ mod tests {
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
-        let aligned = perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+        perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
         assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "AA-AA");
@@ -1324,7 +1324,7 @@ mod tests {
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
-        let aligned = perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+        perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
@@ -1352,7 +1352,7 @@ mod tests {
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
-        let aligned = perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+        perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);

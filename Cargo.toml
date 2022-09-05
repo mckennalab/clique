@@ -25,6 +25,7 @@ priority-queue = "*"
 
 [profile.release]
 lto = true
+debug = true
 
 [build]
 rustflags = "-C target-cpu=native"
