@@ -1,8 +1,10 @@
+use std::collections::{HashMap, BTreeMap};
 
 // sets of known characters: our standard DNA alphabet and a second version with known gaps.
-// These are used to mask known values when looking for extractable UMI/ID/barcode sequences
+// These are used to mask known values when looking for extractable UMI/ID/barcode sequences.
+// Also mappings from degenerate FASTA bases to their possible ACGT values.
 lazy_static! {
-    static ref KNOWNBASES: HashMap<u8, u8> = {
+    pub static ref KNOWNBASES: HashMap<u8, u8> = {
         let mut hashedvalues = HashMap::new();
         hashedvalues.insert(b'a', b'A');
         hashedvalues.insert(b'A', b'A');
@@ -15,7 +17,7 @@ lazy_static! {
         hashedvalues
     };
 
-    static ref DEGENERATEBASES: HashMap<u8, HashMap<u8,bool>> = {
+    pub static ref DEGENERATEBASES: HashMap<u8, HashMap<u8,bool>> = {
         let mut hashedvalues = HashMap::new();
         hashedvalues.insert(b'R', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
         hashedvalues.insert(b'r', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
@@ -52,7 +54,7 @@ lazy_static! {
         hashedvalues
     };
 
-    static ref KNOWNBASESPLUSINSERT: HashMap<u8, u8> = {
+    pub static ref KNOWNBASESPLUSINSERT: HashMap<u8, u8> = {
         let mut hashedvalues = HashMap::new();
         hashedvalues.insert(b'a', b'A');
         hashedvalues.insert(b'A', b'A');
@@ -65,10 +67,8 @@ lazy_static! {
         hashedvalues.insert(b'-', b'-');
         hashedvalues
     };
-}
 
-lazy_static! {
-    static ref REVERSECOMP: HashMap<u8, u8> = {
+    pub static ref REVERSECOMP: HashMap<u8, u8> = {
             let mut hashedvalues: HashMap<u8,u8> = HashMap::new();
             hashedvalues.insert(b'a', b'T');
             hashedvalues.insert(b'A', b'T');

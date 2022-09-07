@@ -9,10 +9,12 @@ extern crate flate2;
 extern crate suffix;
 extern crate ndarray;
 extern crate num_traits;
+extern crate fastq;
+extern crate noodles_fastq;
 
 use std::fs::File;
 use std::str;
-use std::io::{Write, BufReader};
+use std::io::{Write, BufReader, BufRead};
 use seq_io::fasta::{Reader, Record, OwnedRecord};
 use noodles_fastq as Fastq;
 
@@ -20,7 +22,7 @@ use noodles_fastq as Fastq;
 use std::io;
 
 use clap::Parser;
-use extractor::{extract_tagged_sequences, align_unknown_orientation_read};
+use extractor::extract_tagged_sequences;
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::collections::BTreeMap;
@@ -33,6 +35,12 @@ use alignment::scoring_functions::*;
 
 mod linked_alignment;
 use crate::linked_alignment::*;
+use umis::sequenceclustering::*;
+use petgraph::algo::connected_components;
+use std::path::Path;
+use reference::fasta_reference::reference_file_to_struct;
+use read_strategies::sequence_layout::ReadIterator;
+
 pub mod extractor;
 mod simple_umi_clustering;
 
@@ -44,6 +52,16 @@ mod umis {
 mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
+    pub mod fasta_comparisons;
+}
+
+mod read_strategies {
+    pub mod sequence_layout;
+    pub mod ten_x;
+}
+
+mod reference {
+    pub mod fasta_reference;
 }
 
 
@@ -60,7 +78,10 @@ struct Args {
     read1: String,
 
     #[structopt(long, default_value = "NONE")]
-    read2: String,
+    index1: String,
+
+    #[structopt(long, default_value = "NONE")]
+    index2: String,
 
     #[clap(long, default_value_t = 1)]
     threads: usize,
@@ -68,43 +89,41 @@ struct Args {
     #[clap(long)]
     outputupper: bool,
 }
+/*
+fn old_main() {
+    let mut test_set = Vec::new();
 
+    if let Ok(lines) = read_lines("test_data/just_sequences_20000_16s.txt") {
+        // Consumes the iterator, returns an (Optional) String
+        for line in lines {
+            if let Ok(ip) = line {
+                test_set.push(ip.as_bytes().to_vec());
+            }
+        }
+    }
+    println!("TEST SIZE {}, making graph",test_set.len());
+    let graph = input_list_to_graph(&InputList{strings: test_set, max_dist: 1},string_distance, true);
+    println!("Making clique");
+    println!("Connected size: {}", connected_components(&graph.graph));
+    process_cliques(&graph);
+}
+
+fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+    where P: AsRef<Path>, {
+    let file = File::open(filename)?;
+    Ok(io::BufReader::new(file).lines())
+}*/
 
 fn main() {
     let parameters = Args::parse();
 
-    // reference loading / checking
-    let mut reader = Reader::from_path(parameters.reference).unwrap();
-    let fasta_entries: Vec<OwnedRecord> = reader.records().map(|f| f.unwrap()).collect();
-    assert_eq!(fasta_entries.len(), 1, "We can only run with single entry FASTA files");
-    let ref_string = fasta_entries.get(0).unwrap().seq.clone();
-    let ref_name = fasta_entries.get(0).unwrap().id().unwrap();
+    let reference = reference_file_to_struct(&parameters.reference);
 
     let output_file = File::create(parameters.output).unwrap();
-    //let mut gz = GzBuilder::new()
-     //   .comment("aligned fasta file")
-     //   .write(output_file, Compression::best());
-    //write!(gz,"@HD\tVN:1.6\n@SQ\tSN:{}\tLN:{}\n",ref_name,ref_string.len()).expect("Unable to write to output file");
 
+    let read_iterator = ReadIterator::new(&parameters.read1,)
 
-    // open read one
-    //let f1 = File::open(parameters.read1).unwrap();
-
-    let f1gz = File::open(parameters.read1)
-        .map(BufReader::new)
-        .map(Fastq::Reader::new).unwrap();
-    let mut readers = Readers{first: Some(f1gz), second: None};
-
-    // check for a second read file
-    let f2 = File::open(parameters.read2.clone());
-    if f2.is_ok() {
-        let f2gz = File::open(parameters.read2)
-            .map(BufReader::new)
-            .map(Fastq::Reader::new).unwrap();
-        readers.second = Some(f2gz);
-    }
-
-    let reference_lookup = find_seeds(&ref_string,20);
+    let reference_lookup = find_seeds(&reference.name,20);
     let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
 
     // setup our thread pool
@@ -123,48 +142,37 @@ fn main() {
     let my_aff_score = AffineScoring {
         match_score: 10.0,
         mismatch_score: -11.0,
+        special_character_score: 7.0,
         gap_open: -15.0,
         gap_extend: -5.0,
     };
 
     // This is a little ugly since we're wrapping in the para_bridge, which introduces some scope issues
     if readers.second.is_some() {
-        readers.first.unwrap().records().into_iter().zip(readers.second.unwrap().records()).par_bridge().for_each(|(xx, yy)| {
-            let x = xx.unwrap().clone();
-            let y = yy.unwrap().clone();
-            let alignment1 = process_read_into_enriched_obj(&String::from_utf8_lossy(&x.name()).to_string(), &x.sequence().to_vec(), &ref_string);
-            let alignment2 = process_read_into_enriched_obj(&String::from_utf8_lossy(&y.name()).to_string(), &y.sequence().to_vec(), &ref_string);
-
-            let output = Arc::clone(&output);
-            let mut output = output.lock().unwrap();
-
-            write!(output,"{}",to_two_line_fasta(alignment1,parameters.outputupper)).expect("Unable to write to output file");
-            write!(output,"{}",to_two_line_fasta(alignment2,parameters.outputupper)).expect("Unable to write to output file");
-        });
+        // fill this in
     } else {
         readers.first.unwrap().records().par_bridge().for_each(|xx| {
             let x = xx.unwrap().clone();
             let name = &String::from_utf8_lossy(&x.name()).to_string();
 
-            let is_forward = orient_by_longest_segment(&x.sequence().to_vec(), &ref_string, &reference_lookup);
+            let is_forward = orient_by_longest_segment(&x.sequence().to_vec(), &reference.sequence, &reference_lookup);
 
             if is_forward.0 {
-                let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &ref_string, &reference_lookup);
-                let results = align_string_with_anchors(&x.sequence().to_vec(), &ref_string, &fwd_score_mp, &my_score,&my_aff_score);
-                //let alignment_string: String = alignment.alignment_tags.into_iter().map(|m| m.to_string()).collect();
+                let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &reference.sequence, &reference_lookup);
+                let results = align_string_with_anchors(&x.sequence().to_vec(), &reference.sequence, &fwd_score_mp, &my_score,&my_aff_score);
 
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                write!(output,">ref{}\n{}\n>{}\n{}\n",ref_name,str::from_utf8(&results.1).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.0).unwrap()).expect("Unable to write to output file");
+                write!(output,">ref{}\n{}\n>{}\n{}\n",str::from_utf8(&reference.sequence).unwrap(),str::from_utf8(&results.1).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.0).unwrap()).expect("Unable to write to output file");
                 output.flush().expect("Unable to flush output");
             } else {
-                let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &ref_string, &reference_lookup);
+                let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &reference.sequence, &reference_lookup);
 
-                let results = align_string_with_anchors(&reverse_complement(&x.sequence().to_vec()), &ref_string, &fwd_score_mp, &my_score,&my_aff_score);
+                let results = align_string_with_anchors(&reverse_complement(&x.sequence().to_vec()), &reference.sequence, &fwd_score_mp, &my_score,&my_aff_score);
 
                 let output = Arc::clone(&output);
                 let mut output = output.lock().unwrap();
-                write!(output,">ref{}\n{}\n>{}\n{}\n",ref_name,str::from_utf8(&results.0).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.1).unwrap()).expect("Unable to write to output file");
+                write!(output,">ref{}\n{}\n>{}\n{}\n",str::from_utf8(&reference.sequence).unwrap(),str::from_utf8(&results.0).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.1).unwrap()).expect("Unable to write to output file");
                 output.flush().expect("Unable to flush output");
             }
 
@@ -203,14 +211,3 @@ fn to_two_line_fasta(align_features: AlignedWithFeatures, output_upper: bool) ->
 }
 
 
-fn process_read_into_enriched_obj(read_id:&String, read_rec: &Vec<u8>, reference: &Vec<u8>) -> AlignedWithFeatures {
-    let aligned_read = align_unknown_orientation_read(&read_rec, &reference);
-    let features = extract_tagged_sequences(&aligned_read.2, &aligned_read.1);
-    AlignedWithFeatures{
-        alignment: aligned_read.0,
-        read_id: read_id.clone(),
-        read: aligned_read.2,
-        reference: aligned_read.1,
-        features: features.clone()
-    }
-}
