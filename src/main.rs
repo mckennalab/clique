@@ -180,7 +180,7 @@ fn main() {
             let transformed_reads = transform(rd, &read_layout);
             let first_hit = transformed_reads.get_unique_sequences().unwrap()[0].clone();
             //if known_list.as_ref().is_some() {
-                let corrected_hits = correct_to_known_list(&first_hit, &known_list.as_ref().unwrap(), 1);
+                let corrected_hits = correct_to_known_list(&first_hit, &known_list, 1);
                 read_mapping.insert(first_hit.clone(),corrected_hits);
             //} else {
             //    read_mapping.insert(first_hit.clone(),BestHits{ hits: vec![first_hit.clone()], distance: 0 });
