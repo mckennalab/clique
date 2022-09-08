@@ -1,7 +1,7 @@
 use std::collections::{HashMap, BTreeMap};
-use crate::alignment::fasta_comparisons::DEGENERATEBASES;
-use crate::alignment::fasta_comparisons::KNOWNBASES;
-use crate::alignment::fasta_comparisons::KNOWNBASESPLUSINSERT;
+use crate::fasta_comparisons::DEGENERATEBASES;
+use crate::fasta_comparisons::KNOWNBASES;
+use crate::fasta_comparisons::KNOWNBASESPLUSINSERT;
 
 use bio::alignment::{Alignment, AlignmentMode, AlignmentOperation, TextSlice};
 use bio::alignment::pairwise::{Aligner, MIN_SCORE, Scoring};

@@ -19,6 +19,18 @@ lazy_static! {
 
     pub static ref DEGENERATEBASES: HashMap<u8, HashMap<u8,bool>> = {
         let mut hashedvalues = HashMap::new();
+        hashedvalues.insert(b'A', HashMap::from([('A' as u8, true), ('a' as u8, true)]));
+        hashedvalues.insert(b'a', HashMap::from([('A' as u8, true), ('a' as u8, true)]));
+
+        hashedvalues.insert(b'C', HashMap::from([('C' as u8, true), ('c' as u8, true)]));
+        hashedvalues.insert(b'c', HashMap::from([('C' as u8, true), ('c' as u8, true)]));
+
+        hashedvalues.insert(b'G', HashMap::from([('G' as u8, true), ('g' as u8, true)]));
+        hashedvalues.insert(b'g', HashMap::from([('G' as u8, true), ('g' as u8, true)]));
+
+        hashedvalues.insert(b'T', HashMap::from([('T' as u8, true), ('t' as u8, true)]));
+        hashedvalues.insert(b't', HashMap::from([('T' as u8, true), ('t' as u8, true)]));
+
         hashedvalues.insert(b'R', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
         hashedvalues.insert(b'r', HashMap::from([('A' as u8, true), ('a' as u8, true), ('G' as u8, true), ('g' as u8, true)]));
 

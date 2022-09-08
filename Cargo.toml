@@ -20,8 +20,8 @@ noodles-fastq = "*"
 ndarray = "0.15.0"
 suffix = "1.2"
 num-traits = "*"
-float-cmp = "*"
-priority-queue = "*"
+indicatif = "*"
+rust-spoa = "*"
 
 [profile.release]
 lto = true

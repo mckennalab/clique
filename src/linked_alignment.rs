@@ -1,7 +1,7 @@
 use std::{str, cmp};
 
 use bio::alignment::AlignmentOperation;
-use crate::alignment::fasta_comparisons::DEGENERATEBASES;
+use crate::fasta_comparisons::DEGENERATEBASES;
 
 use crate::extractor::*;
 use std::convert::TryFrom;

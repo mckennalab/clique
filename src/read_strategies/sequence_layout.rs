@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::str::FromStr;
 
 use bio::io::fastq;
@@ -11,11 +11,23 @@ use std::ops::Deref;
 use std::borrow::Borrow;
 
 pub enum LayoutType {
-    TENX_V3,
-    TENX_V2,
+    TENXV3,
+    TENXV2,
     PAIREDUMI,
     PAIRED,
     SCI,
+}
+
+impl LayoutType {
+    pub fn has_umi(&self) -> bool {
+        match *self {
+            LayoutType::TENXV3 => true,
+            LayoutType::TENXV2 => true,
+            LayoutType::PAIREDUMI => true,
+            LayoutType::PAIRED => true,
+            LayoutType::SCI => true,
+        }
+    }
 }
 
 impl FromStr for LayoutType {
@@ -23,8 +35,8 @@ impl FromStr for LayoutType {
 
     fn from_str(input: &str) -> Result<LayoutType, Self::Err> {
         match input.to_uppercase().as_str() {
-            "TENX_V3" => Ok(LayoutType::TENX_V3),
-            "TENX_V2" => Ok(LayoutType::TENX_V2),
+            "TENXV3" => Ok(LayoutType::TENXV3),
+            "TENXV2" => Ok(LayoutType::TENXV2),
             "PAIREDUMI" => Ok(LayoutType::PAIREDUMI),
             "PAIRED" => Ok(LayoutType::PAIRED),
             "SCI" => Ok(LayoutType::SCI),
@@ -80,27 +92,15 @@ impl Iterator for ReadIterator {
 impl ReadIterator
 {
     pub fn new(read_1: String,
-               read_2: Option<String>,
-               index_1: Option<String>,
-               index_2: Option<String>,
+               read_2: String,
+               index_1: String,
+               index_2: String,
     ) -> ReadIterator  {
         ReadIterator {
             read_one: ReadIterator::open_reader(read_1).unwrap(),
-            read_two: if read_2.is_some() {
-                Some(ReadIterator::open_reader(read_2.unwrap()).unwrap())
-            } else {
-                None
-            },
-            index_one: if index_1.is_some() {
-                Some(ReadIterator::open_reader(index_1.unwrap()).expect("Unable to open index one file").into_iter())
-            } else {
-                None
-            },
-            index_two: if index_2.is_some() {
-                Some(ReadIterator::open_reader(index_2.unwrap()).expect("Unable to open index two file").into_iter())
-            } else {
-                None
-            },
+            read_two: ReadIterator::open_reader(read_2),
+            index_one: ReadIterator::open_reader(index_1),
+            index_two: ReadIterator::open_reader(index_2),
         }
     }
 
@@ -118,41 +118,46 @@ impl ReadIterator
 }
 
 
-pub(crate) trait SequenceLayout {
+pub trait SequenceLayout {
+    fn name(&self) -> &Vec<u8>;
     fn umi(&self) -> Option<&Vec<u8>>;
     fn static_id(&self) -> Option<&Vec<u8>>;
     fn read_one(&self) -> &Vec<u8>;
     fn read_two(&self) -> Option<&Vec<u8>>;
     fn cell_id(&self) -> Option<&Vec<u8>>;
     fn layout_type(&self) -> LayoutType;
+    fn get_unique_sequences(&self) -> Option<Vec<&Vec<u8>>>;
 }
 
-fn transform(read_one: &Vec<u8>, read_two: Option<&Vec<u8>>, index_1: Option<&Vec<u8>>, index_2: Option<&Vec<u8>>, layout: LayoutType) -> Box<dyn SequenceLayout> {
-    match layout {
-        LayoutType::TENX_V3 => {
-            assert!(read_two.is_some(), "Read two (read ID and UMI) must be defined for 10X");
-            assert!(!index_1.is_some(), "Index 1 is invalid for 10X data");
-            assert!(!index_2.is_some(), "Index 2 is invalid for 10X data");
 
-            let cell_id_sliced = read_two.unwrap()[0..16].to_vec();
-            let umi_sliced = read_two.unwrap()[16..28].to_vec();
+pub fn transform(read: ReadLayout, layout: &LayoutType) -> Box<dyn SequenceLayout> {
+    match layout {
+        LayoutType::TENXV3 => {
+            assert!(read.read_two.is_some(), "Read two (read ID and UMI) must be defined for 10X");
+            assert!(!read.index_one.is_some(), "Index 1 is invalid for 10X data");
+            assert!(read.index_two.is_some(), "Index 2 is invalid for 10X data");
+
+            let read2 = read.read_two.unwrap();
+            let cell_id_sliced = read2.seq()[0..16].to_vec();
+            let umi_sliced = read2.seq()[16..28].to_vec();
 
             Box::new(TenXLayout {
+                name: read.read_one.id().as_bytes().to_vec(),
                 umi: umi_sliced,
                 cell_id: cell_id_sliced,
-                read_one: read_one.clone(),
+                read_one: read.read_one.seq().to_vec(),
             })
         }
         LayoutType::PAIREDUMI => {
             unimplemented!()
         }
-        LayoutType::PAIRED => {
+        LayoutType::PAIRED=> {
             unimplemented!()
         }
         LayoutType::SCI => {
             unimplemented!()
         }
-        LayoutType::TENX_V2 => {
+        LayoutType::TENXV2 => {
             unimplemented!()
         }
     }

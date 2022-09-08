@@ -11,6 +11,7 @@ extern crate ndarray;
 extern crate num_traits;
 extern crate fastq;
 extern crate noodles_fastq;
+extern crate rust_spoa;
 
 use std::fs::File;
 use std::str;
@@ -25,7 +26,7 @@ use clap::Parser;
 use extractor::extract_tagged_sequences;
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use bio::alignment::Alignment;
 //use flate2::GzBuilder;
 //use flate2::Compression;
@@ -39,7 +40,8 @@ use umis::sequenceclustering::*;
 use petgraph::algo::connected_components;
 use std::path::Path;
 use reference::fasta_reference::reference_file_to_struct;
-use read_strategies::sequence_layout::ReadIterator;
+use read_strategies::sequence_layout::{ReadIterator, LayoutType, transform};
+use std::str::FromStr;
 
 pub mod extractor;
 mod simple_umi_clustering;
@@ -52,8 +54,15 @@ mod umis {
 mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
-    pub mod fasta_comparisons;
 }
+
+
+mod consensus {
+    pub mod serial_passage_read_corrector;
+    pub mod consensus_builders;
+}
+
+pub mod fasta_comparisons;
 
 mod read_strategies {
     pub mod sequence_layout;
@@ -78,6 +87,9 @@ struct Args {
     read1: String,
 
     #[structopt(long, default_value = "NONE")]
+    read2: String,
+
+    #[structopt(long, default_value = "NONE")]
     index1: String,
 
     #[structopt(long, default_value = "NONE")]
@@ -88,6 +100,12 @@ struct Args {
 
     #[clap(long)]
     outputupper: bool,
+
+    #[clap(long)]
+    read_template: String,
+
+    #[structopt(long, default_value = "NONE")]
+    known_list: String,
 }
 /*
 fn old_main() {
@@ -112,22 +130,6 @@ fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
     where P: AsRef<Path>, {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
-}*/
-
-fn main() {
-    let parameters = Args::parse();
-
-    let reference = reference_file_to_struct(&parameters.reference);
-
-    let output_file = File::create(parameters.output).unwrap();
-
-    let read_iterator = ReadIterator::new(&parameters.read1,)
-
-    let reference_lookup = find_seeds(&reference.name,20);
-    let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
-
-    // setup our thread pool
-    rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
 
     let my_score = InversionScoring {
@@ -146,13 +148,49 @@ fn main() {
         gap_open: -15.0,
         gap_extend: -5.0,
     };
+}*/
 
-    // This is a little ugly since we're wrapping in the para_bridge, which introduces some scope issues
-    if readers.second.is_some() {
-        // fill this in
+fn main() {
+    let parameters = Args::parse();
+
+    let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
+
+    let reference = reference_file_to_struct(&parameters.reference);
+
+    let output_file = File::create(parameters.output).unwrap();
+
+    let reference_lookup = find_seeds(&reference.name,20);
+    let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
+
+    // setup our thread pool
+    rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
+
+    let known_list : Option<KnownList> = if Path::new(&parameters.known_list).exists() {
+        Some(load_knownlist(&parameters.known_list))
     } else {
-        readers.first.unwrap().records().par_bridge().for_each(|xx| {
-            let x = xx.unwrap().clone();
+        None
+    };
+
+    let read_iterator = ReadIterator::new(parameters.read1, parameters.read2,parameters.index1,parameters.index2);
+
+    if read_layout.has_umi() {
+        let mut read_mapping = HashMap::new();
+        for rd in read_iterator {
+            let transformed_reads = transform(rd, &read_layout);
+            let first_hit = transformed_reads.get_unique_sequences().unwrap()[0].clone();
+            if known_list.as_ref().is_some() {
+                let corrected_hits = correct_to_known_list(&first_hit, &known_list.as_ref().unwrap(), 1);
+                read_mapping.insert(first_hit.clone(),corrected_hits);
+            } else {
+                read_mapping.insert(first_hit.clone(),BestHits{ hits: vec![first_hit.clone()], distance: 0 });
+            }
+        }
+        println!("Read mapping size {}",read_mapping.len());
+    }
+
+    //read_iterator.par_bridge().for_each(|xx|
+}
+/*let x = xx.unwrap().clone();
             let name = &String::from_utf8_lossy(&x.name()).to_string();
 
             let is_forward = orient_by_longest_segment(&x.sequence().to_vec(), &reference.sequence, &reference_lookup);
@@ -174,16 +212,7 @@ fn main() {
                 let mut output = output.lock().unwrap();
                 write!(output,">ref{}\n{}\n>{}\n{}\n",str::from_utf8(&reference.sequence).unwrap(),str::from_utf8(&results.0).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.1).unwrap()).expect("Unable to write to output file");
                 output.flush().expect("Unable to flush output");
-            }
-
-        });
-    }
-}
-
-struct Readers<R: io::Read> {
-    first: Option<Fastq::Reader<R>>,
-    second:Option<Fastq::Reader<R>>,
-}
+            }*/
 
 #[allow(dead_code)]
 struct AlignedWithFeatures {

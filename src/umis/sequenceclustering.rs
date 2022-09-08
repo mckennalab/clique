@@ -1,22 +1,26 @@
-use std::collections::HashMap;
-
-use petgraph::prelude::*;
+use std::borrow::Borrow;
 use std::cmp::Ordering::Less;
-use crate::umis::bronkerbosch::BronKerbosch;
+use std::collections::HashMap;
+use std::convert::TryInto;
+use std::fs::File;
+use std::io;
+use std::io::{BufRead, BufReader, Read};
+use std::path::Path;
 use std::str;
+
+use flate2::bufread::GzDecoder;
+use petgraph::dot::Dot;
+use petgraph::prelude::*;
+use rand::{Rng, seq};
+use rand::distributions::Standard;
+use rand::prelude::*;
+
 use indicatif::ProgressBar;
 
-use petgraph::dot::Dot;
-use rand::prelude::*;
-use rand::{seq, Rng}; // 0.8
+use crate::fasta_comparisons::*;
+use crate::umis::bronkerbosch::BronKerbosch;
 
-use std::borrow::Borrow;
-use rand::distributions::Standard;
-use std::io;
-use std::fs::File;
-use std::io::BufRead;
-use std::path::Path;
-use std::convert::TryInto;
+// 0.8
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,
@@ -26,7 +30,7 @@ pub struct InputList {
 pub struct StringGraph {
     pub graph: GraphMap<u32, u32, Undirected>,
     pub string_to_node: HashMap<Vec<u8>, u32>,
-    pub node_to_string: HashMap<u32,Vec<u8>>,
+    pub node_to_string: HashMap<u32, Vec<u8>>,
 }
 
 
@@ -35,11 +39,79 @@ pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u32 {
     str1.iter().zip(str2.iter()).map(|(c1, c2)| if c1 == c2 { 0 } else { 1 }).sum()
 }
 
+pub struct KnownList {
+    pub known_list: Vec<Vec<u8>>,
+    pub known_list_map: HashMap<Vec<u8>, Vec<u8>>,
+}
+
+fn validate_barcode(barcode: &Vec<u8>) -> bool {
+    barcode.iter().filter(|b| !KNOWNBASES.contains_key(*b)).map(|n| n).collect::<Vec<_>>().len() == 0 as usize
+}
+
+
+pub fn load_knownlist(knownlist_file: &String) -> KnownList {
+    let mut test_one_off_mapping = HashMap::new();
+    let mut test_set = Vec::new();
+
+    let mut reader = BufReader::new(GzDecoder::new(BufReader::new(File::open(knownlist_file).expect("Unable to load input file"))));
+
+    let mut cnt = 0;
+    for line in reader.lines() {
+        let bytes = line.unwrap().as_bytes().to_vec();
+        test_set.push(bytes.clone());
+        if validate_barcode(&bytes) {
+            test_one_off_mapping.insert(bytes.clone(), bytes.clone());
+        }
+    }
+    KnownList { known_list: test_set, known_list_map: test_one_off_mapping }
+}
+
+pub struct BestHits {
+    pub hits: Vec<Vec<u8>>,
+    pub distance: usize,
+}
+
+pub fn edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
+    assert_eq!(str1.len(),str2.len());
+
+    let mut dist: usize = 0;
+    for i in 0..str1.len() {
+        if !((DEGENERATEBASES.get(&str1[i]).is_some() && DEGENERATEBASES.get(&str1[i]).unwrap().contains_key(&str2[i])) ||
+             (DEGENERATEBASES.get(&str2[i]).is_some() && DEGENERATEBASES.get(&str2[i]).unwrap().contains_key(&str1[i]))) {
+            dist += 1;
+        }
+    }
+    dist
+}
+
+pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &KnownList, max_distance: usize) -> BestHits {
+    let mut hits = Vec::new();
+    let mut distance = max_distance;
+    if kl.known_list_map.contains_key(barcode) {
+        hits.push(barcode.clone());
+        distance = 0;
+        BestHits{hits, distance}
+    } else {
+        let mut min_distance = max_distance;
+        for candidate in &kl.known_list {
+            let dist = edit_distance(&candidate,barcode);
+            if dist < min_distance {
+                hits.clear();
+                min_distance = dist;
+            }
+            if dist == min_distance {
+                hits.push(candidate.clone());
+            }
+        }
+        BestHits{hits, distance}
+    }
+}
+
+
 pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8>) -> u32, progress: bool) -> StringGraph {
-    let mut graph = GraphMap::<u32,u32,Undirected>::new();
+    let mut graph = GraphMap::<u32, u32, Undirected>::new();
     let mut string_to_node: HashMap<Vec<u8>, u32> = HashMap::new();
-    let mut node_to_string: HashMap<u32,Vec<u8>> = HashMap::new();
-    let mut string_to_count: HashMap<Vec<u8>, u32> = HashMap::new();
+    let mut node_to_string: HashMap<u32, Vec<u8>> = HashMap::new();
 
 
     let mut current_index = 0;
@@ -63,12 +135,9 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
         }
     });
 
-    let mut edge_count = 0;
-
-
     let bar: Option<ProgressBar> = if progress {
         println!("processing barcode-barcode distances (this can take a long time)...");
-        Some(ProgressBar::new((string_to_node.len() as u64*string_to_node.len() as u64)/(2 as u64)))
+        Some(ProgressBar::new((string_to_node.len() as u64 * string_to_node.len() as u64) / (2 as u64)))
     } else {
         None
     };
@@ -93,35 +162,34 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
 pub fn process_cliques(string_graph: &StringGraph) -> BronKerbosch<u32, u32> {
     let mut bronker = BronKerbosch::new(string_graph.graph.clone());
     bronker.compute();
-    println!("Discovered {} cliques in the data",bronker.max_cliques.len());
+    println!("Discovered {} cliques in the data", bronker.max_cliques.len());
     bronker
 }
 
 
 pub fn generate_random_string(length: usize) -> Vec<u8> {
-    let bases = vec![b'A',b'C',b'G',b'T'];
+    let bases = vec![b'A', b'C', b'G', b'T'];
     let mut rng = rand::thread_rng();
     let mut results = Vec::new();
-    for _i in 0..length {results.push(bases.choose(&mut rand::thread_rng()).unwrap().to_owned())}
+    for _i in 0..length { results.push(bases.choose(&mut rand::thread_rng()).unwrap().to_owned()) }
     results
 }
 
-pub fn create_one_off_errors(length: usize) -> Vec<Vec<u8>> {
+
+pub fn create_one_off_errors(template: &Vec<u8>) -> Vec<Vec<u8>> {
     let mut ret = Vec::new();
-    let base_str = generate_random_string(length);
-    let bases = vec![b'A',b'C',b'G',b'T'];
-    ret.push(base_str.clone());
-    for i in 0..length {
+    let bases = vec![b'A', b'C', b'G', b'T'];
+    ret.push(template.clone());
+    for i in 0..template.len() {
         for b in &bases {
-            if base_str[i] != *b {
+            if template[i] != *b {
                 let mut str = Vec::new();
-                str.extend(base_str[0..i].to_vec());
+                str.extend(template[0..i].to_vec());
                 let b_vec = vec![b];
                 str.extend(b_vec);
-                str.extend(base_str[i+1..base_str.len()].to_vec());
+                str.extend(template[i + 1..template.len()].to_vec());
                 ret.push(str);
             }
-
         }
     }
     ret
@@ -130,7 +198,7 @@ pub fn create_one_off_errors(length: usize) -> Vec<Vec<u8>> {
 pub fn permute_random_string(length: usize, error_rate: f64, count: usize) -> Vec<Vec<u8>> {
     let mut ret = Vec::new();
     let base_str = generate_random_string(length);
-    let bases = vec![b'A',b'C',b'G',b'T'];
+    let bases = vec![b'A', b'C', b'G', b'T'];
     ret.push(base_str.clone());
     let mut rng = rand::thread_rng();
     for _i in 0..count {
@@ -148,7 +216,7 @@ pub fn permute_random_string(length: usize, error_rate: f64, count: usize) -> Ve
 pub fn generate_simulated_data(length: usize, base_count: usize, error_strings_per_string: usize, base_error_pct: f64) -> Vec<Vec<u8>> {
     let mut returned_vec = Vec::new();
     for _i in 0..base_count {
-        returned_vec.append(&mut permute_random_string(length,base_error_pct,error_strings_per_string));
+        returned_vec.append(&mut permute_random_string(length, base_error_pct, error_strings_per_string));
     }
     returned_vec
 }
@@ -160,20 +228,20 @@ mod tests {
 
     #[test]
     fn string_distance_test() {
-        let str1 = vec![b'A',b'A',b'A',b'A'];
-        let str2 = vec![b'A',b'A',b'A',b'T'];
+        let str1 = vec![b'A', b'A', b'A', b'A'];
+        let str2 = vec![b'A', b'A', b'A', b'T'];
 
         let str_dist = string_distance(&str1, &str2);
         assert_eq!(1, str_dist);
 
-        let str1 = vec![b'A',b'A',b'A',b'A'];
-        let str2 = vec![b'A',b'A',b'A',b'A'];
+        let str1 = vec![b'A', b'A', b'A', b'A'];
+        let str2 = vec![b'A', b'A', b'A', b'A'];
 
         let str_dist = string_distance(&str1, &str2);
         assert_eq!(0, str_dist);
 
-        let str1 =vec![b'T',b'T',b'T',b'T'];
-        let str2 = vec![b'A',b'A',b'A',b'A'];
+        let str1 = vec![b'T', b'T', b'T', b'T'];
+        let str2 = vec![b'A', b'A', b'A', b'A'];
 
 
         let str_dist = string_distance(&str1, &str2);
@@ -182,37 +250,35 @@ mod tests {
 
     #[test]
     fn test_graph_creation() {
-        let vec_of_vecs = vec![vec![b'A',b'A',b'A',b'A'],vec![b'C',b'C',b'C',b'C'],vec![b'G',b'A',b'A',b'A'],vec![b'C',b'A',b'A',b'A']];
-        let collection = InputList{strings: vec_of_vecs, max_dist: 6};
-        let graph = input_list_to_graph(&collection,string_distance);
+        let vec_of_vecs = vec![vec![b'A', b'A', b'A', b'A'], vec![b'C', b'C', b'C', b'C'], vec![b'G', b'A', b'A', b'A'], vec![b'C', b'A', b'A', b'A']];
+        let collection = InputList { strings: vec_of_vecs, max_dist: 6 };
+        let graph = input_list_to_graph(&collection, string_distance, false);
         //println!("{}", Dot::new(&graph.graph));
         assert_eq!(6, graph.graph.edge_count()); // paths are
     }
 
 
-    #[test]
+    // #[test] dont run for now
     fn test_four_set_count() {
         let test_set = generate_simulated_data(10, 10, 10, 0.1);
-        let mut group1 = create_one_off_errors(10);
-        println!("Group 1 {}",group1.len());
-        group1.extend(create_one_off_errors(10));
-        group1.extend(create_one_off_errors(10));
-        group1.extend(create_one_off_errors(10));
-        println!("Group 1 {}",group1.len());
-        let graph = input_list_to_graph(&InputList{strings: group1, max_dist: 4},string_distance);
+        let mut group1 = create_one_off_errors(&generate_random_string(10));
+        println!("Group 1 {}", group1.len());
+        group1.extend(create_one_off_errors(&generate_random_string(10)));
+        group1.extend(create_one_off_errors(&generate_random_string(10)));
+        group1.extend(create_one_off_errors(&generate_random_string(10)));
+        println!("Group 1 {}", group1.len());
+        let graph = input_list_to_graph(&InputList { strings: group1, max_dist: 4 }, string_distance, false);
         println!("Graphing!");
         process_cliques(&graph);
-
     }
 
 
     #[test]
     fn test_larger_clique_count() {
         let test_set = generate_simulated_data(10, 10, 10, 0.1);
-        println!("TEST SIZE {}",test_set.len());
-        let graph = input_list_to_graph(&InputList{strings: test_set, max_dist: 4},string_distance);
+        println!("TEST SIZE {}", test_set.len());
+        let graph = input_list_to_graph(&InputList { strings: test_set, max_dist: 4 }, string_distance, false);
         process_cliques(&graph);
-
     }
 
     #[test]
@@ -227,11 +293,49 @@ mod tests {
                 }
             }
         }
-        println!("TEST SIZE {}",test_set.len());
-        let graph = input_list_to_graph(&InputList{strings: test_set, max_dist: 1},string_distance);
+        println!("TEST SIZE {}", test_set.len());
+        let graph = input_list_to_graph(&InputList { strings: test_set, max_dist: 1 }, string_distance, false);
         println!("Making clique");
         process_cliques(&graph);
+    }
 
+    #[test]
+    fn test_validate_barcode() {
+        let test_vec = vec![b'A', b'T'];
+        let is_valid = validate_barcode(&test_vec);
+        assert_eq!(true, is_valid);
+
+        let test_vec = vec![b'a', b'T'];
+        let is_valid = validate_barcode(&test_vec);
+        assert_eq!(true, is_valid);
+
+        let test_vec = vec![b'A', b'E'];
+        let is_valid = validate_barcode(&test_vec);
+        assert_eq!(false, is_valid);
+
+        let test_vec = vec![b'a', b'e'];
+        let is_valid = validate_barcode(&test_vec);
+        assert_eq!(false, is_valid);
+    }
+
+    /*
+    #[test]
+    fn test_10x_whitelist() {
+        let valid_list = load_knownlist(&"test_data/3M-february-2018.txt.gz".to_string());
+
+    }*/
+
+    #[test]
+    fn test_edit_distance() {
+        let str1 = vec![b'A',b'C',b'G',b'T',b'A'];
+        let str2 = vec![b'A',b'C',b'G',b'T',b'A'];
+        assert_eq!(edit_distance(&str1,&str2),0);
+        let str2 = vec![b'T',b'C',b'G',b'T',b'A'];
+        assert_eq!(edit_distance(&str1,&str2),1);
+        let str2 = vec![b'a',b'C',b'G',b'T',b'A'];
+        assert_eq!(edit_distance(&str1,&str2),0);
+        let str2 = vec![b'R',b'C',b'G',b'T',b'A'];
+        assert_eq!(edit_distance(&str1,&str2),0);
     }
 
     fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>

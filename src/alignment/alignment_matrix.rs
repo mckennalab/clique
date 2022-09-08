@@ -1222,6 +1222,7 @@ mod tests {
         let my_score = AffineScoring {
             match_score: 10.0,
             mismatch_score: -9.0,
+            special_character_score: 8.0,
             gap_open: -10.0,
             gap_extend: -10.0,
         };
@@ -1250,6 +1251,7 @@ mod tests {
         let my_score = AffineScoring {
             match_score: 10.0,
             mismatch_score: -9.0,
+            special_character_score: 8.0,
             gap_open: -20.0,
             gap_extend: -10.0,
         };
@@ -1298,6 +1300,7 @@ mod tests {
         let my_score = AffineScoring {
             match_score: 6.0,
             mismatch_score: -6.0,
+            special_character_score: 8.0,
             gap_open: -10.0,
             gap_extend: -10.0,
         };
@@ -1319,6 +1322,7 @@ mod tests {
         let my_score = AffineScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
         };
@@ -1347,6 +1351,7 @@ mod tests {
         let my_score = AffineScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
         };
@@ -1378,6 +1383,7 @@ mod tests {
         let my_aff_score = AffineScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
         };
@@ -1412,6 +1418,7 @@ mod tests {
         let my_aff_score = AffineScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
         };
