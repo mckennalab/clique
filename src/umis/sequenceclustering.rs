@@ -136,7 +136,7 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
         for candidate_key in kl.known_list_subset.keys() {
             let key_dist = edit_distance(barcode_subslice, &candidate_key);
 
-            if key_dist < min_distance {
+            if key_dist <= min_distance {
                 let subset = kl.known_list_subset.get(candidate_key).unwrap();
 
                 for full_candidate in subset {
