@@ -173,10 +173,11 @@ fn main() {
         let mut cnt = 0;
         let mut read_mapping = HashMap::new();
         for rd in read_iterator {
-            cnt += 1;
+
             if cnt % 100 == 0 {
                 println!("Count {}, hash size: {}",cnt, read_mapping.len());
             }
+            cnt += 1;
             let transformed_reads = transform(rd, &read_layout);
             let first_hit = transformed_reads.get_unique_sequences().unwrap()[0].clone();
             //if known_list.as_ref().is_some() {
