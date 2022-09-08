@@ -8,6 +8,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::str;
 
+
 use flate2::bufread::GzDecoder;
 use petgraph::dot::Dot;
 use petgraph::prelude::*;
@@ -48,15 +49,28 @@ fn validate_barcode(barcode: &Vec<u8>) -> bool {
     barcode.iter().filter(|b| !KNOWNBASES.contains_key(*b)).map(|n| n).collect::<Vec<_>>().len() == 0 as usize
 }
 
+pub fn get_reader(path: &str) -> Result<Box<dyn BufRead>, &'static str> {
+    let file_type = path.split(".").collect::<Vec<&str>>().last().unwrap().clone();
+
+    match file_type {
+        "gz" => {
+            let reader = Box::new(GzDecoder::new(BufReader::new(File::open(path).expect("Unable to open input known file"))));
+            Ok(Box::new(BufReader::new(reader)))
+        }
+        _ => {
+            Ok(Box::new(BufReader::new(File::open(path).expect("Unable to open known input file"))))
+        }
+    }
+}
 
 pub fn load_knownlist(knownlist_file: &String) -> KnownList {
     let mut test_one_off_mapping = HashMap::new();
     let mut test_set = Vec::new();
 
-    let mut reader = BufReader::new(File::open(&knownlist_file));// GzDecoder::new(BufReader::new(File::open(knownlist_file).expect("Unable to load input file"))));
+    let mut raw_reader =get_reader(knownlist_file).unwrap();
 
     let mut cnt = 0;
-    for line in reader.lines() {
+    for line in raw_reader.lines() {
         let bytes = line.unwrap().as_bytes().to_vec();
         test_set.push(bytes.clone());
         if validate_barcode(&bytes) {
