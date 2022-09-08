@@ -8,8 +8,6 @@ pub struct ConsensusCandidate {
     pub global_umi: Vec<u8>,
 }
 
-
-
 pub struct ConsensusResult {
     pub read_one: Vec<u8>,
     pub read_two: Option<Vec<u8>>,
@@ -22,7 +20,6 @@ pub fn create_seq_layout_poa_consensus(candidates: &ConsensusCandidate) -> Vec<u
         temp.push(b'\0');
         temp
     }).into_iter().collect());
-
 
     let has_read_two = candidates.reads.iter().map(|r| r.read_two().is_some()).fold(true, |acc, mk| acc && mk);
 

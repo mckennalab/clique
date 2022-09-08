@@ -104,9 +104,16 @@ pub fn load_knownlist(knownlist_file: &String, starting_nmer_size: usize) -> Kno
     KnownList { known_list: test_set, known_list_map: existing_mapping, known_list_subset, known_list_subset_key_size: starting_nmer_size }
 }
 
+
 pub struct BestHits {
     pub hits: Vec<Vec<u8>>,
     pub distance: usize,
+}
+
+impl Clone for BestHits {
+    fn clone(&self) -> BestHits {
+        BestHits{hits: self.hits.clone(), distance: self.distance}
+    }
 }
 
 pub fn edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {

@@ -1,48 +1,48 @@
+extern crate bio;
+extern crate fastq;
+extern crate flate2;
 #[macro_use]
 extern crate lazy_static;
+extern crate ndarray;
 extern crate needletail;
-extern crate seq_io;
+extern crate noodles_fastq;
+extern crate num_traits;
 extern crate petgraph;
 extern crate rand;
-extern crate bio;
-extern crate flate2;
-extern crate suffix;
-extern crate ndarray;
-extern crate num_traits;
-extern crate fastq;
-extern crate noodles_fastq;
 extern crate rust_spoa;
+extern crate seq_io;
+extern crate suffix;
 
-use std::fs::File;
-use std::str;
-use std::io::{Write, BufReader, BufRead};
-use seq_io::fasta::{Reader, Record, OwnedRecord};
-use noodles_fastq as Fastq;
-
-
-use std::io;
-
-use clap::Parser;
-use extractor::extract_tagged_sequences;
-use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
 use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
+use std::io;
+use std::path::Path;
+use std::str;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+
 use bio::alignment::Alignment;
-//use flate2::GzBuilder;
-//use flate2::Compression;
+use noodles_fastq as Fastq;
+use petgraph::algo::connected_components;
+use seq_io::fasta::{OwnedRecord, Reader, Record};
 
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
+use clap::Parser;
+use consensus::consensus_manager::ConsensusManager;
+use extractor::extract_tagged_sequences;
+use rayon::prelude::*;
+use read_strategies::sequence_layout::{LayoutType, ReadIterator, transform};
+use reference::fasta_reference::reference_file_to_struct;
+use umis::sequenceclustering::*;
+
+use crate::linked_alignment::*;
+
+//use flate2::GzBuilder;
+//use flate2::Compression;
 
 mod linked_alignment;
-use crate::linked_alignment::*;
-use umis::sequenceclustering::*;
-use petgraph::algo::connected_components;
-use std::path::Path;
-use reference::fasta_reference::reference_file_to_struct;
-use read_strategies::sequence_layout::{ReadIterator, LayoutType, transform};
-use std::str::FromStr;
-
 pub mod extractor;
 mod simple_umi_clustering;
 
@@ -60,6 +60,7 @@ mod alignment {
 mod consensus {
     pub mod serial_passage_read_corrector;
     pub mod consensus_builders;
+    pub mod consensus_manager;
 }
 
 pub mod fasta_comparisons;
@@ -159,7 +160,7 @@ fn main() {
 
     let output_file = File::create(parameters.output).unwrap();
 
-    let reference_lookup = find_seeds(&reference.name,20);
+    let reference_lookup = find_seeds(&reference.name, 20);
     let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
 
     // setup our thread pool
@@ -168,28 +169,34 @@ fn main() {
     println!("Creating known list...");
     let mut known_list = load_knownlist(&parameters.known_list, 7);
 
-    let read_iterator = ReadIterator::new(parameters.read1, parameters.read2,parameters.index1,parameters.index2);
+    let read_iterator = ReadIterator::new(parameters.read1, parameters.read2, parameters.index1, parameters.index2);
 
     println!("Processing UMIs...");
+    let mut consensus_manager = ConsensusManager::new();
+
+
     if read_layout.has_umi() {
         let mut cnt = 0;
-        let mut read_mapping = HashMap::new();
+        let mut mto = 0;
         for rd in read_iterator {
-
-            if cnt % 10000 == 0 {
-                println!("Count {}, hash size: {}",cnt, read_mapping.len());
+            if cnt % 100000 == 0 {
+                println!("Count {}", cnt);
             }
             cnt += 1;
             let transformed_reads = transform(rd, &read_layout);
             let first_hit = transformed_reads.get_unique_sequences().unwrap()[0].clone();
             //if known_list.as_ref().is_some() {
-                let corrected_hits = correct_to_known_list(&first_hit, &mut known_list, 1);
-                read_mapping.insert(first_hit.clone(),corrected_hits);
+            let corrected_hits = correct_to_known_list(&first_hit, &mut known_list, 1);
+            if corrected_hits.hits.len() > 1 {
+                mto += 1;
+            }
+            consensus_manager.add_hit(&first_hit, corrected_hits);
             //} else {
             //    read_mapping.insert(first_hit.clone(),BestHits{ hits: vec![first_hit.clone()], distance: 0 });
             //}
         }
-        println!("Read mapping size {}",read_mapping.len());
+        println!("Count = {}, mto = {}",cnt,mto);
+        consensus_manager.unified_consensus_list();
     }
 
     //read_iterator.par_bridge().for_each(|xx|
@@ -224,7 +231,7 @@ struct AlignedWithFeatures {
     read_id: String,
     read: Vec<u8>,
     reference: Vec<u8>,
-    features: BTreeMap<String,String>
+    features: BTreeMap<String, String>,
 }
 
 fn to_two_line_fasta(align_features: AlignedWithFeatures, output_upper: bool) -> String {
@@ -233,7 +240,6 @@ fn to_two_line_fasta(align_features: AlignedWithFeatures, output_upper: bool) ->
                 align_features.features.iter().filter(|(s, _t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),
                 align_features.features.get(&"r".to_string()).unwrap(),
                 align_features.features.get(&"e".to_string()).unwrap())
-
     } else {
         format!(">@{}_{}\n{}\n>ref\n{}\n",
                 align_features.read_id,
