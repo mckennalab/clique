@@ -178,8 +178,8 @@ fn main() {
         let mut read_mapping = HashMap::new();
         for rd in read_iterator {
             cnt += 1;
-            if cnt % 10000 == 0 {
-                println!("Count {}",cnt);
+            if cnt % 1000000 == 0 {
+                println!("Count {}, hash size: {}",cnt, read_mapping.len());
             }
             let transformed_reads = transform(rd, &read_layout);
             let first_hit = transformed_reads.get_unique_sequences().unwrap()[0].clone();
