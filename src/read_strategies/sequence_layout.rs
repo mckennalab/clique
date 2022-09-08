@@ -139,7 +139,7 @@ pub fn transform(read: ReadLayout, layout: &LayoutType) -> Box<dyn SequenceLayou
         LayoutType::TENXV3 => {
             assert!(read.read_two.is_some(), "Read two (read ID and UMI) must be defined for 10X");
             assert!(!read.index_one.is_some(), "Index 1 is invalid for 10X data");
-            assert!(read.index_two.is_some(), "Index 2 is invalid for 10X data");
+            assert!(!read.index_two.is_some(), "Index 2 is invalid for 10X data");
 
             let read2 = read.read_two.unwrap();
             let cell_id_sliced = read2.seq()[0..16].to_vec();
