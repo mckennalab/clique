@@ -9,6 +9,7 @@ use bio::io::fastq::{Reader, Record, Records};
 use crate::read_strategies::ten_x::TenXLayout;
 use std::ops::Deref;
 use std::borrow::Borrow;
+use std::path::Path;
 
 pub enum LayoutType {
     TENXV3,
@@ -105,8 +106,9 @@ impl ReadIterator
     }
 
     fn open_reader(filename: String) -> Option<Records<BufReader<File>>> {
-        let f2 = File::open(filename.clone());
-        if f2.is_ok() {
+        let check_path = Path::new(&filename).exists();
+        if check_path {
+            let f2 = File::open(filename.clone());
             let mut f2gz = fastq::Reader::new(File::open(filename).unwrap());
 
             let records = f2gz.records();
