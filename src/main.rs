@@ -165,10 +165,12 @@ fn main() {
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
-    let mut known_list = load_knownlist(&parameters.known_list);
+    println!("Creating known list...");
+    let mut known_list = load_knownlist(&parameters.known_list, 5);
 
     let read_iterator = ReadIterator::new(parameters.read1, parameters.read2,parameters.index1,parameters.index2);
 
+    println!("Processing reads...");
     if read_layout.has_umi() {
         let mut cnt = 0;
         let mut read_mapping = HashMap::new();

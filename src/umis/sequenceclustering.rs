@@ -43,6 +43,8 @@ pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u32 {
 pub struct KnownList {
     pub known_list: Vec<Vec<u8>>,
     pub known_list_map: HashMap<Vec<u8>, BestHits>,
+    known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>>,
+    known_list_subset_key_size: usize,
 }
 
 fn validate_barcode(barcode: &Vec<u8>) -> bool {
@@ -63,8 +65,9 @@ pub fn get_reader(path: &str) -> Result<Box<dyn BufRead>, &'static str> {
     }
 }
 
-pub fn load_knownlist(knownlist_file: &String) -> KnownList {
-    let mut test_one_off_mapping = HashMap::new();
+pub fn load_knownlist(knownlist_file: &String, starting_nmer_size: usize) -> KnownList {
+    let mut existing_mapping = HashMap::new();
+    let mut known_list_subset: HashMap<Vec<u8>,Vec<Vec<u8>>> =  HashMap::new();
     let mut test_set = Vec::new();
 
     let mut raw_reader =get_reader(knownlist_file).unwrap();
@@ -72,12 +75,22 @@ pub fn load_knownlist(knownlist_file: &String) -> KnownList {
     let mut cnt = 0;
     for line in raw_reader.lines() {
         let bytes = line.unwrap().as_bytes().to_vec();
-        test_set.push(bytes.clone());
+
         if validate_barcode(&bytes) {
-            test_one_off_mapping.insert(bytes.clone(), BestHits{ hits: vec![bytes.clone()], distance: 0 });
+            test_set.push(bytes.clone());
+            existing_mapping.insert(bytes.clone(), BestHits{ hits: vec![bytes.clone()], distance: 0 });
+            let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
+            let mut empty: Vec<Vec<u8>> = Vec::new();
+            let mut vec_set = if known_list_subset.contains_key(&first_x) {
+                known_list_subset.get_mut(&first_x).unwrap().clone()
+            } else {
+                empty
+            };
+            vec_set.push(bytes.clone());
+            known_list_subset.insert(first_x, vec_set);
         }
     }
-    KnownList { known_list: test_set, known_list_map: test_one_off_mapping }
+    KnownList { known_list: test_set, known_list_map: existing_mapping, known_list_subset, known_list_subset_key_size: starting_nmer_size}
 }
 
 pub struct BestHits {
@@ -107,14 +120,24 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
         BestHits{hits, distance}
     } else {
         let mut min_distance = max_distance;
-        for candidate in &kl.known_list {
-            let dist = edit_distance(&candidate,barcode);
-            if dist < min_distance {
-                hits.clear();
-                min_distance = dist;
-            }
-            if dist == min_distance {
-                hits.push(candidate.clone());
+        let barcode_subslice = &barcode[0..kl.known_list_subset_key_size].to_vec();
+
+        for candidate_key in kl.known_list_subset.keys() {
+            let key_dist = edit_distance(barcode_subslice, &candidate_key);
+
+            if key_dist < min_distance {
+                let subset = kl.known_list_subset.get(candidate_key).unwrap();
+
+                for full_candidate in subset {
+                    let dist = edit_distance(&full_candidate, barcode);
+                    if dist < min_distance {
+                        hits.clear();
+                        min_distance = dist;
+                    }
+                    if dist == min_distance {
+                        hits.push(full_candidate.clone());
+                    }
+                }
             }
         }
         kl.known_list_map.insert(barcode.clone(),BestHits{hits: hits.clone(), distance});
