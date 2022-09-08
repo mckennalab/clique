@@ -47,7 +47,7 @@ impl ConsensusManager {
             }
 
         });
-        println!("total = {}, unresolved = {}, resolved = {}",total, unresolved, resolved);
+        println!("total = {}, unresolved = {}, resolved = {}, final = {}",total, unresolved, resolved,clean_mapping.len());
         ConsensusManager{
             observed_identifiers: clean_mapping,
             observed_identifiers_counts: clean_ids,
