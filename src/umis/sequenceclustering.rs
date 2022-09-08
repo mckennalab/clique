@@ -122,6 +122,16 @@ pub fn edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
     dist
 }
 
+pub fn simple_edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
+    assert_eq!(str1.len(), str2.len());
+
+    let mut dist: usize = 0;
+    for i in 0..str1.len() {
+        if str1[i] != str2[i] {dist += 1}
+    }
+    dist
+}
+
 pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance: usize) -> BestHits {
     let mut hits = Vec::new();
     let mut distance = max_distance;
@@ -134,13 +144,13 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
         let barcode_subslice = &barcode[0..kl.known_list_subset_key_size].to_vec();
 
         for candidate_key in kl.known_list_subset.keys() {
-            let key_dist = edit_distance(barcode_subslice, &candidate_key);
+            let key_dist = simple_edit_distance(barcode_subslice, &candidate_key);
 
             if key_dist <= min_distance {
                 let subset = kl.known_list_subset.get(candidate_key).unwrap();
 
                 for full_candidate in subset {
-                    let dist = edit_distance(&full_candidate, barcode);
+                    let dist = simple_edit_distance(&full_candidate, barcode);
                     if dist < min_distance {
                         hits.clear();
                         min_distance = dist;
