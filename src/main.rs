@@ -174,7 +174,7 @@ fn main() {
         let mut read_mapping = HashMap::new();
         for rd in read_iterator {
             cnt += 1;
-            if cnt % 10000 == 0 {
+            if cnt % 100 == 0 {
                 println!("Count {}, hash size: {}",cnt, read_mapping.len());
             }
             let transformed_reads = transform(rd, &read_layout);
