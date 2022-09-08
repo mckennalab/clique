@@ -53,7 +53,7 @@ pub fn load_knownlist(knownlist_file: &String) -> KnownList {
     let mut test_one_off_mapping = HashMap::new();
     let mut test_set = Vec::new();
 
-    let mut reader = BufReader::new(GzDecoder::new(BufReader::new(File::open(knownlist_file).expect("Unable to load input file"))));
+    let mut reader = BufReader::new(File::open(&knownlist_file));// GzDecoder::new(BufReader::new(File::open(knownlist_file).expect("Unable to load input file"))));
 
     let mut cnt = 0;
     for line in reader.lines() {
