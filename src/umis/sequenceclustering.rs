@@ -75,7 +75,10 @@ pub fn load_knownlist(knownlist_file: &String, starting_nmer_size: usize) -> Kno
     let mut cnt = 0;
     for line in raw_reader.lines() {
         let bytes = line.unwrap().as_bytes().to_vec();
-
+        cnt += 1;
+        if cnt % 10000 == 0 {
+            println!("Count {}",cnt);
+        }
         if validate_barcode(&bytes) {
             test_set.push(bytes.clone());
             existing_mapping.insert(bytes.clone(), BestHits{ hits: vec![bytes.clone()], distance: 0 });
