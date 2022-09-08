@@ -1,13 +1,12 @@
 use std::borrow::Borrow;
 use std::cmp::Ordering::Less;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::convert::TryInto;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::str;
-
 
 use flate2::bufread::GzDecoder;
 use petgraph::dot::Dot;
@@ -67,33 +66,42 @@ pub fn get_reader(path: &str) -> Result<Box<dyn BufRead>, &'static str> {
 
 pub fn load_knownlist(knownlist_file: &String, starting_nmer_size: usize) -> KnownList {
     let mut existing_mapping = HashMap::new();
-    let mut known_list_subset: HashMap<Vec<u8>,Vec<Vec<u8>>> =  HashMap::new();
+    let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
     let mut test_set = Vec::new();
 
-    let mut raw_reader =get_reader(knownlist_file).unwrap();
+    let mut raw_reader = get_reader(knownlist_file).unwrap();
 
     let mut cnt = 0;
+
+    let mut btree = BTreeSet::new();
+    println!("Adding known barcodes...");
     for line in raw_reader.lines() {
         let bytes = line.unwrap().as_bytes().to_vec();
-        cnt += 1;
-        if cnt % 10000 == 0 {
-            println!("Count {}",cnt);
-        }
         if validate_barcode(&bytes) {
-            test_set.push(bytes.clone());
-            existing_mapping.insert(bytes.clone(), BestHits{ hits: vec![bytes.clone()], distance: 0 });
-            let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
-            let mut empty: Vec<Vec<u8>> = Vec::new();
-            let mut vec_set = if known_list_subset.contains_key(&first_x) {
-                known_list_subset.get_mut(&first_x).unwrap().clone()
-            } else {
-                empty
-            };
-            vec_set.push(bytes.clone());
-            known_list_subset.insert(first_x, vec_set);
+            btree.insert(bytes);
         }
     }
-    KnownList { known_list: test_set, known_list_map: existing_mapping, known_list_subset, known_list_subset_key_size: starting_nmer_size}
+
+    // now the barcodes are in order, use this to generate grouped keys
+    let mut prefix: Option<Vec<u8>> = None;
+    let mut container : Vec<Vec<u8>> = Vec::new();
+    for bytes in &btree {
+        if !prefix.is_some() {prefix = Some(bytes[0..starting_nmer_size].to_vec());}
+
+        test_set.push(bytes.clone());
+
+        existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
+
+        let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
+        if edit_distance(&first_x,prefix.as_ref().unwrap()) > 0 {
+            known_list_subset.insert(prefix.unwrap(), container.clone());
+            container.clear();
+            prefix = Some(first_x);
+        }
+        container.push(bytes.clone());
+    }
+    known_list_subset.insert(prefix.unwrap(), container.clone());
+    KnownList { known_list: test_set, known_list_map: existing_mapping, known_list_subset, known_list_subset_key_size: starting_nmer_size }
 }
 
 pub struct BestHits {
@@ -102,12 +110,12 @@ pub struct BestHits {
 }
 
 pub fn edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
-    assert_eq!(str1.len(),str2.len());
+    assert_eq!(str1.len(), str2.len());
 
     let mut dist: usize = 0;
     for i in 0..str1.len() {
         if !((DEGENERATEBASES.get(&str1[i]).is_some() && DEGENERATEBASES.get(&str1[i]).unwrap().contains_key(&str2[i])) ||
-             (DEGENERATEBASES.get(&str2[i]).is_some() && DEGENERATEBASES.get(&str2[i]).unwrap().contains_key(&str1[i]))) {
+            (DEGENERATEBASES.get(&str2[i]).is_some() && DEGENERATEBASES.get(&str2[i]).unwrap().contains_key(&str1[i]))) {
             dist += 1;
         }
     }
@@ -120,7 +128,7 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
     if kl.known_list_map.contains_key(barcode) {
         hits.push(barcode.clone());
         distance = 0;
-        BestHits{hits, distance}
+        BestHits { hits, distance }
     } else {
         let mut min_distance = max_distance;
         let barcode_subslice = &barcode[0..kl.known_list_subset_key_size].to_vec();
@@ -143,8 +151,8 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
                 }
             }
         }
-        kl.known_list_map.insert(barcode.clone(),BestHits{hits: hits.clone(), distance});
-        BestHits{hits, distance}
+        kl.known_list_map.insert(barcode.clone(), BestHits { hits: hits.clone(), distance });
+        BestHits { hits, distance }
     }
 }
 
@@ -368,15 +376,15 @@ mod tests {
 
     #[test]
     fn test_edit_distance() {
-        let str1 = vec![b'A',b'C',b'G',b'T',b'A'];
-        let str2 = vec![b'A',b'C',b'G',b'T',b'A'];
-        assert_eq!(edit_distance(&str1,&str2),0);
-        let str2 = vec![b'T',b'C',b'G',b'T',b'A'];
-        assert_eq!(edit_distance(&str1,&str2),1);
-        let str2 = vec![b'a',b'C',b'G',b'T',b'A'];
-        assert_eq!(edit_distance(&str1,&str2),0);
-        let str2 = vec![b'R',b'C',b'G',b'T',b'A'];
-        assert_eq!(edit_distance(&str1,&str2),0);
+        let str1 = vec![b'A', b'C', b'G', b'T', b'A'];
+        let str2 = vec![b'A', b'C', b'G', b'T', b'A'];
+        assert_eq!(edit_distance(&str1, &str2), 0);
+        let str2 = vec![b'T', b'C', b'G', b'T', b'A'];
+        assert_eq!(edit_distance(&str1, &str2), 1);
+        let str2 = vec![b'a', b'C', b'G', b'T', b'A'];
+        assert_eq!(edit_distance(&str1, &str2), 0);
+        let str2 = vec![b'R', b'C', b'G', b'T', b'A'];
+        assert_eq!(edit_distance(&str1, &str2), 0);
     }
 
     fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
