@@ -42,7 +42,7 @@ pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u32 {
 
 pub struct KnownList {
     pub known_list: Vec<Vec<u8>>,
-    pub known_list_map: HashMap<Vec<u8>, Vec<u8>>,
+    pub known_list_map: HashMap<Vec<u8>, BestHits>,
 }
 
 fn validate_barcode(barcode: &Vec<u8>) -> bool {
@@ -74,7 +74,7 @@ pub fn load_knownlist(knownlist_file: &String) -> KnownList {
         let bytes = line.unwrap().as_bytes().to_vec();
         test_set.push(bytes.clone());
         if validate_barcode(&bytes) {
-            test_one_off_mapping.insert(bytes.clone(), bytes.clone());
+            test_one_off_mapping.insert(bytes.clone(), BestHits{ hits: vec![bytes.clone()], distance: 0 });
         }
     }
     KnownList { known_list: test_set, known_list_map: test_one_off_mapping }
@@ -98,7 +98,7 @@ pub fn edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
     dist
 }
 
-pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &KnownList, max_distance: usize) -> BestHits {
+pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance: usize) -> BestHits {
     let mut hits = Vec::new();
     let mut distance = max_distance;
     if kl.known_list_map.contains_key(barcode) {
@@ -117,6 +117,7 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &KnownList, max_distance: us
                 hits.push(candidate.clone());
             }
         }
+        kl.known_list_map.insert(barcode.clone(),BestHits{hits: hits.clone(), distance});
         BestHits{hits, distance}
     }
 }

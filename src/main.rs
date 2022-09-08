@@ -165,7 +165,7 @@ fn main() {
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
-    let known_list = load_knownlist(&parameters.known_list);
+    let mut known_list = load_knownlist(&parameters.known_list);
 
     let read_iterator = ReadIterator::new(parameters.read1, parameters.read2,parameters.index1,parameters.index2);
 
@@ -180,7 +180,7 @@ fn main() {
             let transformed_reads = transform(rd, &read_layout);
             let first_hit = transformed_reads.get_unique_sequences().unwrap()[0].clone();
             //if known_list.as_ref().is_some() {
-                let corrected_hits = correct_to_known_list(&first_hit, &known_list, 1);
+                let corrected_hits = correct_to_known_list(&first_hit, &mut known_list, 1);
                 read_mapping.insert(first_hit.clone(),corrected_hits);
             //} else {
             //    read_mapping.insert(first_hit.clone(),BestHits{ hits: vec![first_hit.clone()], distance: 0 });
