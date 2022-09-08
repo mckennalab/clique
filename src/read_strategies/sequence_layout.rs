@@ -108,12 +108,14 @@ impl ReadIterator
     fn open_reader(filename: String) -> Option<Records<BufReader<File>>> {
         let check_path = Path::new(&filename).exists();
         if check_path {
+            println!("Path {} exists",filename);
             let f2 = File::open(filename.clone());
             let mut f2gz = fastq::Reader::new(File::open(filename).unwrap());
 
             let records = f2gz.records();
             Some(records)
         } else {
+            println!("Path {} DOESNT exists",filename);
             None
         }
     }
