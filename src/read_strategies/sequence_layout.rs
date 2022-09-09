@@ -20,7 +20,7 @@ pub enum LayoutType {
 }
 
 impl LayoutType {
-    pub fn has_umi(&self) -> bool {
+    pub fn has_identifying_sequence(&self) -> bool {
         match *self {
             LayoutType::TENXV3 => true,
             LayoutType::TENXV2 => true,
@@ -53,6 +53,12 @@ pub struct ReadLayout {
     index_two: Option<Record>,
 }
 
+pub struct ReadFileContainer {
+    pub read_one: String,
+    pub read_two: String,
+    pub index_one: String,
+    pub index_two: String,
+}
 pub struct ReadIterator {
     pub read_one: Records<BufReader<File>>,
     pub read_two: Option<Records<BufReader<File>>>,
@@ -92,10 +98,10 @@ impl Iterator for ReadIterator {
 
 impl ReadIterator
 {
-    pub fn new(read_1: String,
-               read_2: String,
-               index_1: String,
-               index_2: String,
+    pub fn new(read_1: &String,
+               read_2: &String,
+               index_1: &String,
+               index_2: &String,
     ) -> ReadIterator  {
         ReadIterator {
             read_one: ReadIterator::open_reader(read_1).unwrap(),
@@ -105,7 +111,11 @@ impl ReadIterator
         }
     }
 
-    fn open_reader(filename: String) -> Option<Records<BufReader<File>>> {
+    pub fn new_from_bundle(read_files: &ReadFileContainer) -> ReadIterator  {
+        ReadIterator::new(&read_files.read_one, &read_files.read_two, &read_files.index_one, &read_files.index_two)
+    }
+
+    fn open_reader(filename: &String) -> Option<Records<BufReader<File>>> {
         let check_path = Path::new(&filename).exists();
         if check_path {
             println!("Path {} exists",filename);

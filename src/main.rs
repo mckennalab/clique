@@ -33,7 +33,7 @@ use clap::Parser;
 use consensus::consensus_manager::ConsensusManager;
 use extractor::extract_tagged_sequences;
 use rayon::prelude::*;
-use read_strategies::sequence_layout::{LayoutType, ReadIterator, transform};
+use read_strategies::sequence_layout::{LayoutType, ReadIterator, transform, ReadFileContainer};
 use reference::fasta_reference::reference_file_to_struct;
 use umis::sequenceclustering::*;
 
@@ -56,7 +56,6 @@ mod alignment {
     pub mod scoring_functions;
 }
 
-
 mod consensus {
     pub mod serial_passage_read_corrector;
     pub mod consensus_builders;
@@ -68,6 +67,10 @@ pub mod fasta_comparisons;
 mod read_strategies {
     pub mod sequence_layout;
     pub mod ten_x;
+}
+
+mod utils {
+    pub mod custom_read_sort;
 }
 
 mod reference {
@@ -156,6 +159,13 @@ fn main() {
 
     let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
 
+    let read_bundle = ReadFileContainer{
+        read_one: parameters.read1,
+        read_two: parameters.read2,
+        index_one: parameters.index1,
+        index_two: parameters.index2
+    };
+
     let reference = reference_file_to_struct(&parameters.reference);
 
     let output_file = File::create(parameters.output).unwrap();
@@ -169,13 +179,13 @@ fn main() {
     println!("Creating known list...");
     let mut known_list = load_knownlist(&parameters.known_list, 7);
 
-    let read_iterator = ReadIterator::new(parameters.read1, parameters.read2, parameters.index1, parameters.index2);
+    let read_iterator = ReadIterator::new_from_bundle(&read_bundle);
 
     println!("Processing UMIs...");
     let mut consensus_manager = ConsensusManager::new();
 
 
-    if read_layout.has_umi() {
+    if read_layout.has_identifying_sequence() {
         let mut cnt = 0;
         let mut mto = 0;
         for rd in read_iterator {
@@ -197,6 +207,8 @@ fn main() {
         }
         println!("Count = {}, mto = {}",cnt,mto);
         consensus_manager.unified_consensus_list();
+        let splits = consensus_manager.read_balanced_lists(10);
+        println!("sizes = {}",splits.len());
     }
 
     //read_iterator.par_bridge().for_each(|xx|
