@@ -230,7 +230,17 @@ pub fn create_scoring_record_3d(hint_seq_a_len: usize, hint_seq_b_len: usize, al
     }
 }
 
-#[allow(dead_code)]
+
+pub fn alignment_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
+    let mut mat = create_scoring_record_2d(str1.len(), str2.len(), AlignmentType::SIMPLE, false);
+    perform_unit_alignment(&mut mat,str1, str2);
+
+    let alignment = perform_2d_global_traceback(&mut mat, str1, str2);
+
+    (f64::round(f64::abs(f64::max(str1.len() as f64,str2.len() as f64) - alignment.score))) as usize
+}
+
+
 pub fn create_scoring_record_2d(hint_seq_a_len: usize, hint_seq_b_len: usize, alignment_type: AlignmentType, local_alignment: bool) -> Alignment<Ix2> {
     Alignment {
         scores: Array::<f64, Ix2>::zeros((hint_seq_a_len, hint_seq_b_len).f()),
@@ -239,6 +249,40 @@ pub fn create_scoring_record_2d(hint_seq_a_len: usize, hint_seq_b_len: usize, al
         is_local: local_alignment,
     }
 }
+
+
+
+fn perform_unit_alignment(alignment: &mut Alignment<Ix2>,sequence1: &Vec<u8>, sequence2: &Vec<u8>) {
+    let gap_cost = -1.0;
+    let mismatch_cost = -1.0;
+    let match_value = 1.0;
+
+    // first column (going down)
+    for x in 0..alignment.scores.shape()[0] {
+        alignment.scores[[x, 0]] = if alignment.is_local { 0.0 } else { gap_cost * (x as f64)};
+        alignment.traceback[[x, 0]] = AlignmentDirection::UP(1);
+    }
+    // top row
+    for y in 0..alignment.scores.shape()[1] {
+        alignment.scores[[0, y]] = if alignment.is_local { 0.0 } else { gap_cost * (y as f64) };
+        alignment.traceback[[0, y]] = AlignmentDirection::LEFT(1);
+    }
+
+    for x in 1..alignment.scores.shape()[0] {
+        for y in 1..alignment.scores.shape()[1] {
+            let match_score = if &sequence1[x - 1] == &sequence2[y - 1] {match_value} else {mismatch_cost};
+            let comp_values = vec![(if alignment.is_local { 0.0 } else { MAX_NEG_SCORE }, AlignmentDirection::DIAG(1)),
+                                   (alignment.scores[[x - 1, y - 1]] + match_score, AlignmentDirection::DIAG(1)),
+                                   (alignment.scores[[x, y - 1]] + gap_cost, AlignmentDirection::LEFT(1)),
+                                   (alignment.scores[[x - 1, y]] + gap_cost, AlignmentDirection::UP(1))];
+            let best_score = comp_values.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+
+            alignment.scores[[x, y]] = best_score.unwrap().0;
+            alignment.traceback[[x, y]] = best_score.unwrap().1;
+        }
+    }
+}
+
 
 /// Performs alignment inline on the passed alignment structure
 /// our assumed structure is:

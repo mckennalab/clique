@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -30,12 +30,13 @@ use seq_io::fasta::{OwnedRecord, Reader, Record};
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
 use clap::Parser;
-use consensus::consensus_manager::ConsensusManager;
-use extractor::extract_tagged_sequences;
+use crate::sorters::known_list::KnownListConsensus;
+use crate::extractor::extract_tagged_sequences;
 use rayon::prelude::*;
-use read_strategies::sequence_layout::{LayoutType, ReadIterator, transform, ReadFileContainer};
-use reference::fasta_reference::reference_file_to_struct;
-use umis::sequenceclustering::*;
+use crate::read_strategies::sequence_layout::*;
+use crate::read_strategies::sequence_structures::*;
+use crate::reference::fasta_reference::reference_file_to_struct;
+use crate::umis::sequence_clustering::*;
 
 use crate::linked_alignment::*;
 
@@ -48,7 +49,7 @@ mod simple_umi_clustering;
 
 mod umis {
     pub mod bronkerbosch;
-    pub mod sequenceclustering;
+    pub mod sequence_clustering;
 }
 
 mod alignment {
@@ -59,24 +60,30 @@ mod alignment {
 mod consensus {
     pub mod serial_passage_read_corrector;
     pub mod consensus_builders;
-    pub mod consensus_manager;
 }
 
 pub mod fasta_comparisons;
 
 mod read_strategies {
     pub mod sequence_layout;
+    pub mod sequence_structures;
     pub mod ten_x;
 }
 
 mod utils {
     pub mod custom_read_sort;
+    pub mod file_utils;
+    pub mod base_utils;
+}
+
+mod sorters {
+    pub mod known_list;
+    pub mod sorter;
 }
 
 mod reference {
     pub mod fasta_reference;
 }
-
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -160,10 +167,10 @@ fn main() {
     let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
 
     let read_bundle = ReadFileContainer{
-        read_one: parameters.read1,
-        read_two: parameters.read2,
-        index_one: parameters.index1,
-        index_two: parameters.index2
+        read_one: PathBuf::from(parameters.read1),
+        read_two: PathBuf::from(parameters.read2),
+        index_one: PathBuf::from(parameters.index1),
+        index_two: PathBuf::from(parameters.index2)
     };
 
     let reference = reference_file_to_struct(&parameters.reference);
@@ -177,14 +184,14 @@ fn main() {
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
     println!("Creating known list...");
-    let mut known_list = load_knownlist(&parameters.known_list, 7);
+    let mut known_list = KnownList::new(&parameters.known_list, 7);
 
     let read_iterator = ReadIterator::new_from_bundle(&read_bundle);
 
     println!("Processing UMIs...");
-    let mut consensus_manager = ConsensusManager::new();
+    let mut consensus_manager = KnownListConsensus::new();
 
-
+    /*
     if read_layout.has_identifying_sequence() {
         let mut cnt = 0;
         let mut mto = 0;
@@ -194,7 +201,7 @@ fn main() {
             }
             cnt += 1;
             let transformed_reads = transform(rd, &read_layout);
-            let first_hit = transformed_reads.get_unique_sequences().unwrap()[0].clone();
+            let first_hit = transformed_reads.umi_sorting_path().unwrap()[0].clone();
             //if known_list.as_ref().is_some() {
             let corrected_hits = correct_to_known_list(&first_hit, &mut known_list, 1);
             if corrected_hits.hits.len() > 1 {
@@ -206,10 +213,10 @@ fn main() {
             //}
         }
         println!("Count = {}, mto = {}",cnt,mto);
-        consensus_manager.unified_consensus_list();
+        consensus_manager.match_to_knownlist();
         let splits = consensus_manager.read_balanced_lists(10);
-        println!("sizes = {}",splits.len());
-    }
+
+    }*/
 
     //read_iterator.par_bridge().for_each(|xx|
 }

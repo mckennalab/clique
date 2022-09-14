@@ -9,6 +9,7 @@ use std::path::Path;
 use std::str;
 
 use flate2::bufread::GzDecoder;
+use petgraph::algo::{kosaraju_scc, tarjan_scc};
 use petgraph::dot::Dot;
 use petgraph::prelude::*;
 use rand::{Rng, seq};
@@ -18,28 +19,31 @@ use rand::prelude::*;
 use indicatif::ProgressBar;
 
 use crate::fasta_comparisons::*;
+use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::umis::bronkerbosch::BronKerbosch;
-
-// 0.8
+use crate::utils::base_utils::*;
+use crate::utils::file_utils::get_reader;
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,
-    pub max_dist: u32, // the minimum distance to consider for creating an edge
+    pub max_dist: u64, // the minimum distance to consider for creating an edge
 }
 
 pub struct StringGraph {
     pub graph: GraphMap<u32, u32, Undirected>,
     pub string_to_node: HashMap<Vec<u8>, u32>,
     pub node_to_string: HashMap<u32, Vec<u8>>,
+    pub max_distance: u64,
 }
 
 
-pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u32 {
+pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u64 {
     assert_eq!(str1.len(), str2.len());
     str1.iter().zip(str2.iter()).map(|(c1, c2)| if c1 == c2 { 0 } else { 1 }).sum()
 }
 
 pub struct KnownList {
+    pub name: String,
     pub known_list: Vec<Vec<u8>>,
     pub known_list_map: HashMap<Vec<u8>, BestHits>,
     known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>>,
@@ -50,60 +54,65 @@ fn validate_barcode(barcode: &Vec<u8>) -> bool {
     barcode.iter().filter(|b| !KNOWNBASES.contains_key(*b)).map(|n| n).collect::<Vec<_>>().len() == 0 as usize
 }
 
-pub fn get_reader(path: &str) -> Result<Box<dyn BufRead>, &'static str> {
-    let file_type = path.split(".").collect::<Vec<&str>>().last().unwrap().clone();
+impl KnownList {
+    const KNOWN_LIST_SEPARATOR: &'static str = ":";
 
-    match file_type {
-        "gz" => {
-            let reader = Box::new(GzDecoder::new(BufReader::new(File::open(path).expect("Unable to open input known file"))));
-            Ok(Box::new(BufReader::new(reader)))
+    pub fn new(knownlist_tag_and_file: &String, starting_nmer_size: usize) -> KnownList {
+
+        // TODO: fix the sep here
+        let knownlist_tag_and_file_vec = knownlist_tag_and_file.split(":").collect::<Vec<&str>>();
+        assert_eq!(knownlist_tag_and_file_vec.len(), 2);
+
+        let mut existing_mapping = HashMap::new();
+        let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
+        let mut test_set = Vec::new();
+
+        let mut raw_reader = get_reader(knownlist_tag_and_file_vec[1]).unwrap();
+
+        let mut cnt = 0;
+
+        let mut btree = BTreeSet::new();
+        println!("Adding known barcodes...");
+        for line in raw_reader.lines() {
+            let bytes = line.unwrap().as_bytes().to_vec();
+            if validate_barcode(&bytes) {
+                btree.insert(bytes);
+            }
         }
-        _ => {
-            Ok(Box::new(BufReader::new(File::open(path).expect("Unable to open known input file"))))
+
+        // now the barcodes are in order, use this to generate grouped keys
+        let mut prefix: Option<Vec<u8>> = None;
+        let mut container: Vec<Vec<u8>> = Vec::new();
+        for bytes in &btree {
+            if !prefix.is_some() { prefix = Some(bytes[0..starting_nmer_size].to_vec()); }
+
+            test_set.push(bytes.clone());
+
+            existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
+
+            let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
+            if edit_distance(&first_x, prefix.as_ref().unwrap()) > 0 {
+                known_list_subset.insert(prefix.unwrap(), container.clone());
+                container.clear();
+                prefix = Some(first_x);
+            }
+            container.push(bytes.clone());
+        }
+        known_list_subset.insert(prefix.unwrap(), container.clone());
+        KnownList {
+            name: knownlist_tag_and_file_vec[0].to_string(),
+            known_list: test_set,
+            known_list_map: existing_mapping,
+            known_list_subset,
+            known_list_subset_key_size: starting_nmer_size,
         }
     }
 }
 
-pub fn load_knownlist(knownlist_file: &String, starting_nmer_size: usize) -> KnownList {
-    let mut existing_mapping = HashMap::new();
-    let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
-    let mut test_set = Vec::new();
 
-    let mut raw_reader = get_reader(knownlist_file).unwrap();
-
-    let mut cnt = 0;
-
-    let mut btree = BTreeSet::new();
-    println!("Adding known barcodes...");
-    for line in raw_reader.lines() {
-        let bytes = line.unwrap().as_bytes().to_vec();
-        if validate_barcode(&bytes) {
-            btree.insert(bytes);
-        }
-    }
-
-    // now the barcodes are in order, use this to generate grouped keys
-    let mut prefix: Option<Vec<u8>> = None;
-    let mut container : Vec<Vec<u8>> = Vec::new();
-    for bytes in &btree {
-        if !prefix.is_some() {prefix = Some(bytes[0..starting_nmer_size].to_vec());}
-
-        test_set.push(bytes.clone());
-
-        existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
-
-        let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
-        if edit_distance(&first_x,prefix.as_ref().unwrap()) > 0 {
-            known_list_subset.insert(prefix.unwrap(), container.clone());
-            container.clear();
-            prefix = Some(first_x);
-        }
-        container.push(bytes.clone());
-    }
-    known_list_subset.insert(prefix.unwrap(), container.clone());
-    KnownList { known_list: test_set, known_list_map: existing_mapping, known_list_subset, known_list_subset_key_size: starting_nmer_size }
+pub struct KnownListOrganizer {
+    known_list_mapping: HashMap<String, KnownList>,
 }
-
 
 pub struct BestHits {
     pub hits: Vec<Vec<u8>>,
@@ -112,31 +121,8 @@ pub struct BestHits {
 
 impl Clone for BestHits {
     fn clone(&self) -> BestHits {
-        BestHits{hits: self.hits.clone(), distance: self.distance}
+        BestHits { hits: self.hits.clone(), distance: self.distance }
     }
-}
-
-pub fn edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
-    assert_eq!(str1.len(), str2.len());
-
-    let mut dist: usize = 0;
-    for i in 0..str1.len() {
-        if !((DEGENERATEBASES.get(&str1[i]).is_some() && DEGENERATEBASES.get(&str1[i]).unwrap().contains_key(&str2[i])) ||
-            (DEGENERATEBASES.get(&str2[i]).is_some() && DEGENERATEBASES.get(&str2[i]).unwrap().contains_key(&str1[i]))) {
-            dist += 1;
-        }
-    }
-    dist
-}
-
-pub fn simple_edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
-    assert_eq!(str1.len(), str2.len());
-
-    let mut dist: usize = 0;
-    for i in 0..str1.len() {
-        if str1[i] != str2[i] {dist += 1}
-    }
-    dist
 }
 
 pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance: usize) -> BestHits {
@@ -174,7 +160,7 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
 }
 
 
-pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8>) -> u32, progress: bool) -> StringGraph {
+pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8>) -> u64, progress: bool) -> StringGraph {
     let mut graph = GraphMap::<u32, u32, Undirected>::new();
     let mut string_to_node: HashMap<Vec<u8>, u32> = HashMap::new();
     let mut node_to_string: HashMap<u32, Vec<u8>> = HashMap::new();
@@ -213,7 +199,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
             if key1 != key2 && key1.cmp(&key2) == Less {
                 let dist = compare(&key1, &key2);
                 if dist <= input_list.max_dist {
-                    graph.add_edge(node1, node2, dist);
+                    graph.add_edge(node1, node2, dist as u32);
                 }
                 if bar.is_some() {
                     bar.as_ref().unwrap().inc(1);
@@ -222,14 +208,106 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
         });
     });
 
-    StringGraph { graph, string_to_node, node_to_string }
+    StringGraph { graph, string_to_node, node_to_string, max_distance: input_list.max_dist as u64 }
 }
+
 
 pub fn process_cliques(string_graph: &StringGraph) -> BronKerbosch<u32, u32> {
     let mut bronker = BronKerbosch::new(string_graph.graph.clone());
     bronker.compute();
     println!("Discovered {} cliques in the data", bronker.max_cliques.len());
     bronker
+}
+
+
+pub fn max_set_distance(set: &Vec<Vec<u8>>) -> u64 {
+    let mut max = 0;
+    set.iter().for_each(|l1| {
+        set.iter().for_each(|l2| {
+            max = u64::max(string_distance(l1, l2) as u64, max);
+        });
+    });
+    max
+}
+
+pub fn average_set_distance(set: &Vec<Vec<u8>>) -> f64 {
+    let mut dist = 0.0;
+    set.iter().for_each(|l1| {
+        set.iter().for_each(|l2| {
+            dist += string_distance(l1, l2) as f64;
+        });
+    });
+    dist / ((set.len() * set.len()) as f64)
+}
+
+pub fn interset_distance(left: &Vec<Vec<u8>>, right: &Vec<Vec<u8>>) -> f64 {
+    let mut dist = 0.0;
+    left.iter().for_each(|l1| {
+        right.iter().for_each(|r1| {
+            dist += string_distance(l1, r1) as f64;
+        });
+    });
+    dist / ((left.len() * right.len()) as f64)
+}
+
+pub fn set_distances(left: &Vec<Vec<u8>>, right: &Vec<Vec<u8>>) -> (u64, u64, f64) {
+    (max_set_distance(left), max_set_distance(right), interset_distance(left, right))
+}
+
+pub fn max_graph_set_differences(string_graph: &StringGraph) -> u64 {
+    max_set_distance(&string_graph.node_to_string.values().map(|c| c.clone()).collect::<Vec<Vec<u8>>>())
+}
+
+/// A heuristic approach to splitting over-connected graphs: find the most balanced split that
+/// lowers each subgraph below the over-connected limit (2 * max_distance). If successful it returns
+/// those strings, else None
+pub fn split_subgroup(string_graph: &mut StringGraph) -> Option<Vec<Vec<Vec<u8>>>> {
+    if max_set_distance(&string_graph.string_to_node.keys().map(|k| k.clone()).collect::<Vec<Vec<u8>>>()) <= string_graph.max_distance * 2 {
+        return None
+    }
+    let mut best_edge: Option<(u32, u32, &u32)> = None;
+    let mut best_balance: f64 = 1.0;
+    let mut best_left_right = (0, 0);
+    let node_count = string_graph.graph.node_count() as f64;
+    let mut best_left = Vec::new();
+    let mut best_right = Vec::new();
+
+    for x in string_graph.graph.all_edges() {
+        let mut new_graph = string_graph.graph.clone();
+        new_graph.remove_edge(x.0, x.1);
+        let comps = get_connected_components(&StringGraph {
+            graph: new_graph,
+            string_to_node: string_graph.string_to_node.clone(),
+            node_to_string: string_graph.node_to_string.clone(),
+            max_distance: string_graph.max_distance,
+        });
+        if comps.len() == 2 {
+            let balance = f64::abs((comps[0].len() as f64) - (comps[1].len() as f64)) / node_count;
+            let left_set_max_dist = max_set_distance(&comps[0]);
+            let right_set_max_dist = max_set_distance(&comps[1]);
+
+            if balance < best_balance && left_set_max_dist < (string_graph.max_distance * 2) && right_set_max_dist < (string_graph.max_distance * 2) {
+                best_left_right = (comps[0].len(), comps[1].len());
+                best_balance = balance;
+                best_edge = Some(x);
+                best_left = comps[0].clone();
+                best_right = comps[1].clone();
+            }
+        }
+    }
+    if best_left.len() > 0 {
+        Some(vec![best_left, best_right])
+    } else {
+        None
+    }
+}
+
+
+pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>> {
+    let graph_nodes: Vec<Vec<u32>> = tarjan_scc(&string_graph.graph);
+    graph_nodes.into_iter().map(|nodes| {
+        nodes.into_iter().map(|node| string_graph.node_to_string.get(&node).unwrap().clone()).collect::<Vec<Vec<u8>>>()
+    }).collect::<Vec<Vec<Vec<u8>>>>()
 }
 
 
@@ -279,9 +357,9 @@ pub fn permute_random_string(length: usize, error_rate: f64, count: usize) -> Ve
     ret
 }
 
-pub fn generate_simulated_data(length: usize, base_count: usize, error_strings_per_string: usize, base_error_pct: f64) -> Vec<Vec<u8>> {
+pub fn generate_simulated_data(length: usize, groups: usize, error_strings_per_string: usize, base_error_pct: f64) -> Vec<Vec<u8>> {
     let mut returned_vec = Vec::new();
-    for _i in 0..base_count {
+    for _i in 0..groups {
         returned_vec.append(&mut permute_random_string(length, base_error_pct, error_strings_per_string));
     }
     returned_vec
@@ -408,5 +486,57 @@ mod tests {
         where P: AsRef<Path>, {
         let file = File::open(filename)?;
         Ok(io::BufReader::new(file).lines())
+    }
+
+    #[test]
+    fn test_cc() {
+        let barcode_length = 8;
+
+        let test_set = generate_simulated_data(barcode_length, 10, 10, 0.1);
+        let mut group1 = create_one_off_errors(&generate_random_string(barcode_length));
+        println!("Group 1 {}", group1.len());
+        group1.extend(create_one_off_errors(&generate_random_string(barcode_length)));
+        group1.extend(create_one_off_errors(&generate_random_string(barcode_length)));
+        group1.extend(create_one_off_errors(&generate_random_string(barcode_length)));
+        println!("Group 1 {}", group1.len());
+        let graph = input_list_to_graph(&InputList { strings: group1, max_dist: 1 }, string_distance, false);
+        println!("Graphing!");
+        let cn = get_connected_components(&graph);
+        println!("Graphing! {} ", cn.len());
+        for group in cn {
+            println!("group");
+            for g in group {
+                println!("Entry {}", String::from_utf8(g).unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn test_cc_group_size() {
+        let barcode_length = 8;
+        let mut set1 = Vec::new();
+        set1.push(vec![b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', ]);
+        set1.push(vec![b'T', b'T', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', ]);
+        set1.push(vec![b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'T', b'T', ]);
+        set1.push(vec![b'A', b'A', b'A', b'A', b'A', b'A', b'T', b'T', b'T', b'T', ]);
+
+        set1.push(vec![b'T', b'T', b'A', b'A', b'A', b'A', b'T', b'T', b'T', b'T', ]);
+        set1.push(vec![b'T', b'T', b'A', b'A', b'T', b'T', b'T', b'T', b'T', b'T', ]);
+        let mut graph = input_list_to_graph(&InputList { strings: set1, max_dist: 2 }, string_distance, false);
+        assert!(!split_subgroup(&mut graph).is_some());
+
+        let mut set2 = Vec::new();
+        set2.push(vec![b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', ]);
+        set2.push(vec![b'T', b'T', b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', ]);
+        set2.push(vec![b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'T', b'T', ]);
+        let mut graph = input_list_to_graph(&InputList { strings: set2, max_dist: 2 }, string_distance, false);
+        assert!(!split_subgroup(&mut graph).is_some());
+
+        let mut set3 = Vec::new();
+        set3.push(vec![b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', ]);
+        set3.push(vec![b'T', b'T', b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', ]);
+        set3.push(vec![b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'T', b'T', ]);
+        let mut graph = input_list_to_graph(&InputList { strings: set3, max_dist: 2 }, string_distance, false);
+        assert!(!split_subgroup(&mut graph).is_some());
     }
 }

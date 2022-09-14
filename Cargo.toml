@@ -22,6 +22,7 @@ suffix = "1.2"
 num-traits = "*"
 indicatif = "*"
 rust-spoa = "*"
+tempfile = "3"
 
 [profile.release]
 lto = true

@@ -1,6 +1,16 @@
-use std::fs::{remove_file, File};
-use std::io::{prelude::*, BufReader, BufWriter, Lines};
+use std::borrow::{Borrow, BorrowMut};
+use std::fs::{File, remove_file};
+use std::io::{BufReader, BufWriter, Lines, prelude::*};
 use std::mem;
+use std::path::{Path, PathBuf};
+
+use bio::io::fastq::{Reader, Record, Records};
+
+use crate::read_strategies::sequence_layout::*;
+use crate::read_strategies::sequence_structures::{ReadIterator, ReadSetContainer};
+use crate::read_strategies::sequence_structures::*;
+use crate::sorters::known_list::KnownListSort;
+use crate::sorters::sorter::SortStructure;
 
 const BUFFER_CAPACITY: usize = 4_000_000_000;
 const MAX_MEM_USE: usize = 4_000_000_000;
@@ -12,101 +22,25 @@ fn main() {
     extern_sort(filename, MAX_MEM_USE);
 }
 */
+/*
+impl SortedInputContainer {
+    pub fn from_sorting_container(sc: &ReadSortingFileContainer, layout: &LayoutType, cms: &KnownListSort) -> SortedInputContainer {
+        let read_iterator = ReadIterator::new_from_on_disk_sorter(sc);
 
-pub(crate) fn create_tmp_list(file_count: usize) -> Vec<File> {
-    (0..file_count).map(|c| tempfile::tempfile().unwrap()).into_iter().collect()
-}
+        let mut to_be_sorted = Vec::new();
 
+        for rd in read_iterator {
+            let transformed_reads = transform(rd, layout);
+            assert!(transformed_reads.has_original_reads());
 
-fn extern_sort(filename: &str, max_mem_use: usize) {
-    let file = BufReader::with_capacity(BUFFER_CAPACITY, File::open(filename).unwrap());
-    let mut v = vec![];
-    let mut tmp_file_names = vec![];
-    for x in file.lines() {
-        v.push(x.unwrap().parse::<f64>().unwrap());
-        if mem::size_of::<f64>() * v.len() > max_mem_use {
-            sort_and_write_to_file(&mut v, &mut tmp_file_names);
+            let first_barcode = transformed_reads.umi_sorting_path().unwrap()[0].clone();
+
+            let mapped_to_id = cms.original_to_best_match.get(&first_barcode).unwrap();
+            to_be_sorted.push((String::from_utf8(mapped_to_id.clone()).unwrap(),transformed_reads));
         }
-    }
-    if v.len() > 0 {
-        sort_and_write_to_file(&mut v, &mut tmp_file_names);
-    }
-    merge(&tmp_file_names, filename);
-    clean_up(&tmp_file_names);
-}
+        to_be_sorted.sort_by(|a, b|a.0.partial_cmp(&b.0).unwrap());
 
-fn sort_and_write_to_file(v: &mut Vec<f64>, tmp_file_names: &mut Vec<String>) {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let tmp_file_name = format!("tmp_sort_{}.txt", tmp_file_names.len());
-    tmp_file_names.push(tmp_file_name.clone());
-    println!("creating tmp file: {}", tmp_file_name);
-    write_to_file(tmp_file_name, &v);
-    v.clear();
-}
-
-fn clean_up(file_names: &Vec<String>) {
-    file_names.iter().for_each(|p| remove_file(p).unwrap());
-}
-
-fn merge(tmp_file_names: &Vec<String>, file_name: &str) {
-    println!("merging result ...");
-    let result_file_name = format!("{}-sorted.txt", file_name.strip_suffix(".txt").unwrap());
-    let mut file = BufWriter::with_capacity(BUFFER_CAPACITY, File::create(result_file_name).unwrap());
-    let mut active_readers = tmp_file_names
-        .iter()
-        .map(|name| BufReader::with_capacity(BUFFER_CAPACITY, File::open(name).unwrap()).lines())
-        .collect::<Vec<Lines<BufReader<File>>>>();
-    let mut values = active_readers
-        .iter_mut()
-        .map(|r| r.next().unwrap().unwrap().parse::<f64>().unwrap())
-        .collect::<Vec<f64>>();
-    while active_readers.len() > 0 {
-        let (i, max_val) = values
-            .iter()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .unwrap();
-        writeln!(file, "{}", max_val);
-        if let Some(x) = active_readers[i].next() {
-            values[i] = x.unwrap().parse::<f64>().unwrap();
-        } else {
-            values.remove(i);
-            active_readers.remove(i);
-        }
-    }
-    file.flush().unwrap();
-}
-
-fn write_to_file(filename: String, v: &Vec<f64>) {
-    let mut buffer = BufWriter::with_capacity(BUFFER_CAPACITY, File::create(&filename).unwrap());
-    for x in v.iter() {
-        writeln!(buffer, "{}", x);
-    }
-    buffer.flush().unwrap();
-}
-
-fn create_large_file(size: usize, filename: &str) {
-    println!("creating large file ...");
-    let mut file = BufWriter::with_capacity(BUFFER_CAPACITY, File::create(filename).unwrap());
-    let mut logistic = Logistic(0.35);
-    let mut last_log = 0;
-    let mut file_size = 0;
-    while file_size < size {
-        writeln!(file, "{}", logistic.next().unwrap());
-        file_size += mem::size_of::<f64>();
-        if file_size - last_log > 1_000_000 {
-            println!("{}mb", file_size as f64 / 1_000_000.0);
-            last_log = file_size;
-        }
-    }
-    file.flush().unwrap();
-}
-
-struct Logistic(f64);
-impl Iterator for Logistic {
-    type Item = f64;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0 = 3.7 * self.0 * (1.0 - self.0);
-        Some(self.0)
+        SortedInputContainer{ sorted_records: to_be_sorted }
     }
 }
+*/
