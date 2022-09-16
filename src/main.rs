@@ -118,6 +118,9 @@ struct Args {
     #[clap(long)]
     read_template: String,
 
+    #[clap(long)]
+    number_of_buckets: String,
+
     #[structopt(long, default_value = "NONE")]
     known_list: String,
 }
@@ -214,7 +217,7 @@ fn main() {
     }
     println!("Count = {}, mto = {}", cnt, mto);
     consensus_manager.match_to_knownlist();
-    let splits = consensus_manager.read_balanced_lists(10);
+    let splits = consensus_manager.read_balanced_lists(parameters.number_of_buckets);
 
     let test_output = PathBuf::from("test_file.txt".to_string());
     let read_iterator2 = ReadIterator::new_from_bundle(&read_bundle);
