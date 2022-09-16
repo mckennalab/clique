@@ -119,7 +119,7 @@ struct Args {
     read_template: String,
 
     #[clap(long)]
-    number_of_buckets: String,
+    number_of_buckets: usize,
 
     #[structopt(long, default_value = "NONE")]
     known_list: String,
