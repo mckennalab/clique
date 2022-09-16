@@ -217,7 +217,7 @@ fn main() {
     }
     println!("Count = {}, mto = {}", cnt, mto);
     consensus_manager.match_to_knownlist();
-    let splits = consensus_manager.read_balanced_lists(parameters.number_of_buckets);
+    let splits = consensus_manager.read_balanced_lists(parameters.number_of_buckets as u64);
 
     let test_output = PathBuf::from("test_file.txt".to_string());
     let read_iterator2 = ReadIterator::new_from_bundle(&read_bundle);
