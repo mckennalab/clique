@@ -89,6 +89,25 @@ pub struct ReadIterator {
     pub index_two: Option<Records<BufReader<BGZFReader<BufReader<File>>>>>,
 }
 
+pub fn unwrap_read(read: &mut Option<Records<BufReader<BGZFReader<BufReader<File>>>>>) -> Option<Record> {
+    match read
+    {
+        Some(ref mut read_pointer) => {
+            let next = read_pointer.next();
+            match next {
+                Some(rp) => {
+                    match rp {
+                        Ok(x) => Some(x),
+                        Err(x) => None,
+                    }
+                },
+                None => None,
+            }
+        },
+        None => None,
+    }
+}
+
 impl Iterator for ReadIterator {
     type Item = ReadSetContainer;
 
@@ -99,21 +118,9 @@ impl Iterator for ReadIterator {
                 Ok(v) => {
                     Some(ReadSetContainer {
                         read_one: v,
-                        read_two: match self.read_two
-                        {
-                            Some(ref mut read_pointer) => Some(read_pointer.next().unwrap().unwrap()),
-                            None => None,
-                        },
-                        index_one: match self.index_one
-                        {
-                            Some(ref mut read_pointer) => Some(read_pointer.next().unwrap().unwrap()),
-                            None => None,
-                        },
-                        index_two: match self.index_two
-                        {
-                            Some(ref mut read_pointer) => Some(read_pointer.next().unwrap().unwrap()),
-                            None => None,
-                        },
+                        read_two: unwrap_read(&mut self.read_two),
+                        index_one: unwrap_read(&mut self.index_one),
+                        index_two: unwrap_read(&mut self.index_two),
                     })
                 }
                 Err(e) => {
@@ -125,6 +132,8 @@ impl Iterator for ReadIterator {
             None
         }
     }
+
+
 }
 
 impl ReadIterator
