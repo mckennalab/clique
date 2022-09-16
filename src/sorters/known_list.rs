@@ -131,7 +131,7 @@ impl KnownListConsensus {
     pub fn consensus(read_file_bundle: &ReadFileContainer,
                      splits: &KnownListSort,
                      layout: &LayoutType,
-                        output_file: &PathBuf,
+                     output_file: &PathBuf,
                      threads: usize) {
 
         assert!(layout.has_tags()); // otherwise we shouldn't be here

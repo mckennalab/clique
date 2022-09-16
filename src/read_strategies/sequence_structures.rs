@@ -9,8 +9,9 @@ use crate::sorters::sorter::ReadSortingOnDiskContainer;
 use std::io::BufReader;
 use std::io;
 use flate2::read::GzEncoder;
-use flate2::bufread::GzDecoder;
+use flate2::bufread::BGZFReader;
 use std::borrow::BorrowMut;
+use bgzip::BGZFReader;
 
 pub struct ReadSetContainer {
     pub read_one: Record,
@@ -83,10 +84,10 @@ pub struct ReadFileContainer {
 }
 
 pub struct ReadIterator {
-    pub read_one: Records<BufReader<GzDecoder<BufReader<File>>>>,
-    pub read_two: Option<Records<BufReader<GzDecoder<BufReader<File>>>>>,
-    pub index_one: Option<Records<BufReader<GzDecoder<BufReader<File>>>>>,
-    pub index_two: Option<Records<BufReader<GzDecoder<BufReader<File>>>>>,
+    pub read_one: Records<BufReader<BGZFReader<BufReader<File>>>>,
+    pub read_two: Option<Records<BufReader<BGZFReader<BufReader<File>>>>>,
+    pub index_one: Option<Records<BufReader<BGZFReader<BufReader<File>>>>>,
+    pub index_two: Option<Records<BufReader<BGZFReader<BufReader<File>>>>>,
 }
 
 impl Iterator for ReadIterator {
@@ -163,10 +164,10 @@ impl ReadIterator
         }
     }
 
-    fn open_reader(check_path: &Option<&Path>) -> Option<Records<BufReader<GzDecoder<BufReader<File>>>>> {
+    fn open_reader(check_path: &Option<&Path>) -> Option<Records<BufReader<BGZFReader<BufReader<File>>>>> {
         if check_path.is_some() && check_path.as_ref().unwrap().exists() {
             println!("Opening {}",check_path.as_ref().unwrap().to_str().unwrap());
-            let mut bgr = GzDecoder::new(BufReader::new(File::open(check_path.unwrap().to_str().unwrap()).unwrap()));
+            let mut bgr = BGZFReader::new(BufReader::new(File::open(check_path.unwrap().to_str().unwrap()).unwrap()));
             let mut f2gz = Reader::new(bgr);
             let records = f2gz.records();
             Some(records)
