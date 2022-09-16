@@ -9,7 +9,6 @@ use crate::sorters::sorter::ReadSortingOnDiskContainer;
 use std::io::BufReader;
 use std::io;
 use flate2::read::GzEncoder;
-use flate2::bufread::BGZFReader;
 use std::borrow::BorrowMut;
 use bgzip::BGZFReader;
 
