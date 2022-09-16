@@ -173,7 +173,7 @@ impl KnownListConsensus {
         let output = Arc::new(Mutex::new(output_file));
 
         // sort each output bin and write to the output file
-        rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
+        //rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
 
         temp_files.par_iter().for_each(|(index,bin)|{
             println!("sorting input ");
