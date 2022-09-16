@@ -144,12 +144,15 @@ impl Iterator for ReadIterator {
             match ret {
                 Some(x) => {
                     if self.read2 && !self.read_two.is_some() {
+                        println!("Broken validation2");
                         self.broken_reads += 1;
                         None
                     } else if self.index1 && !self.index_one.is_some() {
+                        println!("Broken validationi1");
                         self.broken_reads += 1;
                         None
                     } else if self.index2 && !self.index_two.is_some() {
+                        println!("Broken validationi2");
                         self.broken_reads += 1;
                         None
                     } else {

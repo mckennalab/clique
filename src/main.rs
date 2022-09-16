@@ -195,8 +195,8 @@ fn main() {
     let mut cnt = 0;
     let mut mto = 0;
     for rd in read_iterator {
-        if cnt % 100000 == 0 {
-            println!("Count {}", cnt);
+        if cnt % 1000000 == 0 {
+            print!(".");
         }
         cnt += 1;
         let transformed_reads = transform(rd, &read_layout);
