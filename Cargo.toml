@@ -23,6 +23,7 @@ num-traits = "*"
 indicatif = "*"
 rust-spoa = "*"
 tempfile = "3"
+bgzip = "0.2.1"
 
 [profile.release]
 lto = true

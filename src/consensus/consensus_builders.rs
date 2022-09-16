@@ -25,7 +25,7 @@ pub fn null_cap(strs: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
 }
 
 
-pub fn create_seq_layout_poa_consensus(reads: Vec<&ReadSetContainer>) -> SequenceSetContainer {
+pub fn create_seq_layout_poa_consensus(reads: &Vec<ReadSetContainer>) -> SequenceSetContainer {
     let mut read1_agg = Vec::new();
     let mut read2_agg = Vec::new();
     let mut read3_agg = Vec::new();

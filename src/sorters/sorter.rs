@@ -11,6 +11,8 @@ use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::read_strategies::sequence_layout::transform;
 use crate::sorters::known_list::KnownListSort;
 use std::io::Write;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 // passed_fn: impl FnOnce(i32) -> ()
 
@@ -30,10 +32,10 @@ impl SortStructure {
                 ret.push(SortStructure::LD_UMI{ layout_type: LayoutType::TENXV3});
                 ret
             }
-            LayoutType::TENXV3 => {
+            LayoutType::TENXV2 => {
                 let mut ret = Vec::new();
-                ret.push(SortStructure::KNOWN_LIST{ layout_type: LayoutType::TENXV3, maximum_distance: 1 });
-                ret.push(SortStructure::LD_UMI{ layout_type: LayoutType::TENXV3});
+                ret.push(SortStructure::KNOWN_LIST{ layout_type: LayoutType::TENXV2, maximum_distance: 1 });
+                ret.push(SortStructure::LD_UMI{ layout_type: LayoutType::TENXV2});
                 ret
             }
             LayoutType::PAIREDUMI => {unimplemented!()}
@@ -87,7 +89,7 @@ impl SortStructure {
                     LayoutType::SCI => { unimplemented!() }
                 }
             }
-            SortStructure::HD_UMI{layout_type} => {
+            SortStructure::LD_UMI{layout_type} => {
                 match layout_type {
                     LayoutType::TENXV3 => { seq_layout.umi().to_owned() }
                     LayoutType::TENXV2 => { seq_layout.umi().to_owned() }
@@ -96,7 +98,6 @@ impl SortStructure {
                     LayoutType::SCI => { unimplemented!() }
                 }
             }
-            _ => {unimplemented!()}
         }
     }
 }
@@ -124,46 +125,61 @@ impl ReadSortingOnDiskContainer {
             if self.file_4.is_some() {1} else {0}
     }
 
-    pub fn new_from_temp_dir(rd: &ReadSetContainer, id: usize, temp_dir: &Path) -> ReadSortingOnDiskContainer {
+    pub fn new_from_temp_dir(rd: &ReadIterator, id: usize, temp_dir: &Path) -> ReadSortingOnDiskContainer {
         ReadSortingOnDiskContainer {
-            file_1: temp_dir.join(ReadSortingOnDiskContainer::format_read_two(id)),
-            file_2: if rd.read_two.is_some() {Some(temp_dir.join(ReadSortingOnDiskContainer::format_read_two(id)))} else {None},
-            file_3: if rd.read_two.is_some() {Some(temp_dir.join(ReadSortingOnDiskContainer::format_read_three(id)))} else {None},
-            file_4: if rd.read_two.is_some() {Some(temp_dir.join(ReadSortingOnDiskContainer::format_read_four(id)))} else {None},
+            file_1: temp_dir.join(ReadSortingOnDiskContainer::format_read_one(id)),
+            file_2: if rd.read_two.is_some() {Some(temp_dir.join(ReadSortingOnDiskContainer::format_read_two(id)))} else {println!("No read 2!!!"); None},
+            file_3: if rd.index_one.is_some() {Some(temp_dir.join(ReadSortingOnDiskContainer::format_read_three(id)))} else {None},
+            file_4: if rd.index_two.is_some() {Some(temp_dir.join(ReadSortingOnDiskContainer::format_read_four(id)))} else {None},
         }
     }
 
-    pub fn create_x_bins(rd: &ReadSetContainer, x_bins: usize, temp_dir: &Path) -> Vec<ReadSortingOnDiskContainer> {
-        (0..x_bins).map(|id| ReadSortingOnDiskContainer::new_from_temp_dir(rd, id, temp_dir)).collect::<Vec<ReadSortingOnDiskContainer>>()
+    pub fn create_x_bins(rd: &ReadIterator, x_bins: usize, temp_dir: &Path) -> Vec<(usize,ReadSortingOnDiskContainer)> {
+        (0..x_bins).map(|id| (id,ReadSortingOnDiskContainer::new_from_temp_dir(rd, id, temp_dir))).collect::<Vec<(usize,ReadSortingOnDiskContainer)>>()
     }
 }
 
 pub struct SortingOutputContainer {
-    file_1: BufWriter<File>,
-    file_2: Option<BufWriter<File>>,
-    file_3: Option<BufWriter<File>>,
-    file_4: Option<BufWriter<File>>
+    file_1: BufWriter<GzEncoder<BufWriter<File>>>,
+    file_2: Option<BufWriter<GzEncoder<BufWriter<File>>>>,
+    file_3: Option<BufWriter<GzEncoder<BufWriter<File>>>>,
+    file_4: Option<BufWriter<GzEncoder<BufWriter<File>>>>
 }
 
 impl SortingOutputContainer {
     pub fn from_sorting_container(sc: &ReadSortingOnDiskContainer) -> SortingOutputContainer {
         SortingOutputContainer {
-            file_1: BufWriter::new(File::open(&sc.file_1).unwrap()),
-            file_2: if let Some(x) = &sc.file_2 {Some(BufWriter::new(File::open(x.clone()).unwrap()))} else {None},
-            file_3: if let Some(x) = &sc.file_3 {Some(BufWriter::new(File::open(x.clone()).unwrap()))} else {None},
-            file_4: if let Some(x) = &sc.file_4 {Some(BufWriter::new(File::open(x.clone()).unwrap()))} else {None},
+            file_1: BufWriter::new(GzEncoder::new(BufWriter::new(File::create(&sc.file_1).unwrap()),Compression::default())),
+            file_2: if let Some(x) = &sc.file_2 {Some(BufWriter::new(GzEncoder::new(BufWriter::new(File::create(x.clone()).unwrap()),Compression::default())))} else {None},
+            file_3: if let Some(x) = &sc.file_3 {Some(BufWriter::new(GzEncoder::new(BufWriter::new(File::create(x.clone()).unwrap()),Compression::default())))} else {None},
+            file_4: if let Some(x) = &sc.file_4 {Some(BufWriter::new(GzEncoder::new(BufWriter::new(File::create(x.clone()).unwrap()),Compression::default())))} else {None},
         }
     }
 
-    pub fn write_reads(&mut self, rl: ReadSetContainer) {
-        assert_eq!(self.file_2.is_some(),rl.read_two.is_some());
-        assert_eq!(self.file_3.is_some(),rl.index_one.is_some());
-        assert_eq!(self.file_4.is_some(),rl.index_two.is_some());
+    pub fn close(&mut self)  {
+        self.file_1.flush();
+        if let Some(x) = &mut self.file_2 {x.flush();};
+        if let Some(x) = &mut self.file_3 {x.flush();};
+        if let Some(x) = &mut self.file_4 {x.flush();};
+    }
 
+    pub fn write_reads(&mut self, rl: ReadSetContainer) {
         write!(self.file_1.borrow_mut(),"{}",rl.read_one);
-        if let Some(x) = self.file_2.borrow_mut() {write!(x,"{}",rl.read_two.unwrap());};
-        if let Some(x) = self.file_3.borrow_mut() {write!(x,"{}",rl.index_one.unwrap());};
-        if let Some(x) = self.file_4.borrow_mut() {write!(x,"{}",rl.index_two.unwrap());};
+        if let Some(x) = self.file_2.as_mut() {
+            if let Some(rd) = rl.read_two {
+                write!(x, "{}", rd);
+            };
+        };
+        if let Some(x) = self.file_3.as_mut() {
+            if let Some(rd) = rl.index_one {
+                write!(x, "{}", rd);
+            };
+        };
+        if let Some(x) = self.file_4.as_mut() {
+            if let Some(rd) = rl.index_two {
+                write!(x, "{}", rd);
+            };
+        };
     }
 }
 
@@ -174,19 +190,19 @@ pub struct SortedInputContainer {
 
 impl SortedInputContainer {
     pub fn from_sorting_container(bin: &ReadSortingOnDiskContainer, id: usize, splits: &KnownListSort, layout: &LayoutType, temp_dir: &PathBuf) -> SortedInputContainer {
-        let file_1 = temp_dir.join(ReadSortingOnDiskContainer::format_read_two(id));
+        let file1 = temp_dir.join(ReadSortingOnDiskContainer::format_read_one(id));
         let file2 = temp_dir.join(ReadSortingOnDiskContainer::format_read_two(id));
         let file3 = temp_dir.join(ReadSortingOnDiskContainer::format_read_three(id));
         let file4 = temp_dir.join(ReadSortingOnDiskContainer::format_read_four(id));
         let container = ReadFileContainer{
-            read_one: file_1,
+            read_one: file1,
             read_two: file2,
             index_one: file3,
             index_two: file4
         };
 
         let read_iterator = ReadIterator::new_from_bundle(&container);
-
+        println!("Opening {:?}",container.read_one);
         let mut return_reads = Vec::new();
         for rd in read_iterator {
             let transformed_reads = transform(rd, layout);
@@ -195,8 +211,9 @@ impl SortedInputContainer {
             let first_barcode = String::from_utf8(transformed_reads.cell_id().unwrap().clone()).unwrap();
             return_reads.push((first_barcode,transformed_reads));
         }
+        println!("SORTING");
         return_reads.sort_by(|a,b| b.0.cmp(&a.0));
-
+        println!("SORTING DONE");
         SortedInputContainer{ sorted_records: return_reads }
     }
 }

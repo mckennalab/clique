@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::read_strategies::sequence_structures::*;
 use crate::read_strategies::sequence_layout::*;
@@ -11,8 +11,11 @@ use crate::sorters::sorter::ReadSortingOnDiskContainer;
 use crate::sorters::sorter::SortingOutputContainer;
 use crate::sorters::sorter::SortedInputContainer;
 use crate::umis::sequence_clustering::*;
-
-
+use crate::consensus::consensus_builders::create_seq_layout_poa_consensus;
+use rayon::iter::ParallelBridge;
+use rayon::prelude::IntoParallelRefMutIterator;
+use rayon::prelude::*;
+use std::sync::{Arc, Mutex};
 
 pub struct KnownListConsensus {
     observed_identifier_to_best_matches: HashMap<Vec<u8>, BestHits>,
@@ -107,60 +110,94 @@ impl KnownListConsensus {
 
         let mut container_number = 0;
         self.observed_identifiers_counts.iter().for_each(|(k, count)| {
-            best_match_to_original.insert(self.observed_identifier_to_best_matches.get(&k.clone()).unwrap().hits[0].clone(), k.clone());
-            original_to_best_match.insert(k.clone(), self.observed_identifier_to_best_matches.get(&k.clone()).unwrap().hits[0].clone());
-            list_to_container.insert(k.clone(), container_number);
+            let best_hit = self.observed_identifier_to_best_matches.get(&k.clone()).unwrap();
+            if best_hit.hits.len() > 0 {
+                best_match_to_original.insert(best_hit.hits[0].clone(), k.clone());
+                original_to_best_match.insert(k.clone(), best_hit.hits[0].clone());
+                list_to_container.insert(k.clone(), container_number);
 
-            current_total += count;
-
+                current_total += count;
+            } else {
+                println!("Missing best hit for {} hits {:?}",String::from_utf8(k.clone()).unwrap(),best_hit.hits);
+            }
             if current_total >= approximate_read_count {
                 current_total = 0;
                 container_number += 1;
             }
         });
-        KnownListSort { best_match_to_original, original_to_best_match, hit_to_container_number: list_to_container, bins: container_number }
+        KnownListSort { best_match_to_original, original_to_best_match, hit_to_container_number: list_to_container, bins: container_number + 1}
     }
 
-    pub fn consensus(read_layout: &ReadSetContainer,
-                     read_files: ReadFileContainer,
-                     output_file: &Path,
+    pub fn consensus(read_file_bundle: &ReadFileContainer,
                      splits: &KnownListSort,
-                     layout: &LayoutType) {
+                     layout: &LayoutType,
+                        output_file: &PathBuf,
+                     threads: usize) {
 
         assert!(layout.has_tags()); // otherwise we shouldn't be here
 
-        let read_iterator = ReadIterator::new_from_bundle(&read_files);
         let temp_location_base_full = tempfile::tempdir().unwrap();
-        let temp_location_base = temp_location_base_full.path();
+        let temp_location_base = Path::new("./tmp/");
+        let read_iterator = ReadIterator::new_from_bundle(read_file_bundle);
+        let mut temp_files = ReadSortingOnDiskContainer::create_x_bins(&read_iterator, splits.bins, &temp_location_base);
+        let mut output_bins = temp_files.iter().map(|(id,x)| SortingOutputContainer::from_sorting_container(&x)).collect::<Vec<SortingOutputContainer>>();
 
-        let mut temp_files = ReadSortingOnDiskContainer::create_x_bins(read_layout, splits.bins, &temp_location_base);
-        let mut output_bins = temp_files.iter().map(|x| SortingOutputContainer::from_sorting_container(&x)).collect::<Vec<SortingOutputContainer>>();
+        let mut counts: HashMap<usize,i32> = HashMap::new();
 
-
+        let mut cnt = 0;
+        let mut dropped = 0;
         for rd in read_iterator {
             let transformed_reads = transform(rd, layout);
             assert!(transformed_reads.has_original_reads());
 
             let first_barcode = transformed_reads.cell_id().unwrap();
 
-            let target_bin = splits.hit_to_container_number.get(first_barcode).unwrap();
+            let target_bin = splits.hit_to_container_number.get(first_barcode);
 
-            let original_reads = transformed_reads.original_reads().unwrap();
-
-            output_bins[*target_bin].write_reads(original_reads);
+            if let Some(target_bin) = target_bin {
+                let original_reads = transformed_reads.original_reads().unwrap();
+                cnt += 1;
+                let bin_count: i32 = *counts.get(target_bin).unwrap_or(&0);
+                counts.insert(*target_bin,bin_count + 1);
+                output_bins[*target_bin].write_reads(original_reads);
+            } else {
+                dropped += 1;
+            }
         }
+        counts.iter().for_each(|(k,v)| println!("K {} v {}",k,v));
 
+        println!("COunts {} dropped {}",cnt, dropped);
+
+        output_bins.iter_mut().for_each(|o| o.close());
+        let mut output_file = BufWriter::new(File::create(output_file).unwrap());
+        let output = Arc::new(Mutex::new(output_file));
 
         // sort each output bin and write to the output file
-        temp_files.iter().enumerate().map(|(index,bin)|{
-            let sortingInput = SortedInputContainer::from_sorting_container(bin, index, &splits, &layout, &temp_location_base.to_path_buf());
+        rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
 
+        temp_files.par_iter().for_each(|(index,bin)|{
+            println!("sorting input ");
+            let sortingInput = SortedInputContainer::from_sorting_container(bin, *index, &splits, &layout, &temp_location_base.to_path_buf());
+            println!("sorting input size {}",sortingInput.sorted_records.len());
+            let consensuses = KnownListConsensus::consensus_from_sorted_container_10x(&sortingInput, 1);
+
+            let output = Arc::clone(&output);
+            let mut output = output.lock().unwrap();
+
+            for con in consensuses {
+                write!(output,"R1={}\n,R2={}\n,I1={}\n,I2={}\n",
+                       String::from_utf8(con.read_one).unwrap(),
+                    if con.read_two.is_some() {String::from_utf8(con.read_two.unwrap()).unwrap()} else {"NONE".to_string()},
+                       if con.index_one.is_some() {String::from_utf8(con.index_one.unwrap()).unwrap()} else {"NONE".to_string()},
+                       if con.index_two.is_some() {String::from_utf8(con.index_two.unwrap()).unwrap()} else {"NONE".to_string()});
+            }
         });
-
-        //output
+        let output = Arc::clone(&output);
+        let mut output = output.lock().unwrap();
+        output.flush();
     }
 
-    pub fn merge_by_umi(sic: &Vec<Box<dyn SequenceLayout>>, max_dist: u64) -> SortedInputContainer {
+    pub fn submerge_by_umi(sic: &Vec<&Box<dyn SequenceLayout>>, max_dist: u64) -> Vec<SequenceSetContainer> {
 
         let mut umi_to_reads: HashMap<Vec<u8>,Vec<ReadSetContainer>> = HashMap::new();
         sic.into_iter().for_each(|sl| {
@@ -185,7 +222,6 @@ impl KnownListConsensus {
 
             if !over_set_dist {
                 clusters.push(cc);
-
             } else {
                 let new_groups = split_subgroup(&mut subgraph);
                 if new_groups.is_some() {
@@ -195,15 +231,15 @@ impl KnownListConsensus {
                 }
             }
         });
-        let sorted_records: Vec<(String,Box<dyn SequenceLayout>)> = Vec::new();
+        let mut sorted_records= Vec::new();
         umi_to_reads.iter().for_each(|(umi, reads)| {
-
+            let consensus = create_seq_layout_poa_consensus(reads);
+            sorted_records.push(consensus);
         });
-
-        SortedInputContainer{ sorted_records }
+        sorted_records
     }
 
-    pub fn consensus_from_sorted_container_10x(sic: &SortedInputContainer) -> Vec<ReadSetContainer> {
+    pub fn consensus_from_sorted_container_10x(sic: &SortedInputContainer, max_distance: u64) -> Vec<SequenceSetContainer> {
         let mut return_reads = Vec::new();
         let mut reads_to_merge = Vec::new();
         let mut current_key : Option<String> = None;
@@ -213,14 +249,20 @@ impl KnownListConsensus {
             if !current_key.is_some() || (current_key.is_some() && string_distance(&current_key.as_ref().unwrap().clone().into_bytes(), &barcode_string.clone().into_bytes()) != 0) {
                 // make a consensus for all defined reads
                 if reads_to_merge.len() > 0 {
-
+                    let consensus = KnownListConsensus::submerge_by_umi(&reads_to_merge, max_distance);
+                    return_reads.extend(consensus);
                 }
-
-            } else {
-                reads_to_merge.push(reads);
+                reads_to_merge.clear();
+                current_key = Some(barcode_string.clone());
             }
+            reads_to_merge.push(reads);
+
         });
 
+        if reads_to_merge.len() > 0 {
+            let consensus = KnownListConsensus::submerge_by_umi(&reads_to_merge, max_distance);
+            return_reads.extend(consensus);
+        }
         return_reads
     }
 }

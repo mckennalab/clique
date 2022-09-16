@@ -12,6 +12,8 @@ extern crate rand;
 extern crate rust_spoa;
 extern crate seq_io;
 extern crate suffix;
+extern crate bgzip;
+extern crate rayon;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -30,15 +32,15 @@ use seq_io::fasta::{OwnedRecord, Reader, Record};
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
 use clap::Parser;
-use crate::sorters::known_list::KnownListConsensus;
-use crate::extractor::extract_tagged_sequences;
 use rayon::prelude::*;
+
+use crate::extractor::extract_tagged_sequences;
+use crate::linked_alignment::*;
 use crate::read_strategies::sequence_layout::*;
 use crate::read_strategies::sequence_structures::*;
 use crate::reference::fasta_reference::reference_file_to_struct;
+use crate::sorters::known_list::KnownListConsensus;
 use crate::umis::sequence_clustering::*;
-
-use crate::linked_alignment::*;
 
 //use flate2::GzBuilder;
 //use flate2::Compression;
@@ -166,19 +168,16 @@ fn main() {
 
     let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
 
-    let read_bundle = ReadFileContainer{
+    let read_bundle = ReadFileContainer {
         read_one: PathBuf::from(parameters.read1),
         read_two: PathBuf::from(parameters.read2),
         index_one: PathBuf::from(parameters.index1),
-        index_two: PathBuf::from(parameters.index2)
+        index_two: PathBuf::from(parameters.index2),
     };
 
     let reference = reference_file_to_struct(&parameters.reference);
 
     let output_file = File::create(parameters.output).unwrap();
-
-    let reference_lookup = find_seeds(&reference.name, 20);
-    let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
 
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
@@ -191,32 +190,36 @@ fn main() {
     println!("Processing UMIs...");
     let mut consensus_manager = KnownListConsensus::new();
 
-    /*
-    if read_layout.has_identifying_sequence() {
-        let mut cnt = 0;
-        let mut mto = 0;
-        for rd in read_iterator {
-            if cnt % 100000 == 0 {
-                println!("Count {}", cnt);
-            }
-            cnt += 1;
-            let transformed_reads = transform(rd, &read_layout);
-            let first_hit = transformed_reads.umi_sorting_path().unwrap()[0].clone();
-            //if known_list.as_ref().is_some() {
-            let corrected_hits = correct_to_known_list(&first_hit, &mut known_list, 1);
-            if corrected_hits.hits.len() > 1 {
-                mto += 1;
-            }
-            consensus_manager.add_hit(&first_hit, corrected_hits);
-            //} else {
-            //    read_mapping.insert(first_hit.clone(),BestHits{ hits: vec![first_hit.clone()], distance: 0 });
-            //}
-        }
-        println!("Count = {}, mto = {}",cnt,mto);
-        consensus_manager.match_to_knownlist();
-        let splits = consensus_manager.read_balanced_lists(10);
 
-    }*/
+    //if read_layout.has_identifying_sequence() {
+    let mut cnt = 0;
+    let mut mto = 0;
+    for rd in read_iterator {
+        if cnt % 100000 == 0 {
+            println!("Count {}", cnt);
+        }
+        cnt += 1;
+        let transformed_reads = transform(rd, &read_layout);
+        let first_hit = transformed_reads.cell_id().unwrap();
+        //if known_list.as_ref().is_some() {
+        let corrected_hits = correct_to_known_list(&first_hit, &mut known_list, 1);
+        if corrected_hits.hits.len() > 1 {
+            mto += 1;
+        }
+        consensus_manager.add_hit(&first_hit, corrected_hits);
+        //} else {
+        //    read_mapping.insert(first_hit.clone(),BestHits{ hits: vec![first_hit.clone()], distance: 0 });
+        //}
+    }
+    println!("Count = {}, mto = {}", cnt, mto);
+    consensus_manager.match_to_knownlist();
+    let splits = consensus_manager.read_balanced_lists(10);
+
+    let test_output = PathBuf::from("test_file.txt".to_string());
+    let read_iterator2 = ReadIterator::new_from_bundle(&read_bundle);
+
+    KnownListConsensus::consensus(&read_bundle, &splits, &LayoutType::TENXV3, &test_output, parameters.threads);
+    //}
 
     //read_iterator.par_bridge().for_each(|xx|
 }
