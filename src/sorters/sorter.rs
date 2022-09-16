@@ -13,6 +13,7 @@ use crate::sorters::known_list::KnownListSort;
 use std::io::Write;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use rust_htslib::bgzf::Writer;
 
 // passed_fn: impl FnOnce(i32) -> ()
 
@@ -140,19 +141,19 @@ impl ReadSortingOnDiskContainer {
 }
 
 pub struct SortingOutputContainer {
-    file_1: BufWriter<GzEncoder<BufWriter<File>>>,
-    file_2: Option<BufWriter<GzEncoder<BufWriter<File>>>>,
-    file_3: Option<BufWriter<GzEncoder<BufWriter<File>>>>,
-    file_4: Option<BufWriter<GzEncoder<BufWriter<File>>>>
+    file_1: BufWriter<Writer>,
+    file_2: Option<BufWriter<Writer>>,
+    file_3: Option<BufWriter<Writer>>,
+    file_4: Option<BufWriter<Writer>>,
 }
 
 impl SortingOutputContainer {
     pub fn from_sorting_container(sc: &ReadSortingOnDiskContainer) -> SortingOutputContainer {
         SortingOutputContainer {
-            file_1: BufWriter::new(GzEncoder::new(BufWriter::new(File::create(&sc.file_1).unwrap()),Compression::default())),
-            file_2: if let Some(x) = &sc.file_2 {Some(BufWriter::new(GzEncoder::new(BufWriter::new(File::create(x.clone()).unwrap()),Compression::default())))} else {None},
-            file_3: if let Some(x) = &sc.file_3 {Some(BufWriter::new(GzEncoder::new(BufWriter::new(File::create(x.clone()).unwrap()),Compression::default())))} else {None},
-            file_4: if let Some(x) = &sc.file_4 {Some(BufWriter::new(GzEncoder::new(BufWriter::new(File::create(x.clone()).unwrap()),Compression::default())))} else {None},
+            file_1: BufWriter::new(Writer::from_path(&sc.file_1).unwrap()),
+            file_2: if let Some(x) = &sc.file_2 {Some(BufWriter::new(Writer::from_path(&sc.file_2.as_ref().unwrap()).unwrap()))} else {None},
+            file_3: if let Some(x) = &sc.file_3 {Some(BufWriter::new(Writer::from_path(&sc.file_3.as_ref().unwrap()).unwrap()))} else {None},
+            file_4: if let Some(x) = &sc.file_4 {Some(BufWriter::new(Writer::from_path(&sc.file_4.as_ref().unwrap()).unwrap()))} else {None},
         }
     }
 

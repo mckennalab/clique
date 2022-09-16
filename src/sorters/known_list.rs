@@ -109,6 +109,7 @@ impl KnownListConsensus {
         let mut list_to_container: HashMap<Vec<u8>, usize> = HashMap::new();
 
         let mut container_number = 0;
+        let mut dropped_read = 0;
         self.observed_identifiers_counts.iter().for_each(|(k, count)| {
             let best_hit = self.observed_identifier_to_best_matches.get(&k.clone()).unwrap();
             if best_hit.hits.len() > 0 {
@@ -118,13 +119,15 @@ impl KnownListConsensus {
 
                 current_total += count;
             } else {
-                println!("Missing best hit for {} hits {:?}",String::from_utf8(k.clone()).unwrap(),best_hit.hits);
+                dropped_read += 1;
             }
             if current_total >= approximate_read_count {
                 current_total = 0;
                 container_number += 1;
             }
         });
+        println!("Dropped read count: {}",dropped_read);
+
         KnownListSort { best_match_to_original, original_to_best_match, hit_to_container_number: list_to_container, bins: container_number + 1}
     }
 
@@ -168,7 +171,8 @@ impl KnownListConsensus {
 
         println!("COunts {} dropped {}",cnt, dropped);
 
-        output_bins.iter_mut().for_each(|o| o.close());
+        //output_bins.iter_mut().for_each(|o| o.close());
+        drop(output_bins);
         let mut output_file = BufWriter::new(File::create(output_file).unwrap());
         let output = Arc::new(Mutex::new(output_file));
 

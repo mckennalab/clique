@@ -1,5 +1,5 @@
 
-use bio::io::fastq::*;
+
 use core::clone::Clone;
 use core::option::Option;
 use core::option::Option::{None, Some};
@@ -12,6 +12,10 @@ use flate2::read::GzEncoder;
 use std::borrow::BorrowMut;
 use bgzip::BGZFReader;
 use std::collections::HashMap;
+use bio::io::fastq::{Record, Records};
+use bio::io::fastq::Reader as FqReader;
+use rust_htslib::bgzf::Reader;
+
 
 pub struct ReadSetContainer {
     pub read_one: Record,
@@ -89,10 +93,10 @@ pub enum ReadPattern {
 
 
 pub struct ReadIterator {
-    pub read_one: Records<BufReader<BGZFReader<BufReader<File>>>>,
-    pub read_two: Option<Records<BufReader<BGZFReader<BufReader<File>>>>>,
-    pub index_one: Option<Records<BufReader<BGZFReader<BufReader<File>>>>>,
-    pub index_two: Option<Records<BufReader<BGZFReader<BufReader<File>>>>>,
+    pub read_one: Records<BufReader<Reader>>,
+    pub read_two: Option<Records<BufReader<Reader>>>,
+    pub index_one: Option<Records<BufReader<Reader>>>,
+    pub index_two: Option<Records<BufReader<Reader>>>,
 
     pub reads_processed: usize,
     pub read2: bool,
@@ -101,7 +105,7 @@ pub struct ReadIterator {
     pub broken_reads: usize,
 }
 
-pub fn unwrap_read(read: &mut Option<Records<BufReader<BGZFReader<BufReader<File>>>>>) -> Option<Record> {
+pub fn unwrap_read(read: &mut Option<Records<BufReader<Reader>>>) -> Option<Record> {
     match read
     {
         Some(ref mut read_pointer) => {
@@ -233,12 +237,11 @@ impl ReadIterator
         }
     }
 
-    fn open_reader(check_path: &Option<&Path>) -> Option<Records<BufReader<BGZFReader<BufReader<File>>>>> {
+    fn open_reader(check_path: &Option<&Path>) -> Option<Records<BufReader<Reader>>> {
         if check_path.is_some() && check_path.as_ref().unwrap().exists() {
             println!("Opening {}",check_path.as_ref().unwrap().to_str().unwrap());
-            let mut bgr = BGZFReader::new(BufReader::new(File::open(check_path.unwrap().to_str().unwrap()).unwrap()));
-            let mut f2gz = Reader::new(bgr);
-            let records = f2gz.records();
+            let mut bgr = FqReader::new(Reader::from_path(&check_path.unwrap()).unwrap());
+            let records = bgr.records();
             Some(records)
         } else {
             None

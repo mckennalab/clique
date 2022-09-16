@@ -14,6 +14,7 @@ extern crate seq_io;
 extern crate suffix;
 extern crate bgzip;
 extern crate rayon;
+extern crate rust_htslib;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;

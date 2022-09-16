@@ -24,6 +24,7 @@ indicatif = "*"
 rust-spoa = "*"
 tempfile = "3"
 bgzip = "0.2.1"
+rust-htslib = { git = "https://github.com/rust-bio/rust-htslib" }
 
 [profile.release]
 lto = true
