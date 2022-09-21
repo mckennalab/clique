@@ -211,19 +211,23 @@ impl OutputReadSetWriter {
 
     pub fn write(&mut self, rl: &ReadSetContainer) {
         writeln!(self.file_1.borrow_mut(),"{}",rl.read_one);
+        self.file_1.flush();
         if let Some(x) = self.file_2.as_mut() {
             if let Some(rd) = &rl.read_two {
                 write!(x, "{}", rd);
+                x.flush();
             };
         };
         if let Some(x) = self.file_3.as_mut() {
             if let Some(rd) = &rl.index_one {
                 write!(x, "{}", rd);
+                x.flush();
             };
         };
         if let Some(x) = self.file_4.as_mut() {
             if let Some(rd) = &rl.index_two {
                 write!(x, "{}", rd);
+                x.flush();
             };
         };
     }
