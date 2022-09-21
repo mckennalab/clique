@@ -138,6 +138,7 @@ impl Sorter {
                     None => {println!("NONE!!!!!!!!!!")}
                     Some(x) => {next_level_iterators.extend(x);}
                 }
+                println!("New size: {}",next_level_iterators.len());
             }
 
             current_iterators = next_level_iterators;
