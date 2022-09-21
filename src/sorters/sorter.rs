@@ -128,6 +128,7 @@ impl Sorter {
         current_iterators.push(read_iterator);
 
         println!("Sorting reads...");
+        println!("Sorting sorting reads...length {}",current_iterators.len());
         for sort in sort_list {
             let mut next_level_iterators = Vec::new();
 
@@ -137,9 +138,9 @@ impl Sorter {
                     Some(x) => {next_level_iterators.extend(x);}
                 }
             }
-            println!("Done sorting reads...length {} and {}",current_iterators.len(), next_level_iterators.len());
-            current_iterators = next_level_iterators;
 
+            current_iterators = next_level_iterators;
+            println!("Done sorting reads...length {}",current_iterators.len());
 
         }
         println!("Done sorting reads...length {}",current_iterators.len());
