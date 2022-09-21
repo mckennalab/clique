@@ -18,6 +18,9 @@ use std::io::Write;
 use serde::{Serialize, Deserialize};
 use std::slice::Chunks;
 use crate::itertools::Itertools;
+use flate2::GzBuilder;
+use flate2::*;
+
 
 #[derive(Clone)]
 pub enum ReadPattern {
@@ -191,10 +194,10 @@ impl ReadFileContainer {
 
 /// manage writing read sets to disk
 pub struct OutputReadSetWriter {
-    file_1: Writer,
-    file_2: Option<Writer>,
-    file_3: Option<Writer>,
-    file_4: Option<Writer>,
+    file_1: flate2::write::GzEncoder<File>,
+    file_2: Option<flate2::write::GzEncoder<File>>,
+    file_3: Option<flate2::write::GzEncoder<File>>,
+    file_4: Option<flate2::write::GzEncoder<File>>,
 
     written_read1: usize,
     written_read2: usize,
@@ -207,10 +210,14 @@ impl OutputReadSetWriter {
 
     pub fn from_read_file_container(sc: &ReadFileContainer) -> OutputReadSetWriter {
         OutputReadSetWriter {
-            file_1: Writer::from_path(&sc.read_one).unwrap(),
-            file_2: if let Some(x) = &sc.read_two {Some(Writer::from_path(x.clone()).unwrap())} else {None},
-            file_3: if let Some(x) = &sc.index_one {Some(Writer::from_path(x.clone()).unwrap())} else {None},
-            file_4: if let Some(x) = &sc.index_two {Some(Writer::from_path(x.clone()).unwrap())} else {None},
+            //file_1: Writer::from_path(&sc.read_one).unwrap(),
+            //file_2: if let Some(x) = &sc.read_two {Some(Writer::from_path(x.clone()).unwrap())} else {None},
+            //file_3: if let Some(x) = &sc.index_one {Some(Writer::from_path(x.clone()).unwrap())} else {None},
+            //file_4: if let Some(x) = &sc.index_two {Some(Writer::from_path(x.clone()).unwrap())} else {None},
+            file_1: OutputReadSetWriter::create_writer(&sc.read_one),//.unwrap(),
+            file_2: if let Some(x) = &sc.read_two {Some(OutputReadSetWriter::create_writer(&x.clone()))} else {None},
+            file_3: if let Some(x) = &sc.index_one {Some(OutputReadSetWriter::create_writer(&x.clone()))} else {None},
+            file_4: if let Some(x) = &sc.index_two {Some(OutputReadSetWriter::create_writer(&x.clone()))} else {None},
             written_read1: 0,
             written_read2: 0,
             written_read3: 0,
@@ -218,24 +225,35 @@ impl OutputReadSetWriter {
         }
     }
 
+    fn create_writer(filename: &PathBuf) -> flate2::write::GzEncoder<File> {
+        let f = File::create(filename).unwrap();
+        let mut gz = GzBuilder::new()
+            .write(f, Compression::best());
+        gz
+    }
+
     pub fn write(&mut self, rl: &ReadSetContainer) {
-        writeln!(self.file_1.borrow_mut(),"{}",rl.read_one);
+        //self.file_1.borrow_mut().write(&rl.read_one.to_string().as_bytes());
+        write!(self.file_1.borrow_mut(),"{}",rl.read_one);
         self.written_read1 += 1;
         if let Some(x) = self.file_2.as_mut() {
             if let Some(rd) = &rl.read_two {
                 write!(x, "{}", rd);
+                //x.write(&rd.to_string().as_bytes());
                 self.written_read2 += 1;
             };
         };
         if let Some(x) = self.file_3.as_mut() {
             if let Some(rd) = &rl.index_one {
                 write!(x, "{}", rd);
+                //x.write(&rd.to_string().as_bytes());
                 self.written_read3 += 1;
             };
         };
         if let Some(x) = self.file_4.as_mut() {
             if let Some(rd) = &rl.index_two {
                 write!(x, "{}", rd);
+                //x.write(&rd.to_string().as_bytes());
                 self.written_read4 += 1;
             };
         };
@@ -407,7 +425,7 @@ impl ReadIterator
     fn open_reader(check_path: &Option<&PathBuf>) -> Option<Records<BufReader<Reader>>> {
         if check_path.is_some() && check_path.as_ref().unwrap().exists() {
             println!("Opening {}",check_path.as_ref().unwrap().to_str().unwrap());
-            let mut bgr = FqReader::new(&check_path.unwrap()).unwrap();
+            let mut bgr = FqReader::new(Reader::from_path(&check_path.unwrap()).unwrap());
             let records = bgr.records();
             Some(records)
         } else {
