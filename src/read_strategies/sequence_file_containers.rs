@@ -166,7 +166,7 @@ impl ReadFileContainer {
             index_two: if path4.exists() {Some(path4.clone())} else {None},
         }
     }
-    fn format_temp_read_name(index: usize, prefix: String) -> String { format!("{}_{}.txt", prefix, index).to_string() }
+    fn format_temp_read_name(index: usize, prefix: String) -> String { format!("{}_{}.fastq.gz", prefix, index).to_string() }
 
     pub fn new_from_temp_dir(rd: &ReadIterator, prefix: &String, id: usize, temp_dir: &Path) -> ReadFileContainer {
         let mut read1 = prefix.clone();
@@ -215,7 +215,6 @@ impl OutputReadSetWriter {
         if let Some(x) = self.file_2.as_mut() {
             if let Some(rd) = &rl.read_two {
                 write!(x, "{}", rd);
-                println!("{}",rd);
                 x.flush();
             };
         };
