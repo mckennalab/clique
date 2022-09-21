@@ -215,6 +215,7 @@ impl OutputReadSetWriter {
         if let Some(x) = self.file_2.as_mut() {
             if let Some(rd) = &rl.read_two {
                 write!(x, "{}", rd);
+                println!("{}",rd);
                 x.flush();
             };
         };
