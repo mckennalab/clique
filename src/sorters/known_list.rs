@@ -63,7 +63,7 @@ impl SortStream for KnownListDiskStream {
                 let pattern = ReadPattern::from_read_iterator(&read_iter);
                 let read_iter2 = read_iter.new_reset();
                 let read_iter3 = read_iter.new_reset();
-
+                println!("round 1");
                 for rd in read_iter {
                     let transformed_reads = transform(rd, &layout);
                     let sequence = sort_structure.get_field(&transformed_reads).unwrap();
@@ -79,11 +79,12 @@ impl SortStream for KnownListDiskStream {
                 let temp_location_base = Path::new("./tmp/");
 
                 let mut temp_files = OutputReadSetWriter::create_x_bins(&read_iter3, &"unsorted".to_string(), splits.bins, &temp_location_base);
-                let mut output_bins = temp_files.iter().map(|(id,x)|
-                    OutputReadSetWriter::from_read_file_container(&x)).collect::<Vec<OutputReadSetWriter>>();
+                let mut output_bins = temp_files.iter().map(|(id,x)| {
+                    println!("opening {}",x.read_one.to_str().unwrap());
+                    OutputReadSetWriter::from_read_file_container(&x)}).collect::<Vec<OutputReadSetWriter>>();
 
                 let mut counts: HashMap<usize,i32> = HashMap::new();
-
+                println!("round 2");
                 for rd in read_iter2 {
                     let transformed_reads = transform(rd, &layout);
                     let sequence = sort_structure.get_field(&transformed_reads).unwrap();
@@ -99,7 +100,7 @@ impl SortStream for KnownListDiskStream {
                 }
                 // make sure we flush all the buffers
                 drop(output_bins);
-
+                println!("sort files");
                 temp_files.iter().for_each(|(size,temp_file)| {
                     KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout)
                 });
