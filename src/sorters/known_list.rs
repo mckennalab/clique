@@ -73,7 +73,7 @@ impl SortStream for KnownListDiskStream {
                 }
 
                 let kcl = consensus_manager.match_to_knownlist();
-                let splits = consensus_manager.create_balanced_bins(200 as u64);
+                let splits = consensus_manager.create_balanced_bins(10 as u64);
 
                 let temp_location_base_full = tempfile::tempdir().unwrap();
                 let temp_location_base = Path::new("./tmp/");
