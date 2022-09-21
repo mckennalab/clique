@@ -85,6 +85,7 @@ impl SortStream for KnownListDiskStream {
 
                 let mut counts: HashMap<usize,i32> = HashMap::new();
                 println!("round 2");
+                let mut sorted_reads = 0;
                 for rd in read_iter2 {
                     let transformed_reads = transform(rd, &layout);
                     let sequence = sort_structure.get_field(&transformed_reads).unwrap();
@@ -92,6 +93,7 @@ impl SortStream for KnownListDiskStream {
                     let target_bin = splits.hit_to_container_number.get(&sequence);
 
                     if let Some(target_bin) = target_bin {
+                        sorted_reads += 1;
                         let original_reads = transformed_reads.original_reads().unwrap();
                         let bin_count: i32 = *counts.get(target_bin).unwrap_or(&0);
                         counts.insert(*target_bin,bin_count + 1);
@@ -100,7 +102,7 @@ impl SortStream for KnownListDiskStream {
                 }
                 // make sure we flush all the buffers
                 drop(output_bins);
-                println!("sort files");
+                println!("sort files {}",sorted_reads);
                 temp_files.iter().for_each(|(size,temp_file)| {
                     KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout)
                 });
