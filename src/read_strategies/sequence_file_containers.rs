@@ -211,6 +211,10 @@ impl OutputReadSetWriter {
             file_2: if let Some(x) = &sc.read_two {Some(BufWriter::new(Writer::from_path(x.clone()).unwrap()))} else {None},
             file_3: if let Some(x) = &sc.index_one {Some(BufWriter::new(Writer::from_path(x.clone()).unwrap()))} else {None},
             file_4: if let Some(x) = &sc.index_two {Some(BufWriter::new(Writer::from_path(x.clone()).unwrap()))} else {None},
+            written_read1: 0,
+            written_read2: 0,
+            written_read3: 0,
+            written_read4: 0
         }
     }
 
