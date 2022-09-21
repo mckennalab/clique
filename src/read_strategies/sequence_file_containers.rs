@@ -234,6 +234,8 @@ impl OutputReadSetWriter {
     }
 }
 
+unsafe impl Send for ReadIterator {}
+unsafe impl Sync for ReadIterator {}
 pub struct ReadIterator {
     read_one: Option<Records<BufReader<Reader>>>,
     read_two: Option<Records<BufReader<Reader>>>,

@@ -16,6 +16,7 @@ extern crate bgzip;
 extern crate rayon;
 extern crate rust_htslib;
 extern crate itertools;
+extern crate log;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -43,7 +44,10 @@ use crate::read_strategies::sequence_file_containers::*;
 use crate::reference::fasta_reference::reference_file_to_struct;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::umis::sequence_clustering::*;
-use sorters::known_list::KnownList;
+use crate::sorters::known_list::KnownList;
+use crate::sorters::sorter::{SortStructure, Sorter};
+use log::{SetLoggerError, LevelFilter};
+
 
 //use flate2::GzBuilder;
 //use flate2::Compression;
@@ -120,9 +124,6 @@ struct Args {
     #[clap(long)]
     read_template: String,
 
-    #[clap(long)]
-    number_of_buckets: usize,
-
     #[structopt(long, default_value = "NONE")]
     known_list: String,
 }
@@ -143,68 +144,14 @@ fn main() {
 
     println!("Creating known list...");
     let mut known_list = KnownList::new(&parameters.known_list, 7);
+    let mut known_list_hash = HashMap::new();
+    known_list_hash.insert(read_layout.clone(),Arc::new(Mutex::new(known_list)));
+    println!("sorting...");
+    let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
+    println!("sorting...");
+    Sorter::sort(sort_structure,&read_bundle , &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout);
 
-    let read_iterator = ReadIterator::new_from_bundle(&read_bundle);
-
-    println!("Processing UMIs...");
-    let mut consensus_manager = KnownListConsensus::new();
-
-
-    //if read_layout.has_identifying_sequence() {
-    let mut cnt = 0;
-    let mut mto = 0;
-    for rd in read_iterator {
-        if cnt % 1000000 == 0 {
-            println!("reads : {}",cnt);
-        }
-        cnt += 1;
-        let transformed_reads = transform(rd, &read_layout);
-        let first_hit = transformed_reads.cell_id().unwrap();
-        //if known_list.as_ref().is_some() {
-        let corrected_hits = correct_to_known_list(&first_hit, &mut known_list, 1);
-        if corrected_hits.hits.len() > 1 {
-            mto += 1;
-        }
-        consensus_manager.add_hit(&first_hit, corrected_hits);
-        //} else {
-        //    read_mapping.insert(first_hit.clone(),BestHits{ hits: vec![first_hit.clone()], distance: 0 });
-        //}
-    }
-    println!("Count = {}, mto = {}", cnt, mto);
-    consensus_manager.match_to_knownlist();
-    let splits = consensus_manager.create_balanced_bins(parameters.number_of_buckets as u64);
-
-    let test_output = PathBuf::from("test_file.txt".to_string());
-    let read_iterator2 = ReadIterator::new_from_bundle(&read_bundle);
-
-    //KnownListConsensus::consensus(&read_bundle, &splits, &LayoutType::TENXV3, &test_output, parameters.threads);
-    //}
-
-    //read_iterator.par_bridge().for_each(|xx|
 }
-/*let x = xx.unwrap().clone();
-            let name = &String::from_utf8_lossy(&x.name()).to_string();
-
-            let is_forward = orient_by_longest_segment(&x.sequence().to_vec(), &reference.sequence, &reference_lookup);
-
-            if is_forward.0 {
-                let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &reference.sequence, &reference_lookup);
-                let results = align_string_with_anchors(&x.sequence().to_vec(), &reference.sequence, &fwd_score_mp, &my_score,&my_aff_score);
-
-                let output = Arc::clone(&output);
-                let mut output = output.lock().unwrap();
-                write!(output,">ref{}\n{}\n>{}\n{}\n",str::from_utf8(&reference.sequence).unwrap(),str::from_utf8(&results.1).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.0).unwrap()).expect("Unable to write to output file");
-                output.flush().expect("Unable to flush output");
-            } else {
-                let fwd_score_mp = find_greedy_non_overlapping_segments(&x.sequence().to_vec(), &reference.sequence, &reference_lookup);
-
-                let results = align_string_with_anchors(&reverse_complement(&x.sequence().to_vec()), &reference.sequence, &fwd_score_mp, &my_score,&my_aff_score);
-
-                let output = Arc::clone(&output);
-                let mut output = output.lock().unwrap();
-                write!(output,">ref{}\n{}\n>{}\n{}\n",str::from_utf8(&reference.sequence).unwrap(),str::from_utf8(&results.0).unwrap(),str::replace(name," ","_"),str::from_utf8(&results.1).unwrap()).expect("Unable to write to output file");
-                output.flush().expect("Unable to flush output");
-            }*/
 
 #[allow(dead_code)]
 struct AlignedWithFeatures {

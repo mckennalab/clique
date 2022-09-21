@@ -3,18 +3,21 @@ extern crate rust_spoa;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use bio::io::fastq::Record;
-use rayon::prelude::IntoParallelRefIterator;
+use rayon::prelude::{IntoParallelRefIterator, IntoParallelIterator};
 use rust_spoa::poa_consensus;
 
 use crate::read_strategies::sequence_file_containers::*;
 use crate::read_strategies::sequence_layout::*;
 use crate::sorters::known_list::KnownListBinSplit;
 use crate::umis::sequence_clustering::*;
+use rayon::prelude::*;
+use rust_htslib::bgzf::Writer;
+use flate2::{GzBuilder, Compression};
 
 pub struct ConsensusCandidate {
     pub reads: Vec<ReadSetContainer>,
@@ -35,6 +38,23 @@ pub fn null_cap(strs: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     }).collect::<Vec<Vec<u8>>>()
 }
 
+pub fn threaded_write_consensus_reads(read_iterators: Vec<ReadIterator>, output_file: &String) {
+    let output_fl = File::create(output_file).unwrap();
+
+    let mut gz = GzBuilder::new()
+        .comment("aligned fasta file")
+        .write(output_fl, Compression::best());
+
+   //write!(bgzf,"@HD\tVN:1.6\n@SQ\tSN:{}\tLN:{}\n",ref_name,ref_string.len()).expect("Unable to write to output file");
+    let output = Arc::new(Mutex::new(gz));
+
+    read_iterators.into_iter().for_each(|xx| { //.par_bridge()
+        let conc = create_iterator_poa_consensus(xx);
+        let output = Arc::clone(&output);
+        let mut output_unwrapped = output.lock().unwrap();
+        write!(output_unwrapped,"{}",conc);
+    });
+}
 
 pub fn create_poa_consensus(sequences: &Vec<Vec<u8>>) -> Vec<u8> {
     let max_length_vec = &sequences.iter().map(|n| n.len()).collect::<Vec<usize>>();
@@ -70,8 +90,8 @@ pub fn create_seq_layout_poa_consensus(reads: &Vec<ReadSetContainer>) -> ReadSet
 
 
     let read_one_conc: Record = to_read(read_name.as_ref().unwrap(),
-                                         &create_poa_consensus(&null_cap(read1_agg)).into_iter().collect::<Vec<u8>>(),
-                                         &2, &read_count);
+                                        &create_poa_consensus(&null_cap(read1_agg)).into_iter().collect::<Vec<u8>>(),
+                                        &2, &read_count);
 
     let read_two_conc: Option<Record> = if read2_agg.len() > 0 {
         Some(to_read(read_name.as_ref().unwrap(),
@@ -113,18 +133,18 @@ pub fn to_read(base_name: &Vec<u8>, sequence: &Vec<u8>, read_position: &usize, r
 }
 
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bio::io::fastq::Record;
+
+    use super::*;
 
     #[test]
     fn simple_poa() {
-        let reference = String::from(  "AATGATACGG\0").as_bytes().to_owned();
-        let test_read = String::from(  "TATGATAAGG\0").as_bytes().to_owned();
-        let test_read1 = String::from( "TATGAAGG\0").as_bytes().to_owned();
-        let test_read2 = String::from( "TATGATAAGG\0").as_bytes().to_owned();
+        let reference = String::from("AATGATACGG\0").as_bytes().to_owned();
+        let test_read = String::from("TATGATAAGG\0").as_bytes().to_owned();
+        let test_read1 = String::from("TATGAAGG\0").as_bytes().to_owned();
+        let test_read2 = String::from("TATGATAAGG\0").as_bytes().to_owned();
         let mut all = Vec::new();
         all.push(reference);
         all.push(test_read);
@@ -132,7 +152,7 @@ mod tests {
         all.push(test_read2);
 
 
-        assert_eq!(create_poa_consensus(&all),"TATGATAAGG".as_bytes().to_owned());
+        assert_eq!(create_poa_consensus(&all), "TATGATAAGG".as_bytes().to_owned());
     }
 
     #[test]
@@ -140,8 +160,8 @@ mod tests {
         let read1 = ReadSetContainer::new_from_read1(Record::with_attrs("id_str", Some("desc"), b"ATGCGGG", b"QQQQQQQ"));
         let read2 = ReadSetContainer::new_from_read1(Record::with_attrs("id_str", Some("desc"), b"ATGCGGG", b"QQQQQQQ"));
         let read3 = ReadSetContainer::new_from_read1(Record::with_attrs("id_str", Some("desc"), b"ATACGGG", b"QQQQQQQ"));
-        let read_vec = vec![read1,read2,read3];
+        let read_vec = vec![read1, read2, read3];
         let conc = create_seq_layout_poa_consensus(&read_vec);
-        assert_eq!(b"ATGCGGG".to_vec(),conc.read_one.seq());
+        assert_eq!(b"ATGCGGG".to_vec(), conc.read_one.seq());
     }
 }

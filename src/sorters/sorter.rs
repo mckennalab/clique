@@ -117,19 +117,22 @@ impl SortStructure {
 pub struct Sorter {}
 
 impl Sorter {
-    pub fn sort(sort_list: Vec<&SortStructure>, input_reads: &ReadFileContainer, tmp_location: &String, sorted_output: &String, layout: &LayoutType) {
+    pub fn sort(sort_list: Vec<SortStructure>, input_reads: &ReadFileContainer, tmp_location: &String, sorted_output: &String, layout: &LayoutType) -> Vec<ReadIterator> {
         let temp_location_base = Path::new(tmp_location);
+        println!("Sorting reads1...");
+
         let mut read_iterator = ReadIterator::new_from_bundle(input_reads);
 
         let mut current_iterators = Vec::new();
 
         current_iterators.push(read_iterator);
 
+        println!("Sorting reads...");
         for sort in sort_list {
             let mut next_level_iterators = Vec::new();
 
             for mut iter in current_iterators {
-                match Sorter::sort_level(sort, iter, layout) {
+                match Sorter::sort_level(&sort, iter, layout) {
                     None => {}
                     Some(x) => {next_level_iterators.extend(x);}
                 }
@@ -137,12 +140,8 @@ impl Sorter {
 
             current_iterators = next_level_iterators;
         }
-/*
-        iter.par_bridge().for_each(|xx| {
-            for read in xx {
-                create_seq_layout_poa_consensus()
-            }
-        });*/
+        println!("Done sorting reads...");
+        current_iterators
     }
 
     pub fn sort_level(sort_structure: &SortStructure, iterator: ReadIterator, layout: &LayoutType) -> Option<Vec<ReadIterator>> {
