@@ -136,7 +136,10 @@ impl Sorter {
                 let it = Sorter::sort_level(&sort, iter, layout);
                 match it {
                     None => {println!("NONE!!!!!!!!!!")}
-                    Some(x) => {next_level_iterators.extend(x);}
+                    Some(x) => {
+                        println!("X size {}",&x.len());
+                        next_level_iterators.extend(x);
+                    }
                 }
                 println!("New size: {}",next_level_iterators.len());
             }
