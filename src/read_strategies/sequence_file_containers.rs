@@ -407,7 +407,7 @@ impl ReadIterator
     fn open_reader(check_path: &Option<&PathBuf>) -> Option<Records<BufReader<Reader>>> {
         if check_path.is_some() && check_path.as_ref().unwrap().exists() {
             println!("Opening {}",check_path.as_ref().unwrap().to_str().unwrap());
-            let mut bgr = FqReader::new(Reader::from_path(&check_path.unwrap()).unwrap());
+            let mut bgr = FqReader::new(&check_path.unwrap()).unwrap();
             let records = bgr.records();
             Some(records)
         } else {
