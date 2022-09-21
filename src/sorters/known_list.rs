@@ -45,7 +45,7 @@ impl KnownListDiskStream {
         println!("sorted size {}",sorted.len());
         sorted.sort_by(|a, b| b.0.cmp(&a.0));
 
-        drop(read_iterator);
+        //drop(read_iterator);
         let mut output_container = OutputReadSetWriter::from_read_file_container(&bin);
         for (string_name,read) in sorted {
             output_container.write(&read);
@@ -106,7 +106,7 @@ impl SortStream for KnownListDiskStream {
                     println!("Bin {} wrote {}",x.0, x.1);
                 }
                 // make sure we flush all the buffers
-                drop(output_bins);
+                //drop(output_bins);
                 println!("sort files {}",sorted_reads);
                 //temp_files.iter().for_each(|(size,temp_file)| {
                 //    KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout)
