@@ -100,6 +100,9 @@ impl SortStream for KnownListDiskStream {
                         output_bins[*target_bin].write(&original_reads);
                     }
                 }
+                for x in counts.iter() {
+                    println!("Bin {} wrote {}",x.0, x.1);
+                }
                 // make sure we flush all the buffers
                 drop(output_bins);
                 println!("sort files {}",sorted_reads);
