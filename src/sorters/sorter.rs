@@ -137,9 +137,9 @@ impl Sorter {
                     Some(x) => {next_level_iterators.extend(x);}
                 }
             }
-
+            println!("Done sorting reads...length {} and {}",current_iterators.len(), next_level_iterators.len());
             current_iterators = next_level_iterators;
-            println!("Done sorting reads...length {}",current_iterators.len());
+
 
         }
         println!("Done sorting reads...length {}",current_iterators.len());
