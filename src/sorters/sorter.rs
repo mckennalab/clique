@@ -140,7 +140,7 @@ impl Sorter {
 
             current_iterators = next_level_iterators;
         }
-        println!("Done sorting reads...");
+        println!("Done sorting reads...length {}",current_iterators.len());
         current_iterators
     }
 
