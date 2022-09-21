@@ -195,6 +195,11 @@ pub struct OutputReadSetWriter {
     file_2: Option<BufWriter<Writer>>,
     file_3: Option<BufWriter<Writer>>,
     file_4: Option<BufWriter<Writer>>,
+
+    written_read1: usize,
+    written_read2: usize,
+    written_read3: usize,
+    written_read4: usize,
 }
 
 impl OutputReadSetWriter {
@@ -211,25 +216,32 @@ impl OutputReadSetWriter {
 
     pub fn write(&mut self, rl: &ReadSetContainer) {
         writeln!(self.file_1.borrow_mut(),"{}",rl.read_one);
+        self.written_read1 += 1;
         self.file_1.flush();
         if let Some(x) = self.file_2.as_mut() {
             if let Some(rd) = &rl.read_two {
                 write!(x, "{}", rd);
                 x.flush();
+                self.written_read2 += 1;
             };
         };
         if let Some(x) = self.file_3.as_mut() {
             if let Some(rd) = &rl.index_one {
                 write!(x, "{}", rd);
                 x.flush();
+                self.written_read3 += 1;
             };
         };
         if let Some(x) = self.file_4.as_mut() {
             if let Some(rd) = &rl.index_two {
                 write!(x, "{}", rd);
                 x.flush();
+                self.written_read4 += 1;
             };
         };
+    }
+    pub fn print_read_count(&self) {
+        println!("Read 1 {}, read 2 {} read 3 {} read 4 {}",self.written_read1,self.written_read2,self.written_read3,self.written_read4);
     }
 
     pub fn create_x_bins(rd: &ReadIterator, prefix: &String, x_bins: usize, temp_dir: &Path) -> Vec<(usize,ReadFileContainer)> {

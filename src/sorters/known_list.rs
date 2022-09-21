@@ -100,6 +100,7 @@ impl SortStream for KnownListDiskStream {
                         output_bins[*target_bin].write(&original_reads);
                     }
                 }
+                output_bins.iter().for_each(|x| x.print_read_count());
                 for x in counts.iter() {
                     println!("Bin {} wrote {}",x.0, x.1);
                 }
