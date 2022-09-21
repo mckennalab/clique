@@ -156,12 +156,16 @@ impl Sorter {
                 let mut sorter = KnownListDiskStream::from_read_iterator(iterator, sort_structure, layout);
                 let mut read_sets = sorter.sorted_read_set();
                 match read_sets {
-                    None => None,
+                    None => {
+                        println!("NONE SORT LEVEL");
+                        None
+                    },
                     Some(x) => {
                         let mut ret = Vec::new();
                         for ci in x {
                             ret.push(ReadIterator::from_collection(ci));
                         }
+                        println!("NONE SORT LEVEL --- no {}",&ret.len());
                         Some(ret)
                     }
                 }
