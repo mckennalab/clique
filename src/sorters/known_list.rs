@@ -108,9 +108,9 @@ impl SortStream for KnownListDiskStream {
                 // make sure we flush all the buffers
                 drop(output_bins);
                 println!("sort files {}",sorted_reads);
-                temp_files.iter().for_each(|(size,temp_file)| {
-                    KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout)
-                });
+                //temp_files.iter().for_each(|(size,temp_file)| {
+                //    KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout)
+                //});
 
 
                 KnownListDiskStream{ sorted_bins: VecDeque::from(temp_files.iter().map(|n| n.1.read_one.clone()).collect::<Vec<PathBuf>>()), pattern }
