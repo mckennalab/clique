@@ -42,7 +42,7 @@ impl KnownListDiskStream {
 
             sorted.push((field, transformed_reads.original_reads().unwrap()));
         }
-
+        println!("sorted size {}",sorted.len());
         sorted.sort_by(|a, b| b.0.cmp(&a.0));
 
         let mut output_container = OutputReadSetWriter::from_read_file_container(&bin);
