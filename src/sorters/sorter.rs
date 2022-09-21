@@ -133,8 +133,9 @@ impl Sorter {
             let mut next_level_iterators = Vec::new();
 
             for mut iter in current_iterators {
-                match Sorter::sort_level(&sort, iter, layout) {
-                    None => {}
+                let it = Sorter::sort_level(&sort, iter, layout);
+                match it {
+                    None => {println!("NONE!!!!!!!!!!")}
                     Some(x) => {next_level_iterators.extend(x);}
                 }
             }
