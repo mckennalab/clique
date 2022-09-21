@@ -15,6 +15,7 @@ use crate::umis::sequence_clustering::input_list_to_graph;
 use crate::umis::sequence_clustering::InputList;
 use crate::read_strategies::sequence_file_containers::ReadPattern;
 
+
 pub trait SortStream {
     fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self;
     fn from_read_collection(read_collection: ReadCollection, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self;
@@ -73,17 +74,24 @@ impl SortStream for ClusteredMemorySortStream {
         let groups = split_subgroup(&mut graph);
 
         let mut final_vec = Vec::new();
-        for group in groups.unwrap() {
-            let mut rc = Vec::new();
 
-            for tag in &group {
-                if let Some(i) = self.reads.get(tag) {
-                    rc.extend(i.clone());
+        match groups {
+            None => {}
+            Some(grouping) => {
+                for group in grouping {
+                    let mut rc = Vec::new();
+
+                    for tag in &group {
+                        if let Some(i) = self.reads.get(tag) {
+                            rc.extend(i.clone());
+                        }
+                    }
+                    let consensus_umi = create_poa_consensus(&group);
+                    final_vec.push(ReadCollection::new( VecDeque::from(rc),  ReadPattern::ONE ));
                 }
             }
-            let consensus_umi = create_poa_consensus(&group);
-            final_vec.push(ReadCollection::new( VecDeque::from(rc),  ReadPattern::ONE ));
         }
+
 
         Some(ReadCollectionIterator::new_from_vec(final_vec, self.pattern.clone()))
     }
