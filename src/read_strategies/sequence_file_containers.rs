@@ -191,10 +191,10 @@ impl ReadFileContainer {
 
 /// manage writing read sets to disk
 pub struct OutputReadSetWriter {
-    file_1: BufWriter<Writer>,
-    file_2: Option<BufWriter<Writer>>,
-    file_3: Option<BufWriter<Writer>>,
-    file_4: Option<BufWriter<Writer>>,
+    file_1: Writer,
+    file_2: Option<Writer>,
+    file_3: Option<Writer>,
+    file_4: Option<Writer>,
 
     written_read1: usize,
     written_read2: usize,
@@ -207,10 +207,10 @@ impl OutputReadSetWriter {
 
     pub fn from_read_file_container(sc: &ReadFileContainer) -> OutputReadSetWriter {
         OutputReadSetWriter {
-            file_1: BufWriter::new(Writer::from_path(&sc.read_one).unwrap()),
-            file_2: if let Some(x) = &sc.read_two {Some(BufWriter::new(Writer::from_path(x.clone()).unwrap()))} else {None},
-            file_3: if let Some(x) = &sc.index_one {Some(BufWriter::new(Writer::from_path(x.clone()).unwrap()))} else {None},
-            file_4: if let Some(x) = &sc.index_two {Some(BufWriter::new(Writer::from_path(x.clone()).unwrap()))} else {None},
+            file_1: Writer::from_path(&sc.read_one).unwrap(),
+            file_2: if let Some(x) = &sc.read_two {Some(Writer::from_path(x.clone()).unwrap())} else {None},
+            file_3: if let Some(x) = &sc.index_one {Some(Writer::from_path(x.clone()).unwrap())} else {None},
+            file_4: if let Some(x) = &sc.index_two {Some(Writer::from_path(x.clone()).unwrap())} else {None},
             written_read1: 0,
             written_read2: 0,
             written_read3: 0,
