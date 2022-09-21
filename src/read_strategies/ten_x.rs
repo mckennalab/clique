@@ -1,8 +1,7 @@
 use super::sequence_layout::*;
-use crate::read_strategies::sequence_structures::ReadSetContainer;
+use crate::read_strategies::sequence_file_containers::ReadSetContainer;
 use crate::sorters::sorter::SortStructure;
 use std::path::{Path, PathBuf};
-use crate::read_strategies::sequence_structures::SequenceSetContainer;
 
 pub struct TenXLayout {
     name: Vec<u8>,
@@ -10,7 +9,6 @@ pub struct TenXLayout {
     cellid: Vec<u8>,
     read_one: Vec<u8>,
     original_reads: Option<ReadSetContainer>,
-    original_seqs: Option<SequenceSetContainer>,
 }
 
 impl TenXLayout {
@@ -29,25 +27,6 @@ impl TenXLayout {
             cellid: cell_id_sliced,
             read_one: read.read_one.seq().to_vec(),
             original_reads: Some(read.clone()),
-            original_seqs: None,
-        }
-    }
-    pub fn new_from_ssc(read: SequenceSetContainer) -> TenXLayout {
-        assert!(read.read_two.is_some(), "Read two (read ID and UMI) must be defined for 10X");
-        assert!(!read.index_one.is_some(), "Index 1 is invalid for 10X data");
-        assert!(!read.index_two.is_some(), "Index 2 is invalid for 10X data");
-
-        let read2 = read.read_two.as_ref().unwrap().clone();
-        let cell_id_sliced = read2[0..16].to_vec();
-        let umi_sliced = read2[16..28].to_vec();
-
-        TenXLayout {
-            name: b"UNKNOWN".to_vec(),
-            myumi: umi_sliced,
-            cellid: cell_id_sliced,
-            read_one: read.read_one.clone(),
-            original_reads: None,
-            original_seqs: Some(read.clone()),
         }
     }
 }

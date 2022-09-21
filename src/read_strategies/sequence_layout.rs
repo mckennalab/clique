@@ -11,11 +11,9 @@ use bio::io::fastq;
 use bio::io::fastq::{Reader, Record, Records};
 
 use crate::read_strategies::ten_x::TenXLayout;
-use crate::sorters::sorter::ReadSortingOnDiskContainer;
-use crate::read_strategies::sequence_structures::ReadSetContainer;
+use crate::read_strategies::sequence_file_containers::ReadSetContainer;
 use crate::sorters::sorter::SortStructure;
 use std::collections::HashMap;
-use crate::read_strategies::sequence_structures::SequenceSetContainer;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LayoutType {
@@ -71,13 +69,10 @@ pub trait SequenceLayout {
     fn has_original_reads(&self) -> bool;
 }
 
-
-
-
-pub fn transform(read: ReadSetContainer, layout: &LayoutType) -> Box<dyn SequenceLayout> {
+pub fn transform(read: ReadSetContainer, layout: &LayoutType) -> impl SequenceLayout {
     match layout {
         LayoutType::TENXV3 => {
-            Box::new(TenXLayout::new(read))
+            TenXLayout::new(read)
         }
         LayoutType::PAIREDUMI => {
             unimplemented!()
@@ -91,27 +86,5 @@ pub fn transform(read: ReadSetContainer, layout: &LayoutType) -> Box<dyn Sequenc
         LayoutType::TENXV2 => {
             unimplemented!()
         }
-
-    }
-}
-
-pub fn transform_from_ssc(read: SequenceSetContainer, layout: &LayoutType) -> Box<dyn SequenceLayout> {
-    match layout {
-        LayoutType::TENXV3 => {
-            Box::new(TenXLayout::new_from_ssc(read))
-        }
-        LayoutType::PAIREDUMI => {
-            unimplemented!()
-        }
-        LayoutType::PAIRED=> {
-            unimplemented!()
-        }
-        LayoutType::SCI => {
-            unimplemented!()
-        }
-        LayoutType::TENXV2 => {
-            unimplemented!()
-        }
-
     }
 }

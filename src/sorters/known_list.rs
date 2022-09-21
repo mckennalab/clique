@@ -1,21 +1,137 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::read_strategies::sequence_structures::*;
+use crate::read_strategies::sequence_file_containers::*;
 use crate::read_strategies::sequence_layout::*;
 use crate::umis::sequence_clustering::BestHits;
-use crate::utils::custom_read_sort;
-use crate::sorters::sorter::ReadSortingOnDiskContainer;
-use crate::sorters::sorter::SortingOutputContainer;
-use crate::sorters::sorter::SortedInputContainer;
+use crate::sorters::*;
 use crate::umis::sequence_clustering::*;
 use crate::consensus::consensus_builders::create_seq_layout_poa_consensus;
 use rayon::iter::ParallelBridge;
 use rayon::prelude::IntoParallelRefMutIterator;
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
+use log::{info, warn};
+use crate::utils::file_utils::get_reader;
+use crate::utils::base_utils::edit_distance;
+use crate::fasta_comparisons::*;
+use std::io::BufRead;
+use crate::sorters::sorter::SortStructure;
+use crate::sorters::sort_streams::SortStream;
+use std::slice::Iter;
+
+pub struct KnownListDiskStream {
+    sorted_bins: VecDeque<PathBuf>,
+    pattern: ReadPattern,
+}
+
+impl KnownListDiskStream {
+    pub fn sort_disk_in_place(bin: &ReadFileContainer, sort_structure: &SortStructure, layout: &LayoutType) {
+
+        let read_iterator = ReadIterator::new_from_bundle(bin);
+
+        let mut sorted = Vec::new();
+
+        for rd in read_iterator {
+            let transformed_reads = transform(rd, layout);
+            assert!(transformed_reads.has_original_reads());
+
+            let field = sort_structure.get_field(&transformed_reads).unwrap();
+
+            sorted.push((field, transformed_reads.original_reads().unwrap()));
+        }
+
+        sorted.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let mut output_container = OutputReadSetWriter::from_read_file_container(&bin);
+        for (string_name,read) in sorted {
+            output_container.write(&read);
+        }
+    }
+}
+
+
+impl SortStream for KnownListDiskStream {
+
+    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self {
+        match sort_structure {
+            SortStructure::KNOWN_LIST { layout_type, maximum_distance, on_disk, known_list } => {
+
+                let mut consensus_manager = KnownListConsensus::new();
+                let pattern = ReadPattern::from_read_iterator(&read_iter);
+                let read_iter2 = read_iter.new_reset();
+                let read_iter3 = read_iter.new_reset();
+
+                for rd in read_iter {
+                    let transformed_reads = transform(rd, &layout);
+                    let sequence = sort_structure.get_field(&transformed_reads).unwrap();
+
+                    let corrected_hits = correct_to_known_list(&sequence, &mut known_list.lock().as_mut().unwrap(), 1);
+                    consensus_manager.add_hit(&sequence, corrected_hits);
+                }
+
+                let kcl = consensus_manager.match_to_knownlist();
+                let splits = consensus_manager.create_balanced_bins(200 as u64);
+
+                let temp_location_base_full = tempfile::tempdir().unwrap();
+                let temp_location_base = Path::new("./tmp/");
+
+                let mut temp_files = OutputReadSetWriter::create_x_bins(&read_iter3, &"unsorted".to_string(), splits.bins, &temp_location_base);
+                let mut output_bins = temp_files.iter().map(|(id,x)|
+                    OutputReadSetWriter::from_read_file_container(&x)).collect::<Vec<OutputReadSetWriter>>();
+
+                let mut counts: HashMap<usize,i32> = HashMap::new();
+
+                for rd in read_iter2 {
+                    let transformed_reads = transform(rd, &layout);
+                    let sequence = sort_structure.get_field(&transformed_reads).unwrap();
+
+                    let target_bin = splits.hit_to_container_number.get(&sequence);
+
+                    if let Some(target_bin) = target_bin {
+                        let original_reads = transformed_reads.original_reads().unwrap();
+                        let bin_count: i32 = *counts.get(target_bin).unwrap_or(&0);
+                        counts.insert(*target_bin,bin_count + 1);
+                        output_bins[*target_bin].write(&original_reads);
+                    }
+                }
+                // make sure we flush all the buffers
+                drop(output_bins);
+
+                temp_files.iter().for_each(|(size,temp_file)| {
+                    KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout)
+                });
+
+
+                KnownListDiskStream{ sorted_bins: VecDeque::from(temp_files.iter().map(|n| n.1.read_one.clone()).collect::<Vec<PathBuf>>()), pattern }
+            }
+            _ => {
+                panic!("Called KnownListDiskStream using a sort structure that isn't KNOWN_LIST");
+            }
+        }
+
+
+    }
+
+    fn from_read_collection(read_collection: ReadCollection, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self {
+        KnownListDiskStream::from_read_iterator(ReadIterator::from_collection(read_collection),sort_structure,layout)
+    }
+
+    fn sorted_read_set(&mut self) -> Option<ReadCollectionIterator> {
+        match self.sorted_bins.len() {
+            0 => None,
+            _ => {
+                let next_file = self.sorted_bins.pop_front();
+                match next_file {
+                    None => None,
+                    Some(x) => Some(ReadCollectionIterator::new_from_file(vec![x], self.pattern.clone())),
+                }
+            }
+        }
+    }
+}
 
 pub struct KnownListConsensus {
     observed_identifier_to_best_matches: HashMap<Vec<u8>, BestHits>,
@@ -23,14 +139,8 @@ pub struct KnownListConsensus {
     total_reads: u64,
 }
 
-pub struct KnownListSort {
-    pub best_match_to_original: HashMap<Vec<u8>, Vec<u8>>,
-    pub original_to_best_match: HashMap<Vec<u8>, Vec<u8>>,
-    pub hit_to_container_number: HashMap<Vec<u8>, usize>,
-    pub bins: usize,
-}
-
 impl KnownListConsensus {
+
     pub fn new() -> KnownListConsensus {
         let ids: HashMap<Vec<u8>, BestHits> = HashMap::new();
         let counts: HashMap<Vec<u8>, u64> = HashMap::new();
@@ -70,7 +180,9 @@ impl KnownListConsensus {
                 clean_ids.insert(k.clone(), count);
             }
         });
-        println!("total = {}, unresolved = {}, resolved = {}, final = {}", total, unresolved, resolved, clean_mapping.len());
+
+        info!("total = {}, unresolved = {}, resolved = {}, final = {}", total, unresolved, resolved, clean_mapping.len());
+
         KnownListConsensus {
             observed_identifier_to_best_matches: clean_mapping,
             observed_identifiers_counts: clean_ids,
@@ -99,7 +211,7 @@ impl KnownListConsensus {
         }
     }
 
-    pub fn read_balanced_lists(&self, number_of_splits: u64) -> KnownListSort {
+    pub fn create_balanced_bins(&self, number_of_splits: u64) -> KnownListBinSplit {
         let approximate_read_count = self.total_reads / (number_of_splits + 1);
 
         let mut current_total = 0;
@@ -110,8 +222,11 @@ impl KnownListConsensus {
 
         let mut container_number = 0;
         let mut dropped_read = 0;
+
         self.observed_identifiers_counts.iter().for_each(|(k, count)| {
+
             let best_hit = self.observed_identifier_to_best_matches.get(&k.clone()).unwrap();
+
             if best_hit.hits.len() > 0 {
                 best_match_to_original.insert(best_hit.hits[0].clone(), k.clone());
                 original_to_best_match.insert(k.clone(), best_hit.hits[0].clone());
@@ -128,145 +243,75 @@ impl KnownListConsensus {
         });
         println!("Dropped read count: {}",dropped_read);
 
-        KnownListSort { best_match_to_original, original_to_best_match, hit_to_container_number: list_to_container, bins: container_number + 1}
+        KnownListBinSplit { best_match_to_original, original_to_best_match, hit_to_container_number: list_to_container, bins: container_number + 1}
     }
+}
 
-    pub fn consensus(read_file_bundle: &ReadFileContainer,
-                     splits: &KnownListSort,
-                     layout: &LayoutType,
-                     output_file: &PathBuf,
-                     threads: usize) {
+pub struct KnownListBinSplit {
+    pub best_match_to_original: HashMap<Vec<u8>, Vec<u8>>,
+    pub original_to_best_match: HashMap<Vec<u8>, Vec<u8>>,
+    pub hit_to_container_number: HashMap<Vec<u8>, usize>,
+    pub bins: usize,
+}
 
-        assert!(layout.has_tags()); // otherwise we shouldn't be here
+pub struct KnownList {
+    pub name: String,
+    pub known_list_map: HashMap<Vec<u8>, BestHits>,
+    pub known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>>,
+    pub known_list_subset_key_size: usize,
+}
 
-        let temp_location_base_full = tempfile::tempdir().unwrap();
-        let temp_location_base = Path::new("./tmp/");
-        let read_iterator = ReadIterator::new_from_bundle(read_file_bundle);
-        let mut temp_files = ReadSortingOnDiskContainer::create_x_bins(&read_iterator, splits.bins, &temp_location_base);
-        let mut output_bins = temp_files.iter().map(|(id,x)| SortingOutputContainer::from_sorting_container(&x)).collect::<Vec<SortingOutputContainer>>();
+fn validate_barcode(barcode: &Vec<u8>) -> bool {
+    barcode.iter().filter(|b| !KNOWNBASES.contains_key(*b)).map(|n| n).collect::<Vec<_>>().len() == 0 as usize
+}
 
-        let mut counts: HashMap<usize,i32> = HashMap::new();
+impl KnownList {
+    const KNOWN_LIST_SEPARATOR: &'static str = ":";
+
+    pub fn new(knownlist_tag_and_file: &String, starting_nmer_size: usize) -> KnownList {
+
+        // TODO: fix the sep here
+        let knownlist_tag_and_file_vec = knownlist_tag_and_file.split(":").collect::<Vec<&str>>();
+        assert_eq!(knownlist_tag_and_file_vec.len(), 2);
+
+        let mut existing_mapping = HashMap::new();
+        let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
+
+        let mut raw_reader = get_reader(knownlist_tag_and_file_vec[1]).unwrap();
 
         let mut cnt = 0;
-        let mut dropped = 0;
-        for rd in read_iterator {
-            let transformed_reads = transform(rd, layout);
-            assert!(transformed_reads.has_original_reads());
 
-            let first_barcode = transformed_reads.cell_id().unwrap();
-
-            let target_bin = splits.hit_to_container_number.get(first_barcode);
-
-            if let Some(target_bin) = target_bin {
-                let original_reads = transformed_reads.original_reads().unwrap();
-                cnt += 1;
-                let bin_count: i32 = *counts.get(target_bin).unwrap_or(&0);
-                counts.insert(*target_bin,bin_count + 1);
-                output_bins[*target_bin].write_reads(original_reads);
-            } else {
-                dropped += 1;
+        let mut btree = BTreeSet::new();
+        println!("Adding known barcodes...");
+        for line in raw_reader.lines() {
+            let bytes = line.unwrap().as_bytes().to_vec();
+            if validate_barcode(&bytes) {
+                btree.insert(bytes);
             }
         }
-        counts.iter().for_each(|(k,v)| println!("K {} v {}",k,v));
 
-        println!("COunts {} dropped {}",cnt, dropped);
+        // now the barcodes are in order, use this to generate grouped keys
+        let mut prefix: Option<Vec<u8>> = None;
+        let mut container: Vec<Vec<u8>> = Vec::new();
+        for bytes in &btree {
+            if !prefix.is_some() { prefix = Some(bytes[0..starting_nmer_size].to_vec()); }
 
-        //output_bins.iter_mut().for_each(|o| o.close());
-        drop(output_bins);
-        let mut output_file = BufWriter::new(File::create(output_file).unwrap());
-        let output = Arc::new(Mutex::new(output_file));
+            existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
 
-        // sort each output bin and write to the output file
-        //rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().unwrap();
-
-        temp_files.par_iter().for_each(|(index,bin)|{
-            println!("sorting input ");
-            let sortingInput = SortedInputContainer::from_sorting_container(bin, *index, &splits, &layout, &temp_location_base.to_path_buf());
-            println!("sorting input size {}",sortingInput.sorted_records.len());
-            let consensuses = KnownListConsensus::consensus_from_sorted_container_10x(&sortingInput, 1);
-
-            let output = Arc::clone(&output);
-            let mut output = output.lock().unwrap();
-
-            for con in consensuses {
-                write!(output,"R1={}\n,R2={}\n,I1={}\n,I2={}\n",
-                       String::from_utf8(con.read_one).unwrap(),
-                    if con.read_two.is_some() {String::from_utf8(con.read_two.unwrap()).unwrap()} else {"NONE".to_string()},
-                       if con.index_one.is_some() {String::from_utf8(con.index_one.unwrap()).unwrap()} else {"NONE".to_string()},
-                       if con.index_two.is_some() {String::from_utf8(con.index_two.unwrap()).unwrap()} else {"NONE".to_string()});
+            let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
+            if edit_distance(&first_x, prefix.as_ref().unwrap()) > 0 {
+                known_list_subset.insert(prefix.unwrap(), container.clone());
+                container.clear();
+                prefix = Some(first_x);
             }
-        });
-        let output = Arc::clone(&output);
-        let mut output = output.lock().unwrap();
-        output.flush();
-    }
-
-    pub fn submerge_by_umi(sic: &Vec<&Box<dyn SequenceLayout>>, max_dist: u64) -> Vec<SequenceSetContainer> {
-
-        let mut umi_to_reads: HashMap<Vec<u8>,Vec<ReadSetContainer>> = HashMap::new();
-        sic.into_iter().for_each(|sl| {
-            let umi_seq = sl.umi().clone().unwrap();
-            let empty_vec: Vec<ReadSetContainer> = Vec::new();
-            let mut umi_bundle = umi_to_reads.get(umi_seq).unwrap_or(&empty_vec).clone();
-            umi_bundle.push(sl.original_reads().unwrap());
-            umi_to_reads.insert(umi_seq.clone(), umi_bundle.clone().to_owned());
-        });
-
-        let input_list = InputList{ strings: umi_to_reads.keys().map(|k| k.clone()).collect::<Vec<Vec<u8>>>(), max_dist: 3 };
-        let graph = input_list_to_graph(&input_list, string_distance, false);
-        let cc_list = get_connected_components(&graph);
-
-        let mut clusters: Vec<Vec<Vec<u8>>> = Vec::new();
-
-        cc_list.into_iter().for_each(|cc| {
-
-            let mut subgraph = input_list_to_graph(&InputList { strings: cc.clone(), max_dist }, string_distance, false);
-
-            let over_set_dist = max_set_distance(&subgraph.string_to_node.keys().map(|k| k.clone()).collect::<Vec<Vec<u8>>>()) <= max_dist * 2;
-
-            if !over_set_dist {
-                clusters.push(cc);
-            } else {
-                let new_groups = split_subgroup(&mut subgraph);
-                if new_groups.is_some() {
-                    clusters.extend(new_groups.unwrap());
-                } else {
-                    clusters.push(cc);
-                }
-            }
-        });
-        let mut sorted_records= Vec::new();
-        umi_to_reads.iter().for_each(|(umi, reads)| {
-            let consensus = create_seq_layout_poa_consensus(reads);
-            sorted_records.push(consensus);
-        });
-        sorted_records
-    }
-
-    pub fn consensus_from_sorted_container_10x(sic: &SortedInputContainer, max_distance: u64) -> Vec<SequenceSetContainer> {
-        let mut return_reads = Vec::new();
-        let mut reads_to_merge = Vec::new();
-        let mut current_key : Option<String> = None;
-
-        sic.sorted_records.iter().for_each(|(barcode_string, reads)| {
-            // fix this
-            if !current_key.is_some() || (current_key.is_some() && string_distance(&current_key.as_ref().unwrap().clone().into_bytes(), &barcode_string.clone().into_bytes()) != 0) {
-                // make a consensus for all defined reads
-                if reads_to_merge.len() > 0 {
-                    let consensus = KnownListConsensus::submerge_by_umi(&reads_to_merge, max_distance);
-                    return_reads.extend(consensus);
-                }
-                reads_to_merge.clear();
-                current_key = Some(barcode_string.clone());
-            }
-            reads_to_merge.push(reads);
-
-        });
-
-        if reads_to_merge.len() > 0 {
-            let consensus = KnownListConsensus::submerge_by_umi(&reads_to_merge, max_distance);
-            return_reads.extend(consensus);
+            container.push(bytes.clone());
         }
-        return_reads
+        known_list_subset.insert(prefix.unwrap(), container.clone());
+        KnownList {
+            name: knownlist_tag_and_file_vec[0].to_string(),
+            known_list_map: existing_mapping,
+            known_list_subset,
+            known_list_subset_key_size: starting_nmer_size,
+        }
     }
 }

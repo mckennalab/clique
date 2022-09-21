@@ -15,6 +15,7 @@ extern crate suffix;
 extern crate bgzip;
 extern crate rayon;
 extern crate rust_htslib;
+extern crate itertools;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -38,10 +39,11 @@ use rayon::prelude::*;
 use crate::extractor::extract_tagged_sequences;
 use crate::linked_alignment::*;
 use crate::read_strategies::sequence_layout::*;
-use crate::read_strategies::sequence_structures::*;
+use crate::read_strategies::sequence_file_containers::*;
 use crate::reference::fasta_reference::reference_file_to_struct;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::umis::sequence_clustering::*;
+use sorters::known_list::KnownList;
 
 //use flate2::GzBuilder;
 //use flate2::Compression;
@@ -69,12 +71,11 @@ pub mod fasta_comparisons;
 
 mod read_strategies {
     pub mod sequence_layout;
-    pub mod sequence_structures;
+    pub mod sequence_file_containers;
     pub mod ten_x;
 }
 
 mod utils {
-    pub mod custom_read_sort;
     pub mod file_utils;
     pub mod base_utils;
 }
@@ -82,6 +83,7 @@ mod utils {
 mod sorters {
     pub mod known_list;
     pub mod sorter;
+    pub mod sort_streams;
 }
 
 mod reference {
@@ -124,60 +126,13 @@ struct Args {
     #[structopt(long, default_value = "NONE")]
     known_list: String,
 }
-/*
-fn old_main() {
-    let mut test_set = Vec::new();
-
-    if let Ok(lines) = read_lines("test_data/just_sequences_20000_16s.txt") {
-        // Consumes the iterator, returns an (Optional) String
-        for line in lines {
-            if let Ok(ip) = line {
-                test_set.push(ip.as_bytes().to_vec());
-            }
-        }
-    }
-    println!("TEST SIZE {}, making graph",test_set.len());
-    let graph = input_list_to_graph(&InputList{strings: test_set, max_dist: 1},string_distance, true);
-    println!("Making clique");
-    println!("Connected size: {}", connected_components(&graph.graph));
-    process_cliques(&graph);
-}
-
-fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-    where P: AsRef<Path>, {
-    let file = File::open(filename)?;
-    Ok(io::BufReader::new(file).lines())
-
-
-    let my_score = InversionScoring {
-        match_score: 10.0,
-        mismatch_score: -11.0,
-        gap_open: -15.0,
-        gap_extend: -5.0,
-        inversion_penalty: -2.0,
-    };
-
-
-    let my_aff_score = AffineScoring {
-        match_score: 10.0,
-        mismatch_score: -11.0,
-        special_character_score: 7.0,
-        gap_open: -15.0,
-        gap_extend: -5.0,
-    };
-}*/
 
 fn main() {
     let parameters = Args::parse();
 
     let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
 
-    let read_bundle = ReadFileContainer {
-        read_one: PathBuf::from(parameters.read1),
-        read_two: PathBuf::from(parameters.read2),
-        index_one: PathBuf::from(parameters.index1),
-        index_two: PathBuf::from(parameters.index2),
-    };
+    let read_bundle = ReadFileContainer::new(&parameters.read1,&parameters.read2, &parameters.index1, &parameters.index2);
 
     let reference = reference_file_to_struct(&parameters.reference);
 
@@ -217,12 +172,12 @@ fn main() {
     }
     println!("Count = {}, mto = {}", cnt, mto);
     consensus_manager.match_to_knownlist();
-    let splits = consensus_manager.read_balanced_lists(parameters.number_of_buckets as u64);
+    let splits = consensus_manager.create_balanced_bins(parameters.number_of_buckets as u64);
 
     let test_output = PathBuf::from("test_file.txt".to_string());
     let read_iterator2 = ReadIterator::new_from_bundle(&read_bundle);
 
-    KnownListConsensus::consensus(&read_bundle, &splits, &LayoutType::TENXV3, &test_output, parameters.threads);
+    //KnownListConsensus::consensus(&read_bundle, &splits, &LayoutType::TENXV3, &test_output, parameters.threads);
     //}
 
     //read_iterator.par_bridge().for_each(|xx|

@@ -23,6 +23,7 @@ use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::umis::bronkerbosch::BronKerbosch;
 use crate::utils::base_utils::*;
 use crate::utils::file_utils::get_reader;
+use crate::sorters::known_list::KnownList;
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,
@@ -42,77 +43,6 @@ pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u64 {
     str1.iter().zip(str2.iter()).map(|(c1, c2)| if c1 == c2 { 0 } else { 1 }).sum()
 }
 
-pub struct KnownList {
-    pub name: String,
-    pub known_list: Vec<Vec<u8>>,
-    pub known_list_map: HashMap<Vec<u8>, BestHits>,
-    known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>>,
-    known_list_subset_key_size: usize,
-}
-
-fn validate_barcode(barcode: &Vec<u8>) -> bool {
-    barcode.iter().filter(|b| !KNOWNBASES.contains_key(*b)).map(|n| n).collect::<Vec<_>>().len() == 0 as usize
-}
-
-impl KnownList {
-    const KNOWN_LIST_SEPARATOR: &'static str = ":";
-
-    pub fn new(knownlist_tag_and_file: &String, starting_nmer_size: usize) -> KnownList {
-
-        // TODO: fix the sep here
-        let knownlist_tag_and_file_vec = knownlist_tag_and_file.split(":").collect::<Vec<&str>>();
-        assert_eq!(knownlist_tag_and_file_vec.len(), 2);
-
-        let mut existing_mapping = HashMap::new();
-        let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
-        let mut test_set = Vec::new();
-
-        let mut raw_reader = get_reader(knownlist_tag_and_file_vec[1]).unwrap();
-
-        let mut cnt = 0;
-
-        let mut btree = BTreeSet::new();
-        println!("Adding known barcodes...");
-        for line in raw_reader.lines() {
-            let bytes = line.unwrap().as_bytes().to_vec();
-            if validate_barcode(&bytes) {
-                btree.insert(bytes);
-            }
-        }
-
-        // now the barcodes are in order, use this to generate grouped keys
-        let mut prefix: Option<Vec<u8>> = None;
-        let mut container: Vec<Vec<u8>> = Vec::new();
-        for bytes in &btree {
-            if !prefix.is_some() { prefix = Some(bytes[0..starting_nmer_size].to_vec()); }
-
-            test_set.push(bytes.clone());
-
-            existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
-
-            let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
-            if edit_distance(&first_x, prefix.as_ref().unwrap()) > 0 {
-                known_list_subset.insert(prefix.unwrap(), container.clone());
-                container.clear();
-                prefix = Some(first_x);
-            }
-            container.push(bytes.clone());
-        }
-        known_list_subset.insert(prefix.unwrap(), container.clone());
-        KnownList {
-            name: knownlist_tag_and_file_vec[0].to_string(),
-            known_list: test_set,
-            known_list_map: existing_mapping,
-            known_list_subset,
-            known_list_subset_key_size: starting_nmer_size,
-        }
-    }
-}
-
-
-pub struct KnownListOrganizer {
-    known_list_mapping: HashMap<String, KnownList>,
-}
 
 pub struct BestHits {
     pub hits: Vec<Vec<u8>>,
@@ -441,25 +371,6 @@ mod tests {
         let graph = input_list_to_graph(&InputList { strings: test_set, max_dist: 1 }, string_distance, false);
         println!("Making clique");
         process_cliques(&graph);
-    }
-
-    #[test]
-    fn test_validate_barcode() {
-        let test_vec = vec![b'A', b'T'];
-        let is_valid = validate_barcode(&test_vec);
-        assert_eq!(true, is_valid);
-
-        let test_vec = vec![b'a', b'T'];
-        let is_valid = validate_barcode(&test_vec);
-        assert_eq!(true, is_valid);
-
-        let test_vec = vec![b'A', b'E'];
-        let is_valid = validate_barcode(&test_vec);
-        assert_eq!(false, is_valid);
-
-        let test_vec = vec![b'a', b'e'];
-        let is_valid = validate_barcode(&test_vec);
-        assert_eq!(false, is_valid);
     }
 
     /*
