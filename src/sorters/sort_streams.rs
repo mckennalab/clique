@@ -79,7 +79,7 @@ impl SortStream for ClusteredMemorySortStream {
         };
         let cc = get_connected_components(&graph);
 
-        println!("UMI Read count {}", self.reads.len());
+        println!("UMI Read count {}", &cc.len());
         let mut final_vec = Vec::new();
 
         for group in cc {
