@@ -86,7 +86,7 @@ pub fn create_seq_layout_poa_consensus(reads: &Vec<ReadSetContainer>) -> ReadSet
 
     let read_one_conc: Record = to_read(read_name.as_ref().unwrap(),
                                         &create_poa_consensus(&null_cap(read1_agg)).into_iter().collect::<Vec<u8>>(),
-                                        &2, &read_count);
+                                        &1, &read_count);
 
     let read_two_conc: Option<Record> = if read2_agg.len() > 0 {
         Some(to_read(read_name.as_ref().unwrap(),
