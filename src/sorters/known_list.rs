@@ -109,11 +109,12 @@ impl SortStream for KnownListDiskStream {
                 drop(output_bins);
                 println!("sort files {}",sorted_reads);
                 temp_files.iter().for_each(|(size,temp_file)| {
-                    KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout)
+                    KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout);
                 });
 
-
-                KnownListDiskStream{ sorted_bins: VecDeque::from(temp_files.iter().map(|n| n.1.read_one.clone()).collect::<Vec<PathBuf>>()), pattern }
+                let bins = VecDeque::from(temp_files.iter().map(|n| n.1.read_one.clone()).collect::<Vec<PathBuf>>());
+                println!("Bin size: {}", &bins.len());
+                KnownListDiskStream{ sorted_bins: bins, pattern }
             }
             _ => {
                 panic!("Called KnownListDiskStream using a sort structure that isn't KNOWN_LIST");

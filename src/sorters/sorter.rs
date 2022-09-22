@@ -166,6 +166,7 @@ impl Sorter {
                     Some(x) => {
                         let mut ret = Vec::new();
                         for ci in x {
+                            println!("Adding collection");
                             ret.push(ReadIterator::from_collection(ci));
                         }
                         println!("NONE SORT LEVEL --- no {}",&ret.len());
