@@ -275,8 +275,10 @@ impl OutputReadSetWriter {
 
     pub fn from_pattern(base: &PathBuf, pt: &ReadPattern) -> OutputReadSetWriter {
         let base_path = base.as_path().to_str().unwrap();
+        let read1: PathBuf = [base_path, "read1.fq.gz"].iter().collect();
+        println!("READ 1 = {:?}",read1);
         OutputReadSetWriter {
-            file_1: OutputReadSetWriter::create_writer(&[base_path, "read1.fq.gz"].iter().collect()),
+            file_1: OutputReadSetWriter::create_writer(&read1),
             file_2: if pt.contains_r2() {Some(OutputReadSetWriter::create_writer(&[base_path, "read2.fq.gz"].iter().collect()),)} else {None},
             file_3: if pt.contains_i1() {Some(OutputReadSetWriter::create_writer(&[base_path, "index1.fq.gz"].iter().collect()),)} else {None},
             file_4: if pt.contains_i2() {Some(OutputReadSetWriter::create_writer(&[base_path, "index2.fq.gz"].iter().collect()),)} else {None},
