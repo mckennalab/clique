@@ -35,6 +35,26 @@ pub enum SortStructure {
     LD_UMI { layout_type: LayoutType, on_disk: bool },
 }
 
+impl std::fmt::Display for SortStructure {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            SortStructure::KNOWN_LIST { layout_type, maximum_distance, on_disk, known_list } => {
+                let res = write!(f,"KNOWN_LIST,{},{},{}",layout_type,maximum_distance,on_disk);
+                res
+            }
+            SortStructure::HD_UMI { layout_type, on_disk } => {
+                let res = write!(f,"HD_UMI,{},{}",layout_type,on_disk);
+                res
+            }
+            SortStructure::LD_UMI { layout_type, on_disk } => {
+                let res = write!(f,"LD_UMI,{},{}",layout_type,on_disk);
+                res
+            }
+        }
+    }
+}
+
+
 impl SortStructure {
     pub fn from_layout(layout: &LayoutType, known_lists: HashMap<LayoutType, Arc<Mutex<KnownList>>>) -> Vec<SortStructure> {
         match layout {
@@ -130,6 +150,7 @@ impl Sorter {
         println!("Sorting reads...");
         println!("Sorting sorting reads...length {}",current_iterators.len());
         for sort in sort_list {
+            println!("---------------------------------- {:?} ---------------------------",&sort.to_string());
             let mut next_level_iterators = Vec::new();
 
             for mut iter in current_iterators {
@@ -186,6 +207,7 @@ impl Sorter {
                         for ci in x {
                             ret.push(ReadIterator::from_collection(ci));
                         }
+                        println!("ITERRRRRATOR LENGTH {}", ret.len());
                         Some(ret)
                     }
                 }

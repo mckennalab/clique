@@ -24,6 +24,18 @@ pub enum LayoutType {
     SCI,
 }
 
+impl std::fmt::Display for LayoutType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            LayoutType::TENXV3 => {let res = write!(f,"TENXV3");res}
+            LayoutType::TENXV2 => {let res = write!(f,"TENXV3");res}
+            LayoutType::PAIREDUMI => {let res = write!(f,"TENXV3");res}
+            LayoutType::PAIRED => {let res = write!(f,"TENXV3");res}
+            LayoutType::SCI => {let res = write!(f,"TENXV3");res}
+        }
+    }
+}
+
 impl LayoutType {
     pub fn has_tags(&self) -> bool {
         match *self {
