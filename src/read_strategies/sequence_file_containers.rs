@@ -147,6 +147,17 @@ pub struct ReadFileContainer {
     pub index_two: Option<PathBuf>,
 }
 
+impl Clone for ReadFileContainer {
+    fn clone(&self) -> ReadFileContainer {
+        ReadFileContainer {
+            read_one: self.read_one.clone(),
+            read_two: self.read_two.clone(),
+            index_one: self.index_one.clone(),
+            index_two: self.index_two.clone(),
+        }
+    }
+}
+
 impl ReadFileContainer {
     pub fn new(read1: &String, read2: &String, index1: &String, index2: &String) ->  ReadFileContainer {
         let path1 = PathBuf::from(read1);
@@ -441,7 +452,7 @@ impl ReadIterator
 /// This is ugly, but I don't have the energy for some dyn nightmare right now
 pub struct ReadCollectionIterator {
     reads: VecDeque<ReadCollection>,
-    read_files: VecDeque<ReadSetContainer>,
+    read_files: VecDeque<ReadFileContainer>,
     read_pattern: ReadPattern,
 }
 
@@ -456,10 +467,10 @@ impl Iterator for ReadCollectionIterator {
                         None => {}
                         Some(x) => {
                             let mut readset = VecDeque::new();
-                            for r in ReadIterator::from_collection(read_col) {
+                            for r in ReadIterator::new_from_bundle(&x) {
                                 readset.push_back(r);
                             }
-                            self.reads.push(ReadCollection{ reads: readset, pattern: self.read_pattern.clone() })
+                            self.reads.push_back(ReadCollection{ reads: readset, pattern: self.read_pattern.clone() })
                         }
                     }
                 }
@@ -482,7 +493,7 @@ impl ReadCollectionIterator {
         }
     }
 
-    pub fn new_from_files(reads: VecDeque<ReadSetContainer>, read_pattern: ReadPattern) -> ReadCollectionIterator {
+    pub fn new_from_files(reads: VecDeque<ReadFileContainer>, read_pattern: ReadPattern) -> ReadCollectionIterator {
         ReadCollectionIterator{
             reads: VecDeque::new(),
             read_files: reads,

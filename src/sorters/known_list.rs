@@ -24,7 +24,7 @@ use crate::utils::base_utils::edit_distance;
 use crate::utils::file_utils::get_reader;
 
 pub struct KnownListDiskStream {
-    sorted_bins: VecDeque<ReadSetContainer>,
+    sorted_bins: VecDeque<ReadFileContainer>,
     pattern: ReadPattern,
 }
 
@@ -111,7 +111,9 @@ impl SortStream for KnownListDiskStream {
                     KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout);
                 });
 
-                let bins = VecDeque::from(temp_files.iter().map(|n| n).collect::<Vec<ReadSetContainer>>());
+                let bins = VecDeque::from(
+                    temp_files.iter().map(|n| n.1.clone())
+                        .collect::<Vec<ReadFileContainer>>());
                 println!("Bin size: {}", &bins.len());
                 KnownListDiskStream { sorted_bins: bins, pattern }
             }
