@@ -123,15 +123,15 @@ impl SortStream for KnownListDiskStream {
         }
     }
 
-    fn from_read_collection(read_collection: ReadCollection, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self {
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self {
         KnownListDiskStream::from_read_iterator(ReadIterator::from_collection(read_collection), sort_structure, layout)
     }
 
-    fn sorted_read_set(&mut self) -> Option<ReadCollectionIterator> {
+    fn sorted_read_set(&mut self) -> Option<ClusteredReadIterator> {
         match self.sorted_bins.len() {
             0 => None,
             _ => {
-                Some(ReadCollectionIterator::new_from_files(self.sorted_bins.clone(), self.pattern.clone()))
+                Some(ClusteredReadIterator::new_from_files(self.sorted_bins.clone(), self.pattern.clone()))
             }
         }
     }

@@ -4,8 +4,8 @@ use std::slice::Iter;
 use crate::consensus::consensus_builders::create_poa_consensus;
 use crate::read_strategies::sequence_file_containers::{ReadIterator, ReadSetContainer};
 use crate::read_strategies::sequence_file_containers::NamedReadSetContainer;
-use crate::read_strategies::sequence_file_containers::ReadCollection;
-use crate::read_strategies::sequence_file_containers::ReadCollectionIterator;
+use crate::read_strategies::sequence_file_containers::ClusteredReads;
+use crate::read_strategies::sequence_file_containers::ClusteredReadIterator;
 use crate::read_strategies::sequence_file_containers::ReadPattern;
 use crate::read_strategies::sequence_layout::LayoutType;
 use crate::read_strategies::sequence_layout::SequenceLayout;
@@ -15,11 +15,12 @@ use crate::umis::sequence_clustering::{split_subgroup, string_distance};
 use crate::umis::sequence_clustering::get_connected_components;
 use crate::umis::sequence_clustering::input_list_to_graph;
 use crate::umis::sequence_clustering::InputList;
+use umis::sequence_clustering::average_dist;
 
 pub trait SortStream {
     fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self;
-    fn from_read_collection(read_collection: ReadCollection, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self;
-    fn sorted_read_set(&mut self) -> Option<ReadCollectionIterator>;
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self;
+    fn sorted_read_set(&mut self) -> Option<ClusteredReadIterator>;
 }
 
 pub struct ClusteredMemorySortStream {
@@ -54,7 +55,7 @@ impl SortStream for ClusteredMemorySortStream {
         mem_sort
     }
 
-    fn from_read_collection(read_collection: ReadCollection, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self {
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self {
         let mut reads: HashMap<Vec<u8>, Vec<ReadSetContainer>> = HashMap::new();
         let mut mem_sort = ClusteredMemorySortStream {
             reads,
@@ -68,7 +69,7 @@ impl SortStream for ClusteredMemorySortStream {
         mem_sort
     }
 
-    fn sorted_read_set(&mut self) -> Option<ReadCollectionIterator> {
+    fn sorted_read_set(&mut self) -> Option<ClusteredReadIterator> {
         let max_dist = match &self.sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => { maximum_distance }
             SortStructure::HD_UMI { layout_type, max_distance, on_disk } => { max_distance }
@@ -79,7 +80,7 @@ impl SortStream for ClusteredMemorySortStream {
 
         let cc = get_connected_components(&graph);
 
-        println!("UMI Read count {}", &cc.len());
+        //println!("UMI Read count {}", &cc.len());
         let mut final_vec = Vec::new();
 
         for group in cc {
@@ -89,29 +90,31 @@ impl SortStream for ClusteredMemorySortStream {
             let issubgroups = split_subgroup(&mut minigraph);
             match issubgroups {
                 None => {
+                    let average_distance = average_dist(&minilist.strings, string_distance);
                     let mut rc = Vec::new();
                     for s in &minilist.strings {
                         if let Some(i) = self.reads.get(s) {
                             rc.extend(i.clone());
                         }
                     }
-                    final_vec.push(ReadCollection::new(VecDeque::from(rc), self.pattern.clone()));
+                    final_vec.push(ClusteredReads::new(VecDeque::from(rc), self.pattern.clone(), average_distance));
                 }
                 Some(x) => {
                     for sgroup in &x {
+                        let average_distance = average_dist(&sgroup, string_distance);
                         let mut rc = Vec::new();
                         for s in sgroup {
                             if let Some(i) = self.reads.get(s) {
                                 rc.extend(i.clone());
                             }
                         }
-                        final_vec.push(ReadCollection::new(VecDeque::from(rc), self.pattern.clone()));
+                        final_vec.push(ClusteredReads::new(VecDeque::from(rc), self.pattern.clone(), average_distance));
                     }
                 }
             }
         }
 
-        println!("And final size = {}", &final_vec.len());
-        Some(ReadCollectionIterator::new_from_vec(final_vec, self.pattern.clone()))
+        //println!("And final size = {}", &final_vec.len());
+        Some(ClusteredReadIterator::new_from_vec(final_vec, self.pattern.clone()))
     }
 }

@@ -16,7 +16,7 @@ use log::{info, warn};
 use crate::consensus::consensus_builders::create_seq_layout_poa_consensus;
 use crate::read_strategies::sequence_file_containers::{ReadFileContainer, ReadIterator, ReadSetContainer};
 use crate::read_strategies::sequence_file_containers::OutputReadSetWriter;
-use crate::read_strategies::sequence_file_containers::ReadCollection;
+use crate::read_strategies::sequence_file_containers::ClusteredReads;
 use crate::read_strategies::sequence_layout::LayoutType;
 use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::read_strategies::sequence_layout::transform;
@@ -25,7 +25,7 @@ use crate::sorters::known_list::KnownListBinSplit;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::known_list::KnownListDiskStream;
 use crate::sorters::sort_streams::*;
-use crate::read_strategies::sequence_file_containers::ReadCollectionIterator;
+use crate::read_strategies::sequence_file_containers::ClusteredReadIterator;
 
 
 #[derive(Clone)]
@@ -137,7 +137,12 @@ impl SortStructure {
 pub struct Sorter {}
 
 impl Sorter {
-    pub fn sort(sort_list: Vec<SortStructure>, input_reads: &ReadFileContainer, tmp_location: &String, sorted_output: &String, layout: &LayoutType) -> Vec<ReadIterator> {
+    pub fn sort(sort_list: Vec<SortStructure>,
+                input_reads: &ReadFileContainer,
+                tmp_location: &String,
+                sorted_output: &String,
+                layout: &LayoutType) -> Vec<ReadIterator> {
+
         let temp_location_base = Path::new(tmp_location);
         println!("Sorting reads1...");
 
@@ -158,7 +163,7 @@ impl Sorter {
                 match it {
                     None => {println!("NONE!!!!!!!!!!")}
                     Some(x) => {
-                        println!("X size {}",&x.len());
+                        //println!("X size {}",&x.len());
                         next_level_iterators.extend(x);
                     }
                 }
@@ -180,17 +185,12 @@ impl Sorter {
                 let mut sorter = KnownListDiskStream::from_read_iterator(iterator, sort_structure, layout);
                 let mut read_sets = sorter.sorted_read_set();
                 match read_sets {
-                    None => {
-                        println!("NONE SORT LEVEL");
-                        None
-                    },
+                    None => None,
                     Some(x) => {
                         let mut ret = Vec::new();
                         for ci in x {
-                            println!("Adding collection");
                             ret.push(ReadIterator::from_collection(ci));
                         }
-                        println!("NONE SORT LEVEL --- no {}",&ret.len());
                         Some(ret)
                     }
                 }
@@ -207,7 +207,7 @@ impl Sorter {
                         for ci in x {
                             ret.push(ReadIterator::from_collection(ci));
                         }
-                        println!("ITERRRRRATOR LENGTH {}", ret.len());
+                        //println!("ITERRRRRATOR LENGTH {}", ret.len());
                         Some(ret)
                     }
                 }

@@ -340,7 +340,7 @@ pub struct ReadIterator {
     index_one: Option<Records<BufReader<Reader>>>,
     index_two: Option<Records<BufReader<Reader>>>,
 
-    read_collection: Option<ReadCollection>,
+    read_collection: Option<ClusteredReads>,
 
     path_one: PathBuf,
     path_two: Option<PathBuf>,
@@ -428,7 +428,7 @@ impl Iterator for ReadIterator {
 impl ReadIterator
 {
 
-    pub fn from_collection(read_collection: ReadCollection)-> ReadIterator {
+    pub fn from_collection(read_collection: ClusteredReads) -> ReadIterator {
         ReadIterator {
             read_one: None,
             read_two: None,
@@ -503,16 +503,16 @@ impl ReadIterator
 }
 
 /// This is ugly, but I don't have the energy for some dyn nightmare right now
-pub struct ReadCollectionIterator {
-    reads: VecDeque<ReadCollection>,
+pub struct ClusteredReadIterator {
+    reads: VecDeque<ClusteredReads>,
     read_files: VecDeque<ReadFileContainer>,
     read_pattern: ReadPattern,
 }
 
-impl Iterator for ReadCollectionIterator {
-    type Item = ReadCollection;
+impl Iterator for ClusteredReadIterator {
+    type Item = ClusteredReads;
 
-    fn next(&mut self) -> Option<ReadCollection> {
+    fn next(&mut self) -> Option<ClusteredReads> {
         match self.reads.len() {
             0 => {
                 while self.read_files.len() > 0 && self.reads.len() == 0 {
@@ -523,7 +523,7 @@ impl Iterator for ReadCollectionIterator {
                             for r in ReadIterator::new_from_bundle(&x) {
                                 readset.push_back(r);
                             }
-                            self.reads.push_back(ReadCollection{ reads: readset, pattern: self.read_pattern.clone() })
+                            self.reads.push_back(ClusteredReads { reads: readset, pattern: self.read_pattern.clone(), average_distance: None })
                         }
                     }
                 }
@@ -535,18 +535,18 @@ impl Iterator for ReadCollectionIterator {
     }
 
 }
-impl ReadCollectionIterator {
+impl ClusteredReadIterator {
 
-   pub fn new_from_vec(reads: Vec<ReadCollection>, read_pattern: ReadPattern) -> ReadCollectionIterator {
-        ReadCollectionIterator{
+   pub fn new_from_vec(reads: Vec<ClusteredReads>, read_pattern: ReadPattern) -> ClusteredReadIterator {
+        ClusteredReadIterator {
             reads: VecDeque::from(reads),
             read_files: VecDeque::new(),
             read_pattern,
         }
     }
 
-    pub fn new_from_files(reads: VecDeque<ReadFileContainer>, read_pattern: ReadPattern) -> ReadCollectionIterator {
-        ReadCollectionIterator{
+    pub fn new_from_files(reads: VecDeque<ReadFileContainer>, read_pattern: ReadPattern) -> ClusteredReadIterator {
+        ClusteredReadIterator {
             reads: VecDeque::new(),
             read_files: reads,
             read_pattern,
@@ -554,13 +554,14 @@ impl ReadCollectionIterator {
     }
 }
 
-pub struct ReadCollection {
+pub struct ClusteredReads {
     reads: VecDeque<ReadSetContainer>,
     pattern: ReadPattern,
+    average_distance: Option<f64>,
 }
 
-impl ReadCollection {
-    pub fn new(reads: VecDeque<ReadSetContainer>,  pattern: ReadPattern) -> ReadCollection {
-        ReadCollection{ reads, pattern }
+impl ClusteredReads {
+    pub fn new(reads: VecDeque<ReadSetContainer>,  pattern: ReadPattern, average_dist: f64) -> ClusteredReads {
+        ClusteredReads { reads, pattern, average_distance: Some(average_dist) }
     }
 }

@@ -88,7 +88,18 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
         BestHits { hits, distance }
     }
 }
+pub fn average_dist(strings: &Vec<Vec<u8>>,compare: fn(&Vec<u8>, &Vec<u8>) -> u64) -> f64 {
+    let mut dist : f64 = 0.0;
+    let mut count: usize = 0;
 
+    for st1 in strings {
+        for st2 in strings {
+            dist += compare(st1,st2);
+            count += 1;
+        }
+    }
+    dist / (count as f64)
+}
 
 pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8>) -> u64, progress: bool) -> StringGraph {
     let mut graph = GraphMap::<u32, u32, Undirected>::new();
@@ -240,7 +251,6 @@ pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>>
     }).collect::<Vec<Vec<Vec<u8>>>>()
 }
 
-
 pub fn generate_random_string(length: usize) -> Vec<u8> {
     let bases = vec![b'A', b'C', b'G', b'T'];
     let mut rng = rand::thread_rng();
@@ -248,7 +258,6 @@ pub fn generate_random_string(length: usize) -> Vec<u8> {
     for _i in 0..length { results.push(bases.choose(&mut rand::thread_rng()).unwrap().to_owned()) }
     results
 }
-
 
 pub fn create_one_off_errors(template: &Vec<u8>) -> Vec<Vec<u8>> {
     let mut ret = Vec::new();
