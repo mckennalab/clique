@@ -52,6 +52,7 @@ use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::sorter::{Sorter, SortStructure};
 use crate::umis::sequence_clustering::*;
 
+
 //use flate2::GzBuilder;
 //use flate2::Compression;
 
@@ -197,13 +198,13 @@ pub struct RunSpecifications {
 }
 
 impl RunSpecifications {
-    pub fn create_temp_file(&self) -> NamedTempFile {
+    pub fn create_temp_file(&self) -> PathBuf {
         let tmp_file = match &self.tmp_location {
             None => { NamedTempFile::new() }
             Some(x) => { NamedTempFile::new_in(&x.as_path()) }
         };
         match tmp_file {
-            Ok(x) => { x }
+            Ok(x) => { x.into_temp_path().to_path_buf() }
             Err(error) => {
                 panic!("Problem opening a new temporary file: {:?}", error);
             }

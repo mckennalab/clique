@@ -84,12 +84,8 @@ impl SortStream for KnownListDiskStream {
                 let kcl = consensus_manager.match_to_knownlist();
                 let splits = consensus_manager.create_balanced_bins(250 as u64);
 
-                let temp_location_base_full = tempfile::tempdir().unwrap();
-                let temp_location_base = Path::new("./tmp/");
-
-                let mut temp_files = OutputReadSetWriter::create_x_bins(&read_iter3, &"unsorted".to_string(), splits.bins, &temp_location_base);
+                let mut temp_files = OutputReadSetWriter::create_x_bins(&read_iter3, splits.bins, run_specs);
                 let mut output_bins = temp_files.iter().map(|(id, x)| {
-                    println!("opening {}", x.read_one.to_str().unwrap());
                     OutputReadSetWriter::from_read_file_container(&x)
                 }).collect::<Vec<OutputReadSetWriter>>();
 

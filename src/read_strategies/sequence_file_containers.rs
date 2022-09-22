@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::itertools::Itertools;
 use tempfile::TempPath;
+use crate::RunSpecifications;
 
 #[derive(Clone)]
 pub enum ReadPattern {
@@ -264,21 +265,12 @@ impl ReadFileContainer {
             index_two: if rd.index_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read4))) } else { None },
         }
 */
-    pub fn new_from_temp_dir(rd: &ReadIterator, prefix: &String, id: usize, temp_dir: &Path) -> ReadFileContainer {
-        let mut read1 = prefix.clone();
-        read1.push_str("_read1");
-        let mut read2 = prefix.clone();
-        read2.push_str("_read2");
-        let mut read3 = prefix.clone();
-        read3.push_str("_read3");
-        let mut read4 = prefix.clone();
-        read4.push_str("_read4");
-
+    pub fn temporary(rd: &ReadIterator, run_specs: &RunSpecifications) -> ReadFileContainer {
         ReadFileContainer {
-            read_one: temp_dir.join(ReadFileContainer::format_temp_read_name(id, read1)),
-            read_two: if rd.read_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read2))) } else { None },
-            index_one: if rd.index_one.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read3))) } else { None },
-            index_two: if rd.index_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read4))) } else { None },
+            read_one: run_specs.create_temp_file(),
+            read_two: if rd.read_two.is_some() { Some(run_specs.create_temp_file()) } else { None },
+            index_one: if rd.index_one.is_some() { Some(run_specs.create_temp_file()) } else { None },
+            index_two: if rd.index_two.is_some() { Some(run_specs.create_temp_file()) } else { None },
         }
     }
 }
@@ -367,9 +359,9 @@ impl OutputReadSetWriter {
         println!("Read 1 {}, read 2 {} read 3 {} read 4 {}", self.written_read1, self.written_read2, self.written_read3, self.written_read4);
     }
 
-    pub fn create_x_bins(rd: &ReadIterator, prefix: &String, x_bins: usize, temp_dir: &Path) -> Vec<(usize, ReadFileContainer)> {
+    pub fn create_x_bins(rd: &ReadIterator, x_bins: usize, run_specs: &RunSpecifications) -> Vec<(usize, ReadFileContainer)> {
         (0..x_bins).map(|id|
-            (id, ReadFileContainer::new_from_temp_dir(rd, prefix, id, temp_dir))).collect::<Vec<(usize, ReadFileContainer)>>()
+            (id, ReadFileContainer::temporary(rd, run_specs))).collect::<Vec<(usize, ReadFileContainer)>>()
     }
 }
 
