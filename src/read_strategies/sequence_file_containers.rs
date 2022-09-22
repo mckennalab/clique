@@ -484,7 +484,6 @@ impl Iterator for ReadCollectionIterator {
 }
 impl ReadCollectionIterator {
 
-
    pub fn new_from_vec(reads: Vec<ReadCollection>, read_pattern: ReadPattern) -> ReadCollectionIterator {
         ReadCollectionIterator{
             reads: VecDeque::from(reads),

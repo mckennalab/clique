@@ -30,24 +30,24 @@ use crate::read_strategies::sequence_file_containers::ReadCollectionIterator;
 
 #[derive(Clone)]
 pub enum SortStructure {
-    KNOWN_LIST { layout_type: LayoutType, maximum_distance: usize, on_disk: bool, known_list: Arc<Mutex<KnownList>> },
-    HD_UMI { layout_type: LayoutType, on_disk: bool },
-    LD_UMI { layout_type: LayoutType, on_disk: bool },
+    KNOWN_LIST { layout_type: LayoutType, max_distance: usize, on_disk: bool, known_list: Arc<Mutex<KnownList>> },
+    HD_UMI { layout_type: LayoutType, max_distance: usize, on_disk: bool },
+    LD_UMI { layout_type: LayoutType, max_distance: usize, on_disk: bool },
 }
 
 impl std::fmt::Display for SortStructure {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            SortStructure::KNOWN_LIST { layout_type, maximum_distance, on_disk, known_list } => {
+            SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 let res = write!(f,"KNOWN_LIST,{},{},{}",layout_type,maximum_distance,on_disk);
                 res
             }
-            SortStructure::HD_UMI { layout_type, on_disk } => {
-                let res = write!(f,"HD_UMI,{},{}",layout_type,on_disk);
+            SortStructure::HD_UMI { layout_type, max_distance, on_disk } => {
+                let res = write!(f,"HD_UMI,{},{},{}",layout_type,max_distance,on_disk);
                 res
             }
-            SortStructure::LD_UMI { layout_type, on_disk } => {
-                let res = write!(f,"LD_UMI,{},{}",layout_type,on_disk);
+            SortStructure::LD_UMI { layout_type, max_distance, on_disk } => {
+                let res = write!(f,"LD_UMI,{},{},{}",layout_type,max_distance,on_disk);
                 res
             }
         }
@@ -60,14 +60,14 @@ impl SortStructure {
         match layout {
             LayoutType::TENXV3 => {
                 let mut ret = Vec::new();
-                ret.push(SortStructure::KNOWN_LIST { layout_type: LayoutType::TENXV3, maximum_distance: 1, on_disk: true, known_list: known_lists.get(&LayoutType::TENXV3).unwrap().clone() });
-                ret.push(SortStructure::LD_UMI { layout_type: LayoutType::TENXV3, on_disk: false });
+                ret.push(SortStructure::KNOWN_LIST { layout_type: LayoutType::TENXV3, max_distance: 1, on_disk: true, known_list: known_lists.get(&LayoutType::TENXV3).unwrap().clone() });
+                ret.push(SortStructure::LD_UMI { layout_type: LayoutType::TENXV3, max_distance: 1, on_disk: false });
                 ret
             }
             LayoutType::TENXV2 => {
                 let mut ret = Vec::new();
-                ret.push(SortStructure::KNOWN_LIST { layout_type: LayoutType::TENXV2, maximum_distance: 1, on_disk: true, known_list: known_lists.get(&LayoutType::TENXV2).unwrap().clone() });
-                ret.push(SortStructure::LD_UMI { layout_type: LayoutType::TENXV2, on_disk: false });
+                ret.push(SortStructure::KNOWN_LIST { layout_type: LayoutType::TENXV2, max_distance: 1, on_disk: true, known_list: known_lists.get(&LayoutType::TENXV2).unwrap().clone() });
+                ret.push(SortStructure::LD_UMI { layout_type: LayoutType::TENXV2, max_distance: 1, on_disk: false });
                 ret
             }
             LayoutType::PAIREDUMI => { unimplemented!() }
@@ -82,7 +82,7 @@ impl SortStructure {
     ///
     pub fn get_known_list_value(&self, layout_type: &LayoutType, seq_layout: &dyn SequenceLayout, known_lists: HashMap<LayoutType, PathBuf>) -> PathBuf {
         match self {
-            SortStructure::KNOWN_LIST { layout_type, maximum_distance, on_disk, known_list } => {
+            SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 match layout_type {
                     LayoutType::TENXV3 => { known_lists.get(layout_type).unwrap().clone() }
                     LayoutType::TENXV2 => { unimplemented!() }
@@ -91,10 +91,10 @@ impl SortStructure {
                     LayoutType::SCI => { unimplemented!() }
                 }
             }
-            SortStructure::HD_UMI { layout_type, on_disk } => {
+            SortStructure::HD_UMI { layout_type, max_distance, on_disk } => {
                 unimplemented!()
             }
-            SortStructure::HD_UMI { layout_type, on_disk } => {
+            SortStructure::HD_UMI { layout_type, max_distance, on_disk } => {
                 unimplemented!()
             }
             _ => { unimplemented!() }
@@ -103,7 +103,7 @@ impl SortStructure {
 
     pub fn get_field(&self, seq_layout: &impl SequenceLayout) -> Option<Vec<u8>> {
         match self {
-            SortStructure::KNOWN_LIST { layout_type, maximum_distance, on_disk, known_list } => {
+            SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 match layout_type {
                     LayoutType::TENXV3 => { Some(seq_layout.cell_id().unwrap().clone()) }
                     LayoutType::TENXV2 => { Some(seq_layout.cell_id().unwrap().clone()) }
@@ -112,7 +112,7 @@ impl SortStructure {
                     LayoutType::SCI => { unimplemented!() }
                 }
             }
-            SortStructure::HD_UMI { layout_type, on_disk } => {
+            SortStructure::HD_UMI { layout_type, max_distance, on_disk } => {
                 match layout_type {
                     LayoutType::TENXV3 => { Some(seq_layout.umi().unwrap().clone()) }
                     LayoutType::TENXV2 => { Some(seq_layout.umi().unwrap().clone()) }
@@ -121,7 +121,7 @@ impl SortStructure {
                     LayoutType::SCI => { unimplemented!() }
                 }
             }
-            SortStructure::LD_UMI { layout_type, on_disk } => {
+            SortStructure::LD_UMI { layout_type, max_distance, on_disk } => {
                 match layout_type {
                     LayoutType::TENXV3 => { Some(seq_layout.umi().unwrap().clone()) }
                     LayoutType::TENXV2 => { Some(seq_layout.umi().unwrap().clone()) }
@@ -175,7 +175,7 @@ impl Sorter {
 
     pub fn sort_level(sort_structure: &SortStructure, iterator: ReadIterator, layout: &LayoutType) -> Option<Vec<ReadIterator>> {
         match sort_structure {
-            SortStructure::KNOWN_LIST { layout_type, maximum_distance, on_disk, known_list } => {
+            SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 assert_eq!(*on_disk,true);
                 let mut sorter = KnownListDiskStream::from_read_iterator(iterator, sort_structure, layout);
                 let mut read_sets = sorter.sorted_read_set();
@@ -195,8 +195,8 @@ impl Sorter {
                     }
                 }
             }
-            SortStructure::HD_UMI { layout_type, on_disk} |
-            SortStructure::LD_UMI { layout_type, on_disk } => {
+            SortStructure::HD_UMI { layout_type, max_distance, on_disk } |
+            SortStructure::LD_UMI { layout_type, max_distance, on_disk } => {
                 assert_eq!(*on_disk,false);
                 let mut sorter = ClusteredMemorySortStream::from_read_iterator(iterator, sort_structure, layout);
                 let read_sets = sorter.sorted_read_set();

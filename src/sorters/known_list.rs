@@ -57,7 +57,7 @@ impl KnownListDiskStream {
 impl SortStream for KnownListDiskStream {
     fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self {
         match sort_structure {
-            SortStructure::KNOWN_LIST { layout_type, maximum_distance, on_disk, known_list } => {
+            SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 let mut consensus_manager = KnownListConsensus::new();
                 let pattern = ReadPattern::from_read_iterator(&read_iter);
                 let read_iter2 = read_iter.new_reset();
