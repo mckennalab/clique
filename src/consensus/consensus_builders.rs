@@ -41,13 +41,13 @@ pub fn null_cap(strs: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
 pub fn threaded_write_consensus_reads(read_iterators: Vec<ReadIterator>, output_file_base: &String, pattern: &ReadPattern) {
     let mut output_writer = OutputReadSetWriter::from_pattern(&PathBuf::from(output_file_base), pattern);
 
-    //let output = Arc::new(Mutex::new(gz));
+    let output = Arc::new(Mutex::new(output_writer));
 
-    read_iterators.into_iter().for_each(|xx| { //.par_bridge()
+    read_iterators.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
         let conc = create_iterator_poa_consensus(xx);
-        //let output = Arc::clone(&output);
-        //let mut output_unwrapped = output.lock().unwrap();
-        output_writer.write(&conc);
+        let output = Arc::clone(&output);
+        let mut output_unwrapped = output.lock().unwrap();
+        output_unwrapped.write(&conc);
     });
 }
 
