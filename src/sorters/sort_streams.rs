@@ -70,9 +70,9 @@ impl SortStream for ClusteredMemorySortStream {
 
     fn sorted_read_set(&mut self) -> Option<ReadCollectionIterator> {
         let collection = InputList { strings: self.reads.keys().map(|x| x.clone()).collect::<Vec<Vec<u8>>>(), max_dist: 6 };
-        let mut graph = input_list_to_graph(&collection, string_distance, true);
+        let mut graph = input_list_to_graph(&collection, string_distance, false);
         let groups = split_subgroup(&mut graph);
-
+        println!("UMI Read count {}",self.reads.len());
         let mut final_vec = Vec::new();
 
         match groups {
