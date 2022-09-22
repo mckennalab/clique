@@ -15,7 +15,7 @@ use crate::umis::sequence_clustering::{split_subgroup, string_distance};
 use crate::umis::sequence_clustering::get_connected_components;
 use crate::umis::sequence_clustering::input_list_to_graph;
 use crate::umis::sequence_clustering::InputList;
-use umis::sequence_clustering::average_dist;
+use crate::umis::sequence_clustering::average_dist;
 
 pub trait SortStream {
     fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self;

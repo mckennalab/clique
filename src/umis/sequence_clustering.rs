@@ -94,7 +94,7 @@ pub fn average_dist(strings: &Vec<Vec<u8>>,compare: fn(&Vec<u8>, &Vec<u8>) -> u6
 
     for st1 in strings {
         for st2 in strings {
-            dist += compare(st1,st2);
+            dist += compare(st1,st2) as f64;
             count += 1;
         }
     }
