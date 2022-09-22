@@ -18,6 +18,7 @@ extern crate rust_spoa;
 extern crate seq_io;
 extern crate suffix;
 extern crate tempfile;
+extern crate indicatif;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;

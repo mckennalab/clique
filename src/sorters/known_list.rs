@@ -23,6 +23,7 @@ use crate::umis::sequence_clustering::BestHits;
 use crate::utils::base_utils::edit_distance;
 use crate::utils::file_utils::get_reader;
 use crate::RunSpecifications;
+use indicatif::ProgressBar;
 
 pub struct KnownListDiskStream {
     sorted_bins: VecDeque<ReadFileContainer>,
@@ -65,13 +66,19 @@ impl SortStream for KnownListDiskStream {
                 let mut consensus_manager = KnownListConsensus::new();
                 let pattern = ReadPattern::from_read_iterator(&read_iter);
 
-                println!("round 1");
+                println!("round 1 sorting");
+
+                let bar2 = ProgressBar::new((run_specs.estimated_reads as u64));
+                let mut true_reads: usize = 0;
                 for rd in read_iter {
+
                     let transformed_reads = transform(rd, &layout);
                     let sequence = sort_structure.get_field(&transformed_reads).unwrap();
 
                     let corrected_hits = correct_to_known_list(&sequence, &mut known_list.lock().as_mut().unwrap(), 1);
                     consensus_manager.add_hit(&sequence, corrected_hits);
+                    bar2.inc(1);
+                    true_reads += 1;
                 }
 
                 let kcl = consensus_manager.match_to_knownlist();
@@ -87,7 +94,8 @@ impl SortStream for KnownListDiskStream {
                 }).collect::<Vec<OutputReadSetWriter>>();
 
                 let mut counts: HashMap<usize, i32> = HashMap::new();
-                println!("round 2");
+                println!("round 2....");
+                let bar2 = ProgressBar::new((true_reads as u64));
                 let mut sorted_reads = 0;
                 for rd in read_iter2 {
                     let transformed_reads = transform(rd, &layout);
@@ -102,6 +110,7 @@ impl SortStream for KnownListDiskStream {
                         counts.insert(*target_bin, bin_count + 1);
                         output_bins[*target_bin].write(&original_reads);
                     }
+                    bar2.inc(1);
                 }
                 output_bins.iter().for_each(|x| x.print_read_count());
                 for x in counts.iter() {
