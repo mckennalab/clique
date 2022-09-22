@@ -76,8 +76,9 @@ impl SortStream for ClusteredMemorySortStream {
         let mut final_vec = Vec::new();
 
         match groups {
-            None => {}
+            None => {println!("NONE WHY");}
             Some(grouping) => {
+                println!("YES: {}",&grouping.len());
                 for group in grouping {
                     let mut rc = Vec::new();
 
