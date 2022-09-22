@@ -441,7 +441,7 @@ impl ReadIterator
 /// This is ugly, but I don't have the energy for some dyn nightmare right now
 pub struct ReadCollectionIterator {
     reads: VecDeque<ReadCollection>,
-    read_files: VecDeque<PathBuf>,
+    read_files: VecDeque<ReadSetContainer>,
     read_pattern: ReadPattern,
 }
 
@@ -452,10 +452,15 @@ impl Iterator for ReadCollectionIterator {
         match self.reads.len() {
             0 => {
                 while self.read_files.len() > 0 && self.reads.len() == 0 {
-                    let loaded_file = ReadCollectionIterator::load_file(self.read_files.pop_front(), &self.read_pattern);
-                    match loaded_file {
-                        Some(x) => self.reads.push_back(x),
+                    match self.read_files.pop_front() {
                         None => {}
+                        Some(x) => {
+                            let mut readset = VecDeque::new();
+                            for r in ReadIterator::from_collection(read_col) {
+                                readset.push_back(r);
+                            }
+                            self.reads.push(ReadCollection{ reads: readset, pattern: self.read_pattern.clone() })
+                        }
                     }
                 }
                 self.reads.pop_front()
@@ -468,95 +473,6 @@ impl Iterator for ReadCollectionIterator {
 }
 impl ReadCollectionIterator {
 
-    fn load_file(read_file: Option<PathBuf>, read_pattern: &ReadPattern) -> Option<ReadCollection> {
-        if let Some(x) = read_file {
-            let iter = ReadIterator::new(x, None, None, None);
-            let read_count = match read_pattern {
-                ReadPattern::ONE => { 1 }
-                ReadPattern::ONETWO => { 2 }
-                ReadPattern::ONETWOI1 => { 3 }
-                ReadPattern::ONETWOI2 => { 3 }
-                ReadPattern::ONETWOI1I2 => { 4 }
-                ReadPattern::ONEI1 => { 2 }
-                ReadPattern::ONEI2 => { 2 }
-                ReadPattern::ONEI1I2 => { 3 }
-            };
-
-            let mut read_vec = Vec::new();
-            for cnk in &iter.into_iter().chunks(read_count) {
-                let chunk = cnk.collect::<Vec<ReadSetContainer>>();
-                read_vec.push(match read_pattern {
-                    ReadPattern::ONE => {
-                        ReadSetContainer {
-                            read_one: chunk[0].read_one.clone(),
-                            read_two: None,
-                            index_one: None,
-                            index_two: None
-                        }
-                    },
-                    ReadPattern::ONETWO => {
-                        ReadSetContainer {
-                            read_one: chunk[0].read_one.clone(),
-                            read_two: Some(chunk[1].read_one.clone()),
-                            index_one: None,
-                            index_two: None
-                        }
-                    },
-                    ReadPattern::ONETWOI1 => {
-                        ReadSetContainer {
-                            read_one: chunk[0].read_one.clone(),
-                            read_two: Some(chunk[1].read_one.clone()),
-                            index_one: Some(chunk[2].read_one.clone()),
-                            index_two: None
-                        }
-                    },
-                    ReadPattern::ONETWOI2 => {
-                        ReadSetContainer {
-                            read_one: chunk[0].read_one.clone(),
-                            read_two: Some(chunk[1].read_one.clone()),
-                            index_one: None,
-                            index_two: Some(chunk[2].read_one.clone())
-                        }
-                    },
-                    ReadPattern::ONETWOI1I2 => {
-                        ReadSetContainer {
-                            read_one: chunk[0].read_one.clone(),
-                            read_two: Some(chunk[1].read_one.clone()),
-                            index_one: Some(chunk[2].read_one.clone()),
-                            index_two: Some(chunk[3].read_one.clone())
-                        }
-                    },
-                    ReadPattern::ONEI1 => {
-                        ReadSetContainer {
-                            read_one: chunk[0].read_one.clone(),
-                            read_two: None,
-                            index_one: Some(chunk[1].read_one.clone()),
-                            index_two: None
-                        }
-                    },
-                    ReadPattern::ONEI2 => {
-                        ReadSetContainer {
-                            read_one: chunk[0].read_one.clone(),
-                            read_two: None,
-                            index_one: None,
-                            index_two: Some(chunk[1].read_one.clone())
-                        }
-                    },
-                    ReadPattern::ONEI1I2 => {
-                        ReadSetContainer {
-                            read_one: chunk[0].read_one.clone(),
-                            read_two: None,
-                            index_one: Some(chunk[1].read_one.clone()),
-                            index_two: Some(chunk[2].read_one.clone())
-                        }
-                    },
-                });
-            }
-            Some(ReadCollection { reads: VecDeque::from(read_vec), pattern: read_pattern.clone() })
-        } else {
-            None
-        }
-    }
 
    pub fn new_from_vec(reads: Vec<ReadCollection>, read_pattern: ReadPattern) -> ReadCollectionIterator {
         ReadCollectionIterator{
@@ -566,7 +482,7 @@ impl ReadCollectionIterator {
         }
     }
 
-    pub fn new_from_files(reads: VecDeque<PathBuf>, read_pattern: ReadPattern) -> ReadCollectionIterator {
+    pub fn new_from_files(reads: VecDeque<ReadSetContainer>, read_pattern: ReadPattern) -> ReadCollectionIterator {
         ReadCollectionIterator{
             reads: VecDeque::new(),
             read_files: reads,
