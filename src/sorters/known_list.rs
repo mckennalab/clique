@@ -22,6 +22,7 @@ use crate::umis::sequence_clustering::*;
 use crate::umis::sequence_clustering::BestHits;
 use crate::utils::base_utils::edit_distance;
 use crate::utils::file_utils::get_reader;
+use crate::RunSpecifications;
 
 pub struct KnownListDiskStream {
     sorted_bins: VecDeque<ReadFileContainer>,
@@ -55,13 +56,15 @@ impl KnownListDiskStream {
 
 
 impl SortStream for KnownListDiskStream {
-    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self {
+    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &RunSpecifications) -> Self {
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
-                let mut consensus_manager = KnownListConsensus::new();
-                let pattern = ReadPattern::from_read_iterator(&read_iter);
                 let read_iter2 = read_iter.new_reset();
                 let read_iter3 = read_iter.new_reset();
+
+                let mut consensus_manager = KnownListConsensus::new();
+                let pattern = ReadPattern::from_read_iterator(&read_iter);
+
                 println!("round 1");
                 for rd in read_iter {
                     let transformed_reads = transform(rd, &layout);
@@ -123,8 +126,8 @@ impl SortStream for KnownListDiskStream {
         }
     }
 
-    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self {
-        KnownListDiskStream::from_read_iterator(ReadIterator::from_collection(read_collection), sort_structure, layout)
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &RunSpecifications) -> Self {
+        KnownListDiskStream::from_read_iterator(ReadIterator::from_collection(read_collection), sort_structure, layout, run_specs)
     }
 
     fn sorted_read_set(&mut self) -> Option<ClusteredReadIterator> {

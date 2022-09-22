@@ -1,26 +1,27 @@
+extern crate bgzip;
 extern crate bio;
 extern crate fastq;
 extern crate flate2;
+extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
+extern crate log;
 extern crate ndarray;
 extern crate needletail;
 extern crate noodles_fastq;
 extern crate num_traits;
 extern crate petgraph;
 extern crate rand;
+extern crate rayon;
+extern crate rust_htslib;
 extern crate rust_spoa;
 extern crate seq_io;
 extern crate suffix;
-extern crate bgzip;
-extern crate rayon;
-extern crate rust_htslib;
-extern crate itertools;
-extern crate log;
+extern crate tempfile;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Error, Write};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str;
@@ -28,27 +29,27 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use bio::alignment::Alignment;
+use log::{LevelFilter, SetLoggerError};
 use noodles_fastq as Fastq;
 use petgraph::algo::connected_components;
+use rayon::prelude::*;
 use seq_io::fasta::{OwnedRecord, Reader, Record};
+use tempfile::NamedTempFile;
 
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
 use clap::Parser;
-use rayon::prelude::*;
 
+use crate::consensus::consensus_builders::threaded_write_consensus_reads;
 use crate::extractor::extract_tagged_sequences;
 use crate::linked_alignment::*;
-use crate::read_strategies::sequence_layout::*;
 use crate::read_strategies::sequence_file_containers::*;
+use crate::read_strategies::sequence_layout::*;
 use crate::reference::fasta_reference::reference_file_to_struct;
-use crate::sorters::known_list::KnownListConsensus;
-use crate::umis::sequence_clustering::*;
 use crate::sorters::known_list::KnownList;
-use crate::sorters::sorter::{SortStructure, Sorter};
-use log::{SetLoggerError, LevelFilter};
-use crate::consensus::consensus_builders::threaded_write_consensus_reads;
-
+use crate::sorters::known_list::KnownListConsensus;
+use crate::sorters::sorter::{Sorter, SortStructure};
+use crate::umis::sequence_clustering::*;
 
 //use flate2::GzBuilder;
 //use flate2::Compression;
@@ -89,6 +90,7 @@ mod sorters {
     pub mod known_list;
     pub mod sorter;
     pub mod sort_streams;
+    pub mod balanced_split_output;
 }
 
 mod reference {
@@ -127,6 +129,18 @@ struct Args {
 
     #[structopt(long, default_value = "NONE")]
     known_list: String,
+
+    #[structopt(long, default_value = "250")]
+    max_bins: usize,
+
+    #[structopt(long, default_value = "1")]
+    sorting_threads: usize,
+
+    #[structopt(long, default_value = "1")]
+    processing_threads: usize,
+
+    #[structopt(long, default_value = "NONE")]
+    temp_dir: String,
 }
 
 fn main() {
@@ -134,26 +148,66 @@ fn main() {
 
     let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
 
-    let read_bundle = ReadFileContainer::new(&parameters.read1,&parameters.read2, &parameters.index1, &parameters.index2);
+    let read_bundle = ReadFileContainer::new(&parameters.read1, &parameters.read2, &parameters.index1, &parameters.index2);
+
+    let est_read_count = estimate_read_count(&parameters.read1).unwrap_or(0);
+
+    println!("estimated read set/pair count = {}", est_read_count);
+
+    let no_temp_file: String = String::from("NONE");
+    let temp_dir: Option<PathBuf> = match &parameters.temp_dir {
+        no_temp_file => None,
+        _ => Some(PathBuf::from(parameters.temp_dir)),
+    };
+
+    let run_specs = RunSpecifications {
+        estimated_reads: est_read_count,
+        sorting_file_count: parameters.max_bins,
+        sorting_threads: parameters.sorting_threads,
+        processing_threads: parameters.processing_threads,
+        tmp_location: temp_dir,
+    };
 
     let reference = reference_file_to_struct(&parameters.reference);
 
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
-    println!("Creating known list...");
     let mut known_list = KnownList::new(&parameters.known_list, 7);
     let mut known_list_hash = HashMap::new();
-    known_list_hash.insert(read_layout.clone(),Arc::new(Mutex::new(known_list)));
-    println!("sorting...");
+    known_list_hash.insert(read_layout.clone(), Arc::new(Mutex::new(known_list)));
+
     let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
-    println!("sorting...");
-    let read_piles = Sorter::sort(sort_structure,&read_bundle , &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout);
+
+    let read_piles = Sorter::sort(sort_structure, &read_bundle, &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout, &run_specs);
 
     threaded_write_consensus_reads(read_piles,
                                    &parameters.output_base,
-                                   &ReadPattern::from_read_file_container(&read_bundle));
+                                   &ReadPattern::from_read_file_container(&read_bundle),
+                                   &run_specs);
+}
 
+pub struct RunSpecifications {
+    pub estimated_reads: usize,
+    pub sorting_file_count: usize,
+    pub sorting_threads: usize,
+    pub processing_threads: usize,
+    pub tmp_location: Option<PathBuf>,
+}
+
+impl RunSpecifications {
+    pub fn create_temp_file(&self) -> NamedTempFile {
+        let tmp_file = match &self.tmp_location {
+            None => { NamedTempFile::new() }
+            Some(x) => { NamedTempFile::new_in(&x.as_path()) }
+        };
+        match tmp_file {
+            Ok(x) => { x }
+            Err(error) => {
+                panic!("Problem opening a new temporary file: {:?}", error);
+            }
+        }
+    }
 }
 
 #[allow(dead_code)]

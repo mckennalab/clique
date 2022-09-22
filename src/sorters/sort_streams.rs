@@ -16,10 +16,12 @@ use crate::umis::sequence_clustering::get_connected_components;
 use crate::umis::sequence_clustering::input_list_to_graph;
 use crate::umis::sequence_clustering::InputList;
 use crate::umis::sequence_clustering::average_dist;
+use crate::RunSpecifications;
+
 
 pub trait SortStream {
-    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self;
-    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self;
+    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &RunSpecifications) -> Self;
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &RunSpecifications) -> Self;
     fn sorted_read_set(&mut self) -> Option<ClusteredReadIterator>;
 }
 
@@ -41,7 +43,7 @@ impl ClusteredMemorySortStream {
 }
 
 impl SortStream for ClusteredMemorySortStream {
-    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self {
+    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &RunSpecifications) -> Self {
         let mut reads: HashMap<Vec<u8>, Vec<ReadSetContainer>> = HashMap::new();
         let mut mem_sort = ClusteredMemorySortStream {
             reads,
@@ -55,7 +57,7 @@ impl SortStream for ClusteredMemorySortStream {
         mem_sort
     }
 
-    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self {
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &RunSpecifications) -> Self {
         let mut reads: HashMap<Vec<u8>, Vec<ReadSetContainer>> = HashMap::new();
         let mut mem_sort = ClusteredMemorySortStream {
             reads,
@@ -80,7 +82,6 @@ impl SortStream for ClusteredMemorySortStream {
 
         let cc = get_connected_components(&graph);
 
-        //println!("UMI Read count {}", &cc.len());
         let mut final_vec = Vec::new();
 
         for group in cc {
@@ -114,7 +115,6 @@ impl SortStream for ClusteredMemorySortStream {
             }
         }
 
-        //println!("And final size = {}", &final_vec.len());
         Some(ClusteredReadIterator::new_from_vec(final_vec, self.pattern.clone()))
     }
 }

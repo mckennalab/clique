@@ -18,6 +18,7 @@ use crate::umis::sequence_clustering::*;
 use rayon::prelude::*;
 use rust_htslib::bgzf::Writer;
 use flate2::{GzBuilder, Compression};
+use crate::RunSpecifications;
 
 pub struct ConsensusCandidate {
     pub reads: Vec<ReadSetContainer>,
@@ -38,16 +39,18 @@ pub fn null_cap(strs: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     }).collect::<Vec<Vec<u8>>>()
 }
 
-pub fn threaded_write_consensus_reads(read_iterators: Vec<ReadIterator>, output_file_base: &String, pattern: &ReadPattern) {
+pub fn threaded_write_consensus_reads(read_iterators: Vec<ReadIterator>, output_file_base: &String, pattern: &ReadPattern, run_spec: &RunSpecifications) {
     let mut output_writer = OutputReadSetWriter::from_pattern(&PathBuf::from(output_file_base), pattern);
 
     let output = Arc::new(Mutex::new(output_writer));
-
-    read_iterators.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
-        let conc = create_iterator_poa_consensus(xx);
-        let output = Arc::clone(&output);
-        let mut output_unwrapped = output.lock().unwrap();
-        output_unwrapped.write(&conc);
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(run_spec.processing_threads).build().unwrap();
+    let pooled_install = pool.install(|| {
+        read_iterators.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
+            let conc = create_iterator_poa_consensus(xx);
+            let output = Arc::clone(&output);
+            let mut output_unwrapped = output.lock().unwrap();
+            output_unwrapped.write(&conc);
+        });
     });
 }
 

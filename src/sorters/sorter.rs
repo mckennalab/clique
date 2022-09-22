@@ -9,24 +9,24 @@ use std::sync::{Arc, Mutex};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use rust_htslib::bgzf::Writer;
-
 use log::{info, warn};
+use rust_htslib::bgzf::Writer;
+use rayon::prelude::*;
 
 use crate::consensus::consensus_builders::create_seq_layout_poa_consensus;
 use crate::read_strategies::sequence_file_containers::{ReadFileContainer, ReadIterator, ReadSetContainer};
-use crate::read_strategies::sequence_file_containers::OutputReadSetWriter;
+use crate::read_strategies::sequence_file_containers::ClusteredReadIterator;
 use crate::read_strategies::sequence_file_containers::ClusteredReads;
+use crate::read_strategies::sequence_file_containers::OutputReadSetWriter;
 use crate::read_strategies::sequence_layout::LayoutType;
 use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::read_strategies::sequence_layout::transform;
+use crate::RunSpecifications;
 use crate::sorters::known_list::KnownList;
 use crate::sorters::known_list::KnownListBinSplit;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::known_list::KnownListDiskStream;
 use crate::sorters::sort_streams::*;
-use crate::read_strategies::sequence_file_containers::ClusteredReadIterator;
-
 
 #[derive(Clone)]
 pub enum SortStructure {
@@ -39,15 +39,15 @@ impl std::fmt::Display for SortStructure {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
-                let res = write!(f,"KNOWN_LIST,{},{},{}",layout_type,maximum_distance,on_disk);
+                let res = write!(f, "KNOWN_LIST,{},{},{}", layout_type, maximum_distance, on_disk);
                 res
             }
             SortStructure::HD_UMI { layout_type, max_distance, on_disk } => {
-                let res = write!(f,"HD_UMI,{},{},{}",layout_type,max_distance,on_disk);
+                let res = write!(f, "HD_UMI,{},{},{}", layout_type, max_distance, on_disk);
                 res
             }
             SortStructure::LD_UMI { layout_type, max_distance, on_disk } => {
-                let res = write!(f,"LD_UMI,{},{},{}",layout_type,max_distance,on_disk);
+                let res = write!(f, "LD_UMI,{},{},{}", layout_type, max_distance, on_disk);
                 res
             }
         }
@@ -141,8 +141,8 @@ impl Sorter {
                 input_reads: &ReadFileContainer,
                 tmp_location: &String,
                 sorted_output: &String,
-                layout: &LayoutType) -> Vec<ReadIterator> {
-
+                layout: &LayoutType,
+                run_specs: &RunSpecifications) -> Vec<ReadIterator> {
         let temp_location_base = Path::new(tmp_location);
         println!("Sorting reads1...");
 
@@ -159,7 +159,7 @@ impl Sorter {
             let mut next_level_iterators = Vec::new();
 
             for mut iter in current_iterators {
-                let it = Sorter::sort_level(&sort, iter, layout);
+                let it = Sorter::sort_level(&sort, iter, layout, run_specs);
                 match it {
                     None => {println!("NONE!!!!!!!!!!")}
                     Some(x) => {
@@ -178,11 +178,11 @@ impl Sorter {
         current_iterators
     }
 
-    pub fn sort_level(sort_structure: &SortStructure, iterator: ReadIterator, layout: &LayoutType) -> Option<Vec<ReadIterator>> {
+    pub fn sort_level(sort_structure: &SortStructure, iterator: ReadIterator, layout: &LayoutType, run_specs: &RunSpecifications) -> Option<Vec<ReadIterator>> {
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
-                assert_eq!(*on_disk,true);
-                let mut sorter = KnownListDiskStream::from_read_iterator(iterator, sort_structure, layout);
+                assert_eq!(*on_disk, true);
+                let mut sorter = KnownListDiskStream::from_read_iterator(iterator, sort_structure, layout, run_specs);
                 let mut read_sets = sorter.sorted_read_set();
                 match read_sets {
                     None => None,
@@ -197,8 +197,8 @@ impl Sorter {
             }
             SortStructure::HD_UMI { layout_type, max_distance, on_disk } |
             SortStructure::LD_UMI { layout_type, max_distance, on_disk } => {
-                assert_eq!(*on_disk,false);
-                let mut sorter = ClusteredMemorySortStream::from_read_iterator(iterator, sort_structure, layout);
+                assert_eq!(*on_disk, false);
+                let mut sorter = ClusteredMemorySortStream::from_read_iterator(iterator, sort_structure, layout, run_specs);
                 let read_sets = sorter.sorted_read_set();
                 match read_sets {
                     None => None,
@@ -213,8 +213,6 @@ impl Sorter {
                 }
             }
         }
-
-
     }
     /*
         pub fn bin_by_tag(bin: &ReadFileContainer, sort_structure: &SortStructure, layout: &LayoutType) -> Vec<(usize, ReadFileContainer)> {
