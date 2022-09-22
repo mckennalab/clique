@@ -92,7 +92,7 @@ impl SortStream for ClusteredMemorySortStream {
             }
         }
 
-
+        println!("And final size = {}",&final_vec.len());
         Some(ReadCollectionIterator::new_from_vec(final_vec, self.pattern.clone()))
     }
 }
