@@ -69,14 +69,14 @@ impl SortStream for ClusteredMemorySortStream {
     }
 
     fn sorted_read_set(&mut self) -> Option<ReadCollectionIterator> {
-        let collection = InputList { strings: self.reads.keys().map(|x| x.clone()).collect::<Vec<Vec<u8>>>(), max_dist: 6 };
-        let mut graph = input_list_to_graph(&collection, string_distance, false);
-
         let max_dist = match &self.sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => { maximum_distance }
             SortStructure::HD_UMI { layout_type, max_distance, on_disk } => { max_distance }
             SortStructure::LD_UMI { layout_type, max_distance, on_disk } => { max_distance }
         };
+        let collection = InputList { strings: self.reads.keys().map(|x| x.clone()).collect::<Vec<Vec<u8>>>(), max_dist: *max_dist as u64 };
+        let mut graph = input_list_to_graph(&collection, string_distance, false);
+        
         let cc = get_connected_components(&graph);
 
         println!("UMI Read count {}", &cc.len());
