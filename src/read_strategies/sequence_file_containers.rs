@@ -36,8 +36,49 @@ pub enum ReadPattern {
 
 impl ReadPattern {
 
+    pub fn contains_r2(&self) -> bool {
+        match self {
+            ReadPattern::ONE => {false}
+            ReadPattern::ONETWO => {true}
+            ReadPattern::ONETWOI1 => {true}
+            ReadPattern::ONETWOI2 => {true}
+            ReadPattern::ONETWOI1I2 => {true}
+            ReadPattern::ONEI1 => {false}
+            ReadPattern::ONEI2 => {false}
+            ReadPattern::ONEI1I2 => {false}
+        }
+    }
+    pub fn contains_i1(&self) -> bool {
+        match self {
+            ReadPattern::ONE => {false}
+            ReadPattern::ONETWO => {false}
+            ReadPattern::ONETWOI1 => {true}
+            ReadPattern::ONETWOI2 => {false}
+            ReadPattern::ONETWOI1I2 => {true}
+            ReadPattern::ONEI1 => {true}
+            ReadPattern::ONEI2 => {false}
+            ReadPattern::ONEI1I2 => {true}
+        }
+    }
+    pub fn contains_i2(&self) -> bool {
+        match self {
+            ReadPattern::ONE => {false}
+            ReadPattern::ONETWO => {false}
+            ReadPattern::ONETWOI1 => {false}
+            ReadPattern::ONETWOI2 => {true}
+            ReadPattern::ONETWOI1I2 => {true}
+            ReadPattern::ONEI1 => {false}
+            ReadPattern::ONEI2 => {true}
+            ReadPattern::ONEI1I2 => {true}
+        }
+    }
+
     pub fn from_read_iterator(iter: &ReadIterator) -> ReadPattern {
         ReadPattern::pattern(iter.path_two.is_some(),iter.index_one.is_some(),iter.index_two.is_some())
+    }
+
+    pub fn from_read_file_container(set: &ReadFileContainer) -> ReadPattern {
+        ReadPattern::pattern(set.read_two.is_some(),set.index_one.is_some(),set.index_two.is_some())
     }
 
     pub fn from_read_set_container(set: &ReadSetContainer) -> ReadPattern {
@@ -221,14 +262,24 @@ impl OutputReadSetWriter {
 
     pub fn from_read_file_container(sc: &ReadFileContainer) -> OutputReadSetWriter {
         OutputReadSetWriter {
-            //file_1: Writer::from_path(&sc.read_one).unwrap(),
-            //file_2: if let Some(x) = &sc.read_two {Some(Writer::from_path(x.clone()).unwrap())} else {None},
-            //file_3: if let Some(x) = &sc.index_one {Some(Writer::from_path(x.clone()).unwrap())} else {None},
-            //file_4: if let Some(x) = &sc.index_two {Some(Writer::from_path(x.clone()).unwrap())} else {None},
             file_1: OutputReadSetWriter::create_writer(&sc.read_one),//.unwrap(),
             file_2: if let Some(x) = &sc.read_two {Some(OutputReadSetWriter::create_writer(&x.clone()))} else {None},
             file_3: if let Some(x) = &sc.index_one {Some(OutputReadSetWriter::create_writer(&x.clone()))} else {None},
             file_4: if let Some(x) = &sc.index_two {Some(OutputReadSetWriter::create_writer(&x.clone()))} else {None},
+            written_read1: 0,
+            written_read2: 0,
+            written_read3: 0,
+            written_read4: 0
+        }
+    }
+
+    pub fn from_pattern(base: &PathBuf, pt: &ReadPattern) -> OutputReadSetWriter {
+        let base_path = base.as_path().to_str().unwrap();
+        OutputReadSetWriter {
+            file_1: OutputReadSetWriter::create_writer(&[base_path, "read1.fq.gz"].iter().collect()),
+            file_2: if pt.contains_r2() {Some(OutputReadSetWriter::create_writer(&[base_path, "read2.fq.gz"].iter().collect()),)} else {None},
+            file_3: if pt.contains_i1() {Some(OutputReadSetWriter::create_writer(&[base_path, "index1.fq.gz"].iter().collect()),)} else {None},
+            file_4: if pt.contains_i2() {Some(OutputReadSetWriter::create_writer(&[base_path, "index2.fq.gz"].iter().collect()),)} else {None},
             written_read1: 0,
             written_read2: 0,
             written_read3: 0,

@@ -38,21 +38,16 @@ pub fn null_cap(strs: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     }).collect::<Vec<Vec<u8>>>()
 }
 
-pub fn threaded_write_consensus_reads(read_iterators: Vec<ReadIterator>, output_file: &String) {
-    let output_fl = File::create(output_file).unwrap();
+pub fn threaded_write_consensus_reads(read_iterators: Vec<ReadIterator>, output_file_base: &String, pattern: &ReadPattern) {
+    let mut output_writer = OutputReadSetWriter::from_pattern(&PathBuf::from(output_file_base), pattern);
 
-    let mut gz = GzBuilder::new()
-        .comment("aligned fasta file")
-        .write(output_fl, Compression::best());
-
-   //write!(bgzf,"@HD\tVN:1.6\n@SQ\tSN:{}\tLN:{}\n",ref_name,ref_string.len()).expect("Unable to write to output file");
-    let output = Arc::new(Mutex::new(gz));
+    //let output = Arc::new(Mutex::new(gz));
 
     read_iterators.into_iter().for_each(|xx| { //.par_bridge()
         let conc = create_iterator_poa_consensus(xx);
-        let output = Arc::clone(&output);
-        let mut output_unwrapped = output.lock().unwrap();
-        write!(output_unwrapped,"{}",conc);
+        //let output = Arc::clone(&output);
+        //let mut output_unwrapped = output.lock().unwrap();
+        output_writer.write(&conc);
     });
 }
 

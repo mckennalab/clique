@@ -102,7 +102,7 @@ struct Args {
     reference: String,
 
     #[clap(long)]
-    output: String,
+    output_base: String,
 
     #[clap(long)]
     read1: String,
@@ -150,7 +150,9 @@ fn main() {
     println!("sorting...");
     let read_piles = Sorter::sort(sort_structure,&read_bundle , &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout);
 
-    threaded_write_consensus_reads(read_piles, &parameters.output);
+    threaded_write_consensus_reads(read_piles,
+                                   &parameters.output_base,
+                                   &ReadPattern::from_read_file_container(&read_bundle));
 
 }
 
