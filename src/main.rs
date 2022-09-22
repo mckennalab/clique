@@ -47,6 +47,7 @@ use crate::umis::sequence_clustering::*;
 use crate::sorters::known_list::KnownList;
 use crate::sorters::sorter::{SortStructure, Sorter};
 use log::{SetLoggerError, LevelFilter};
+use crate::consensus::consensus_builders::threaded_write_consensus_reads;
 
 
 //use flate2::GzBuilder;
@@ -137,8 +138,6 @@ fn main() {
 
     let reference = reference_file_to_struct(&parameters.reference);
 
-    let output_file = File::create(parameters.output).unwrap();
-
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
@@ -149,7 +148,9 @@ fn main() {
     println!("sorting...");
     let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
     println!("sorting...");
-    Sorter::sort(sort_structure,&read_bundle , &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout);
+    let read_piles = Sorter::sort(sort_structure,&read_bundle , &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout);
+
+    threaded_write_consensus_reads(read_piles, &parameters.output);
 
 }
 

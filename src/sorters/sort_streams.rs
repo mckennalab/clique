@@ -76,7 +76,7 @@ impl SortStream for ClusteredMemorySortStream {
         };
         let collection = InputList { strings: self.reads.keys().map(|x| x.clone()).collect::<Vec<Vec<u8>>>(), max_dist: *max_dist as u64 };
         let mut graph = input_list_to_graph(&collection, string_distance, false);
-        
+
         let cc = get_connected_components(&graph);
 
         println!("UMI Read count {}", &cc.len());
