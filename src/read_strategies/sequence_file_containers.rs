@@ -566,10 +566,10 @@ impl ReadCollectionIterator {
         }
     }
 
-    pub fn new_from_file(reads: Vec<PathBuf>, read_pattern: ReadPattern) -> ReadCollectionIterator {
+    pub fn new_from_files(reads: VecDeque<PathBuf>, read_pattern: ReadPattern) -> ReadCollectionIterator {
         ReadCollectionIterator{
             reads: VecDeque::new(),
-            read_files: VecDeque::from(reads),
+            read_files: reads,
             read_pattern,
         }
     }

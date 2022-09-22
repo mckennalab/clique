@@ -1,26 +1,27 @@
-use std::collections::{HashMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
+use std::slice::Iter;
+use std::sync::{Arc, Mutex};
 
+use log::{info, warn};
+use rayon::iter::ParallelBridge;
+use rayon::prelude::*;
+use rayon::prelude::IntoParallelRefMutIterator;
+
+use crate::consensus::consensus_builders::create_seq_layout_poa_consensus;
+use crate::fasta_comparisons::*;
 use crate::read_strategies::sequence_file_containers::*;
 use crate::read_strategies::sequence_layout::*;
-use crate::umis::sequence_clustering::BestHits;
 use crate::sorters::*;
-use crate::umis::sequence_clustering::*;
-use crate::consensus::consensus_builders::create_seq_layout_poa_consensus;
-use rayon::iter::ParallelBridge;
-use rayon::prelude::IntoParallelRefMutIterator;
-use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
-use log::{info, warn};
-use crate::utils::file_utils::get_reader;
-use crate::utils::base_utils::edit_distance;
-use crate::fasta_comparisons::*;
-use std::io::BufRead;
-use crate::sorters::sorter::SortStructure;
 use crate::sorters::sort_streams::SortStream;
-use std::slice::Iter;
+use crate::sorters::sorter::SortStructure;
+use crate::umis::sequence_clustering::*;
+use crate::umis::sequence_clustering::BestHits;
+use crate::utils::base_utils::edit_distance;
+use crate::utils::file_utils::get_reader;
 
 pub struct KnownListDiskStream {
     sorted_bins: VecDeque<PathBuf>,
@@ -29,7 +30,6 @@ pub struct KnownListDiskStream {
 
 impl KnownListDiskStream {
     pub fn sort_disk_in_place(bin: &ReadFileContainer, sort_structure: &SortStructure, layout: &LayoutType) {
-
         let read_iterator = ReadIterator::new_from_bundle(bin);
 
         let mut sorted = Vec::new();
@@ -42,12 +42,12 @@ impl KnownListDiskStream {
 
             sorted.push((field, transformed_reads.original_reads().unwrap()));
         }
-        println!("sorted size {}",sorted.len());
+        println!("sorted size {}", sorted.len());
         sorted.sort_by(|a, b| b.0.cmp(&a.0));
 
         //drop(read_iterator);
         let mut output_container = OutputReadSetWriter::from_read_file_container(&bin);
-        for (string_name,read) in sorted {
+        for (string_name, read) in sorted {
             output_container.write(&read);
         }
     }
@@ -55,11 +55,9 @@ impl KnownListDiskStream {
 
 
 impl SortStream for KnownListDiskStream {
-
     fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType) -> Self {
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, maximum_distance, on_disk, known_list } => {
-
                 let mut consensus_manager = KnownListConsensus::new();
                 let pattern = ReadPattern::from_read_iterator(&read_iter);
                 let read_iter2 = read_iter.new_reset();
@@ -80,11 +78,12 @@ impl SortStream for KnownListDiskStream {
                 let temp_location_base = Path::new("./tmp/");
 
                 let mut temp_files = OutputReadSetWriter::create_x_bins(&read_iter3, &"unsorted".to_string(), splits.bins, &temp_location_base);
-                let mut output_bins = temp_files.iter().map(|(id,x)| {
-                    println!("opening {}",x.read_one.to_str().unwrap());
-                    OutputReadSetWriter::from_read_file_container(&x)}).collect::<Vec<OutputReadSetWriter>>();
+                let mut output_bins = temp_files.iter().map(|(id, x)| {
+                    println!("opening {}", x.read_one.to_str().unwrap());
+                    OutputReadSetWriter::from_read_file_container(&x)
+                }).collect::<Vec<OutputReadSetWriter>>();
 
-                let mut counts: HashMap<usize,i32> = HashMap::new();
+                let mut counts: HashMap<usize, i32> = HashMap::new();
                 println!("round 2");
                 let mut sorted_reads = 0;
                 for rd in read_iter2 {
@@ -97,46 +96,40 @@ impl SortStream for KnownListDiskStream {
                         sorted_reads += 1;
                         let original_reads = transformed_reads.original_reads().unwrap();
                         let bin_count: i32 = *counts.get(target_bin).unwrap_or(&0);
-                        counts.insert(*target_bin,bin_count + 1);
+                        counts.insert(*target_bin, bin_count + 1);
                         output_bins[*target_bin].write(&original_reads);
                     }
                 }
                 output_bins.iter().for_each(|x| x.print_read_count());
                 for x in counts.iter() {
-                    println!("Bin {} wrote {}",x.0, x.1);
+                    println!("Bin {} wrote {}", x.0, x.1);
                 }
                 // make sure we flush all the buffers
                 drop(output_bins);
-                println!("sort files {}",sorted_reads);
-                temp_files.iter().for_each(|(size,temp_file)| {
+                println!("sort files {}", sorted_reads);
+                temp_files.iter().for_each(|(size, temp_file)| {
                     KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout);
                 });
 
                 let bins = VecDeque::from(temp_files.iter().map(|n| n.1.read_one.clone()).collect::<Vec<PathBuf>>());
                 println!("Bin size: {}", &bins.len());
-                KnownListDiskStream{ sorted_bins: bins, pattern }
+                KnownListDiskStream { sorted_bins: bins, pattern }
             }
             _ => {
                 panic!("Called KnownListDiskStream using a sort structure that isn't KNOWN_LIST");
             }
         }
-
-
     }
 
     fn from_read_collection(read_collection: ReadCollection, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern) -> Self {
-        KnownListDiskStream::from_read_iterator(ReadIterator::from_collection(read_collection),sort_structure,layout)
+        KnownListDiskStream::from_read_iterator(ReadIterator::from_collection(read_collection), sort_structure, layout)
     }
 
     fn sorted_read_set(&mut self) -> Option<ReadCollectionIterator> {
         match self.sorted_bins.len() {
             0 => None,
             _ => {
-                let next_file = self.sorted_bins.pop_front();
-                match next_file {
-                    None => None,
-                    Some(x) => Some(ReadCollectionIterator::new_from_file(vec![x], self.pattern.clone())),
-                }
+                Some(ReadCollectionIterator::new_from_files(self.sorted_bins.clone(), self.pattern.clone()))
             }
         }
     }
@@ -149,7 +142,6 @@ pub struct KnownListConsensus {
 }
 
 impl KnownListConsensus {
-
     pub fn new() -> KnownListConsensus {
         let ids: HashMap<Vec<u8>, BestHits> = HashMap::new();
         let counts: HashMap<Vec<u8>, u64> = HashMap::new();
@@ -233,7 +225,6 @@ impl KnownListConsensus {
         let mut dropped_read = 0;
 
         self.observed_identifiers_counts.iter().for_each(|(k, count)| {
-
             let best_hit = self.observed_identifier_to_best_matches.get(&k.clone()).unwrap();
 
             if best_hit.hits.len() > 0 {
@@ -250,9 +241,9 @@ impl KnownListConsensus {
                 container_number += 1;
             }
         });
-        println!("Dropped read count: {}",dropped_read);
+        println!("Dropped read count: {}", dropped_read);
 
-        KnownListBinSplit { best_match_to_original, original_to_best_match, hit_to_container_number: list_to_container, bins: container_number + 1}
+        KnownListBinSplit { best_match_to_original, original_to_best_match, hit_to_container_number: list_to_container, bins: container_number + 1 }
     }
 }
 
