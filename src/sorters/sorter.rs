@@ -61,13 +61,13 @@ impl SortStructure {
             LayoutType::TENXV3 => {
                 let mut ret = Vec::new();
                 ret.push(SortStructure::KNOWN_LIST { layout_type: LayoutType::TENXV3, max_distance: 1, on_disk: true, known_list: known_lists.get(&LayoutType::TENXV3).unwrap().clone() });
-                ret.push(SortStructure::LD_UMI { layout_type: LayoutType::TENXV3, max_distance: 1, on_disk: false });
+                ret.push(SortStructure::LD_UMI { layout_type: LayoutType::TENXV3, max_distance: 3, on_disk: false });
                 ret
             }
             LayoutType::TENXV2 => {
                 let mut ret = Vec::new();
                 ret.push(SortStructure::KNOWN_LIST { layout_type: LayoutType::TENXV2, max_distance: 1, on_disk: true, known_list: known_lists.get(&LayoutType::TENXV2).unwrap().clone() });
-                ret.push(SortStructure::LD_UMI { layout_type: LayoutType::TENXV2, max_distance: 1, on_disk: false });
+                ret.push(SortStructure::LD_UMI { layout_type: LayoutType::TENXV2, max_distance: 3, on_disk: false });
                 ret
             }
             LayoutType::PAIREDUMI => { unimplemented!() }
@@ -144,7 +144,6 @@ impl Sorter {
                 layout: &LayoutType,
                 run_specs: &RunSpecifications) -> Vec<ReadIterator> {
         let temp_location_base = Path::new(tmp_location);
-        println!("Sorting reads1...");
 
         let mut read_iterator = ReadIterator::new_from_bundle(input_reads);
 
@@ -152,29 +151,21 @@ impl Sorter {
 
         current_iterators.push(read_iterator);
 
-        println!("Sorting reads...");
-        println!("Sorting sorting reads...length {}",current_iterators.len());
         for sort in sort_list {
-            println!("---------------------------------- {:?} ---------------------------",&sort.to_string());
             let mut next_level_iterators = Vec::new();
 
             for mut iter in current_iterators {
                 let it = Sorter::sort_level(&sort, iter, layout, run_specs);
                 match it {
-                    None => {println!("NONE!!!!!!!!!!")}
+                    None => {}
                     Some(x) => {
-                        //println!("X size {}",&x.len());
                         next_level_iterators.extend(x);
                     }
                 }
-                println!("New size: {}",next_level_iterators.len());
             }
-
             current_iterators = next_level_iterators;
-            println!("Done sorting reads...length {}",current_iterators.len());
 
         }
-        println!("Done sorting reads...length {}",current_iterators.len());
         current_iterators
     }
 
@@ -198,7 +189,7 @@ impl Sorter {
             SortStructure::HD_UMI { layout_type, max_distance, on_disk } |
             SortStructure::LD_UMI { layout_type, max_distance, on_disk } => {
                 assert_eq!(*on_disk, false);
-                let mut sorter = ClusteredMemorySortStream::from_read_iterator(iterator, sort_structure, layout, run_specs);
+                let mut sorter = ClusteredDiskSortStream::from_read_iterator(iterator, sort_structure, layout, run_specs);
                 let read_sets = sorter.sorted_read_set();
                 match read_sets {
                     None => None,

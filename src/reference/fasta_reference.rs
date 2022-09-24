@@ -8,7 +8,6 @@ pub struct Reference {
 
 pub fn reference_file_to_struct(reference_file: &String) -> Reference {
 
-    // reference loading / checking
     let mut reader = Reader::from_file(reference_file).unwrap();
     let fasta_entries: Vec<Record> = reader.records().map(|f| f.unwrap()).collect();
     assert_eq!(fasta_entries.len(), 1, "We can only run with single entry FASTA files");

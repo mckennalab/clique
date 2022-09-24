@@ -15,6 +15,7 @@ use flate2::GzBuilder;
 use flate2::read::GzEncoder;
 use num_traits::FromPrimitive;
 use rust_htslib::bgzf::{Reader, Writer};
+use tempfile::TempPath;
 
 use core::clone::Clone;
 use core::option::Option;
@@ -22,10 +23,10 @@ use core::option::Option::{None, Some};
 use serde::{Deserialize, Serialize};
 
 use crate::itertools::Itertools;
-use tempfile::TempPath;
 use crate::RunSpecifications;
+use serde::ser::{SerializeSeq, Serializer};
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ReadPattern {
     ONE,
     ONETWO,
@@ -99,10 +100,22 @@ impl ReadPattern {
             (true, true, false) => ReadPattern::ONETWOI1,
         }
     }
+    fn reverse_pattern(pat: &ReadPattern) -> (bool, bool, bool) {
+        match pat {
+            ReadPattern::ONETWOI1I2 => (true, true, true),
+            ReadPattern::ONEI1I2 => (false, true, true),
+            ReadPattern::ONEI2 => (false, false, true),
+            ReadPattern::ONEI1 => (false, true, false),
+            ReadPattern::ONE => (false, false, false),
+            ReadPattern::ONETWOI2 => (true, false, true),
+            ReadPattern::ONETWO => (true, false, false),
+            ReadPattern::ONETWOI1 => (true, true, false),
+        }
+    }
 }
 
 /// holds a set of reads for reading and writing to disk
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ReadSetContainer {
     pub read_one: Record,
     pub read_two: Option<Record>,
@@ -204,7 +217,6 @@ pub fn estimate_read_count(location: &String) -> Option<usize> {
     } else {
         None
     }
-
 }
 
 
@@ -251,26 +263,36 @@ impl ReadFileContainer {
     }
 
     fn format_temp_read_name(index: usize, prefix: String) -> String { format!("{}_{}.fastq.gz", prefix, index).to_string() }
-/*
-    pub fn new_temp_files(tmp_generator: fn() -> TempPath) -> ReadFileContainer {
-        let mut read1 = tmp_generator();
-        let mut read2 = tmp_generator();
-        let mut read3 = tmp_generator();
-        let mut read4 = tmp_generator();
+    /*
+        pub fn new_temp_files(tmp_generator: fn() -> TempPath) -> ReadFileContainer {
+            let mut read1 = tmp_generator();
+            let mut read2 = tmp_generator();
+            let mut read3 = tmp_generator();
+            let mut read4 = tmp_generator();
 
-        ReadFileContainer {
-            read_one: read1,
-            read_two: if rd.read_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read2))) } else { None },
-            index_one: if rd.index_one.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read3))) } else { None },
-            index_two: if rd.index_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read4))) } else { None },
-        }
-*/
+            ReadFileContainer {
+                read_one: read1,
+                read_two: if rd.read_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read2))) } else { None },
+                index_one: if rd.index_one.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read3))) } else { None },
+                index_two: if rd.index_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read4))) } else { None },
+            }
+    */
     pub fn temporary(rd: &ReadIterator, run_specs: &RunSpecifications) -> ReadFileContainer {
         ReadFileContainer {
             read_one: run_specs.create_temp_file(),
             read_two: if rd.read_two.is_some() { Some(run_specs.create_temp_file()) } else { None },
             index_one: if rd.index_one.is_some() { Some(run_specs.create_temp_file()) } else { None },
             index_two: if rd.index_two.is_some() { Some(run_specs.create_temp_file()) } else { None },
+        }
+    }
+
+    pub fn temporary_from_pattern(pattern: &ReadPattern, run_specs: &RunSpecifications) -> ReadFileContainer {
+        let file_layout = ReadPattern::reverse_pattern(pattern);
+        ReadFileContainer {
+            read_one: run_specs.create_temp_file(),
+            read_two: if file_layout.0 { Some(run_specs.create_temp_file()) } else { None },
+            index_one: if file_layout.1 { Some(run_specs.create_temp_file()) } else { None },
+            index_two: if file_layout.2 { Some(run_specs.create_temp_file()) } else { None },
         }
     }
 }
@@ -305,7 +327,6 @@ impl OutputReadSetWriter {
         }
     }
 
-
     pub fn from_pattern(base: &PathBuf, pt: &ReadPattern) -> OutputReadSetWriter {
         let base_path = base.as_path().to_str().unwrap();
         let read1: PathBuf = [base_path, "read1.fq.gz"].iter().collect();
@@ -315,6 +336,19 @@ impl OutputReadSetWriter {
             file_2: if pt.contains_r2() { Some(OutputReadSetWriter::create_writer(&[base_path, "read2.fq.gz"].iter().collect())) } else { None },
             file_3: if pt.contains_i1() { Some(OutputReadSetWriter::create_writer(&[base_path, "index1.fq.gz"].iter().collect())) } else { None },
             file_4: if pt.contains_i2() { Some(OutputReadSetWriter::create_writer(&[base_path, "index2.fq.gz"].iter().collect())) } else { None },
+            written_read1: 0,
+            written_read2: 0,
+            written_read3: 0,
+            written_read4: 0,
+        }
+    }
+
+    pub fn temp(pt: &ReadPattern, run_specs: &RunSpecifications) -> OutputReadSetWriter {
+        OutputReadSetWriter {
+            file_1: OutputReadSetWriter::create_writer(&run_specs.create_temp_file()),
+            file_2: if pt.contains_r2() { Some(OutputReadSetWriter::create_writer(&run_specs.create_temp_file())) } else { None },
+            file_3: if pt.contains_i1() { Some(OutputReadSetWriter::create_writer(&run_specs.create_temp_file())) } else { None },
+            file_4: if pt.contains_i2() { Some(OutputReadSetWriter::create_writer(&run_specs.create_temp_file())) } else { None },
             written_read1: 0,
             written_read2: 0,
             written_read3: 0,
@@ -534,6 +568,7 @@ impl ReadIterator
     }
 }
 
+
 /// This is ugly, but I don't have the energy for some dyn nightmare right now
 pub struct ClusteredReadIterator {
     reads: VecDeque<ClusteredReads>,
@@ -584,6 +619,7 @@ impl ClusteredReadIterator {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ClusteredReads {
     reads: VecDeque<ReadSetContainer>,
     pattern: ReadPattern,
@@ -594,4 +630,24 @@ impl ClusteredReads {
     pub fn new(reads: VecDeque<ReadSetContainer>, pattern: ReadPattern, average_dist: f64) -> ClusteredReads {
         ClusteredReads { reads, pattern, average_distance: Some(average_dist) }
     }
+
+    //pub fn deserialize_from_file(path: &PathBuf) -> ClusteredReads {}
 }
+
+pub struct ClusteredReadOutputStream {
+    output_stream: File,
+    //serializer: serde::Serializer,
+    //config: bincode::config,
+}
+/*
+impl ClusteredReadOutputStream {
+    pub fn from(file: &Path) -> ClusteredReadOutputStream {
+        let output_stream = File::open(file).unwrap();
+        let serializer : serde_
+        ClusteredReadOutputStream{ output_stream }
+    }
+
+    pub fn write(reads: ClusteredReads) {
+
+    }
+}*/

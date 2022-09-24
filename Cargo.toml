@@ -28,6 +28,7 @@ rust-htslib = { git = "https://github.com/rust-bio/rust-htslib" }
 log = "*"
 serde = "*"
 itertools = "*"
+bincode = "*"
 
 [profile.release]
 lto = true

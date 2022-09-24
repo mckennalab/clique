@@ -71,7 +71,6 @@ mod alignment {
 }
 
 mod consensus {
-    pub mod serial_passage_read_corrector;
     pub mod consensus_builders;
 }
 
@@ -208,6 +207,17 @@ impl RunSpecifications {
             Err(error) => {
                 panic!("Problem opening a new temporary file: {:?}", error);
             }
+        }
+    }
+}
+impl Clone for RunSpecifications {
+    fn clone(&self) -> RunSpecifications {
+        RunSpecifications {
+            estimated_reads: self.estimated_reads,
+            sorting_file_count: self.sorting_file_count,
+            sorting_threads: self.sorting_threads,
+            processing_threads: self.processing_threads,
+            tmp_location: self.tmp_location.clone(),
         }
     }
 }
