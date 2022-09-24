@@ -221,7 +221,7 @@ pub fn estimate_read_count(location: &String) -> Option<usize> {
             }
         }
         let average = first_100_reads_sizes as f64 / 100.0;
-        Some(((file_size as f64) / ((average as f64) * 0.15)) as usize) //
+        Some(((file_size as f64) / ((average as f64) * 0.17)) as usize) //
     } else {
         None
     }
@@ -362,6 +362,7 @@ impl OutputReadSetWriter {
     }
 
     fn create_writer(filename: &PathBuf) -> flate2::write::GzEncoder<File> {
+        println!("create writer");
         let f = File::create(filename).unwrap();
         let mut gz = GzBuilder::new()
             .write(f, Compression::best());
