@@ -79,6 +79,7 @@ pub trait SequenceLayout {
     //fn umi_sorting_path(&self) -> Option<Vec<SortStructure>>; // let ih = IteratorHolder { iter: 0..10 };
     fn original_reads(&self) -> Option<ReadSetContainer>;
     fn has_original_reads(&self) -> bool;
+    fn correct_known_sequence(&mut self, new: &Vec<u8>);
 }
 
 pub fn transform(read: ReadSetContainer, layout: &LayoutType) -> impl SequenceLayout {

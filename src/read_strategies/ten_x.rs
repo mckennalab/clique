@@ -2,6 +2,7 @@ use super::sequence_layout::*;
 use crate::read_strategies::sequence_file_containers::ReadSetContainer;
 use crate::sorters::sorter::SortStructure;
 use std::path::{Path, PathBuf};
+use bio::io::fastq::Record;
 
 pub struct TenXLayout {
     name: Vec<u8>,
@@ -66,5 +67,15 @@ impl SequenceLayout for TenXLayout {
 
     fn has_original_reads(&self) -> bool {
         self.original_reads.is_some()
+    }
+
+    fn correct_known_sequence(&mut self, new: &Vec<u8>) {
+        assert_eq!(self.cellid.len(),new.len());
+        self.cellid = new.clone();
+        let mut new_read2_seq = new.clone();
+        let old_read_2 = self.original_reads.as_ref().unwrap().read_two.as_ref().unwrap();
+        new_read2_seq.append(&mut old_read_2.seq().clone()[16..28].to_vec());
+        let mut new_read2 = Record::with_attrs(old_read_2.id().clone(), None, new_read2_seq.as_slice(), old_read_2.qual().clone());
+        self.original_reads = Some(ReadSetContainer::new_from_read2(new_read2, &self.original_reads.as_ref().unwrap()));
     }
 }

@@ -143,6 +143,14 @@ impl ReadSetContainer {
             index_two: None,
         }
     }
+    pub fn new_from_read2(rec: Record, old: &ReadSetContainer) -> ReadSetContainer {
+        ReadSetContainer {
+            read_one: old.read_one.clone(),
+            read_two: Some(rec),
+            index_one: old.index_one.clone(),
+            index_two: old.index_two.clone(),
+        }
+    }
 }
 
 pub struct NamedReadSetContainer {
@@ -305,6 +313,8 @@ pub struct OutputReadSetWriter {
     file_3: Option<flate2::write::GzEncoder<File>>,
     file_4: Option<flate2::write::GzEncoder<File>>,
 
+    files :  ReadFileContainer,
+
     written_read1: usize,
     written_read2: usize,
     written_read3: usize,
@@ -320,6 +330,7 @@ impl OutputReadSetWriter {
             file_2: if let Some(x) = &sc.read_two { Some(OutputReadSetWriter::create_writer(&x.clone())) } else { None },
             file_3: if let Some(x) = &sc.index_one { Some(OutputReadSetWriter::create_writer(&x.clone())) } else { None },
             file_4: if let Some(x) = &sc.index_two { Some(OutputReadSetWriter::create_writer(&x.clone())) } else { None },
+            files: sc.clone(),
             written_read1: 0,
             written_read2: 0,
             written_read3: 0,
@@ -329,31 +340,25 @@ impl OutputReadSetWriter {
 
     pub fn from_pattern(base: &PathBuf, pt: &ReadPattern) -> OutputReadSetWriter {
         let base_path = base.as_path().to_str().unwrap();
-        let read1: PathBuf = [base_path, "read1.fq.gz"].iter().collect();
-        println!("READ 1 = {:?}", read1);
-        OutputReadSetWriter {
-            file_1: OutputReadSetWriter::create_writer(&read1),
-            file_2: if pt.contains_r2() { Some(OutputReadSetWriter::create_writer(&[base_path, "read2.fq.gz"].iter().collect())) } else { None },
-            file_3: if pt.contains_i1() { Some(OutputReadSetWriter::create_writer(&[base_path, "index1.fq.gz"].iter().collect())) } else { None },
-            file_4: if pt.contains_i2() { Some(OutputReadSetWriter::create_writer(&[base_path, "index2.fq.gz"].iter().collect())) } else { None },
-            written_read1: 0,
-            written_read2: 0,
-            written_read3: 0,
-            written_read4: 0,
-        }
+        let rfc = ReadFileContainer{
+            read_one: [base_path, "read1.fq.gz"].iter().collect(),
+            read_two: if pt.contains_r2() { Some(PathBuf::from(format!("{}{}",base_path, "/read2.fq.gz"))) } else { None },
+            index_one: if pt.contains_r2() { Some(PathBuf::from(format!("{}{}",base_path, "/index1.fq.gz"))) } else { None },
+            index_two: if pt.contains_r2() { Some(PathBuf::from(format!("{}{}",base_path, "/index2.fq.gz"))) } else { None },
+        };
+
+        OutputReadSetWriter::from_read_file_container(&rfc)
     }
 
     pub fn temp(pt: &ReadPattern, run_specs: &RunSpecifications) -> OutputReadSetWriter {
-        OutputReadSetWriter {
-            file_1: OutputReadSetWriter::create_writer(&run_specs.create_temp_file()),
-            file_2: if pt.contains_r2() { Some(OutputReadSetWriter::create_writer(&run_specs.create_temp_file())) } else { None },
-            file_3: if pt.contains_i1() { Some(OutputReadSetWriter::create_writer(&run_specs.create_temp_file())) } else { None },
-            file_4: if pt.contains_i2() { Some(OutputReadSetWriter::create_writer(&run_specs.create_temp_file())) } else { None },
-            written_read1: 0,
-            written_read2: 0,
-            written_read3: 0,
-            written_read4: 0,
-        }
+        let rfc = ReadFileContainer{
+            read_one: run_specs.create_temp_file(),
+            read_two: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
+            index_one: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
+            index_two: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
+        };
+
+        OutputReadSetWriter::from_read_file_container(&rfc)
     }
 
     fn create_writer(filename: &PathBuf) -> flate2::write::GzEncoder<File> {
@@ -389,6 +394,10 @@ impl OutputReadSetWriter {
             };
         };
     }
+    pub fn files(&mut self) -> ReadFileContainer {
+        self.files.clone()
+    }
+
     pub fn print_read_count(&self) {
         println!("Read 1 {}, read 2 {} read 3 {} read 4 {}", self.written_read1, self.written_read2, self.written_read3, self.written_read4);
     }
@@ -399,6 +408,11 @@ impl OutputReadSetWriter {
     }
 }
 
+impl Clone for OutputReadSetWriter {
+    fn clone(&self) -> OutputReadSetWriter {
+        OutputReadSetWriter::from_read_file_container(&self.files)
+    }
+}
 unsafe impl Send for ReadIterator {}
 
 unsafe impl Sync for ReadIterator {}

@@ -24,6 +24,7 @@ use crate::utils::base_utils::edit_distance;
 use crate::utils::file_utils::get_reader;
 use crate::RunSpecifications;
 use indicatif::ProgressBar;
+use crate::sorters::balanced_split_output::RoundRobinDiskWriter;
 
 pub struct KnownListDiskStream {
     sorted_bins: VecDeque<ReadFileContainer>,
@@ -60,70 +61,34 @@ impl SortStream for KnownListDiskStream {
     fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &RunSpecifications) -> Self {
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
-                let read_iter2 = read_iter.new_reset();
-                let read_iter3 = read_iter.new_reset();
+
 
                 let mut consensus_manager = KnownListConsensus::new();
                 let pattern = ReadPattern::from_read_iterator(&read_iter);
 
-                println!("round 1 sorting");
+                let read_pattern = ReadPattern::from_read_iterator(&read_iter);
+                let mut writer = RoundRobinDiskWriter::from(run_specs,&read_pattern);
+                let mut rrs = RoundRobinDiskWriter::from(run_specs, &read_pattern);
 
                 let bar2 = ProgressBar::new((run_specs.estimated_reads as u64));
                 let mut true_reads: usize = 0;
                 for rd in read_iter {
 
-                    let transformed_reads = transform(rd, &layout);
+                    let mut transformed_reads = transform(rd.clone(), &layout);
                     let sequence = sort_structure.get_field(&transformed_reads).unwrap();
 
                     let corrected_hits = correct_to_known_list(&sequence, &mut known_list.lock().as_mut().unwrap(), 1);
-                    consensus_manager.add_hit(&sequence, corrected_hits);
+                    consensus_manager.add_hit(&sequence, corrected_hits.clone());
+                    if corrected_hits.hits.len() == 1 {
+                        transformed_reads.correct_known_sequence(corrected_hits.hits.get(0).unwrap());
+                        rrs.write(&sequence, &rd);
+                    }
+
                     bar2.inc(1);
                     true_reads += 1;
                 }
-
-                let kcl = consensus_manager.match_to_knownlist();
-                let splits = consensus_manager.create_balanced_bins(250 as u64);
-
-                let mut temp_files = OutputReadSetWriter::create_x_bins(&read_iter3, splits.bins, run_specs);
-                let mut output_bins = temp_files.iter().map(|(id, x)| {
-                    OutputReadSetWriter::from_read_file_container(&x)
-                }).collect::<Vec<OutputReadSetWriter>>();
-
-                let mut counts: HashMap<usize, i32> = HashMap::new();
-                println!("round 2....");
-                let bar2 = ProgressBar::new((true_reads as u64));
-                let mut sorted_reads = 0;
-                for rd in read_iter2 {
-                    let transformed_reads = transform(rd, &layout);
-                    let sequence = sort_structure.get_field(&transformed_reads).unwrap();
-
-                    let target_bin = splits.hit_to_container_number.get(&sequence);
-
-                    if let Some(target_bin) = target_bin {
-                        sorted_reads += 1;
-                        let original_reads = transformed_reads.original_reads().unwrap();
-                        let bin_count: i32 = *counts.get(target_bin).unwrap_or(&0);
-                        counts.insert(*target_bin, bin_count + 1);
-                        output_bins[*target_bin].write(&original_reads);
-                    }
-                    bar2.inc(1);
-                }
-                output_bins.iter().for_each(|x| x.print_read_count());
-                for x in counts.iter() {
-                    println!("Bin {} wrote {}", x.0, x.1);
-                }
-                // make sure we flush all the buffers
-                drop(output_bins);
-                println!("sort files {}", sorted_reads);
-                temp_files.iter().for_each(|(size, temp_file)| {
-                    KnownListDiskStream::sort_disk_in_place(&temp_file, sort_structure, layout);
-                });
-
-                let bins = VecDeque::from(
-                    temp_files.iter().map(|n| n.1.clone())
-                        .collect::<Vec<ReadFileContainer>>());
-                println!("Bin size: {}", &bins.len());
-                KnownListDiskStream { sorted_bins: bins, pattern }
+                let bins = rrs.get_writers().into_iter().map(|mut n| n.files()).collect::<Vec<ReadFileContainer>>();
+                KnownListDiskStream { sorted_bins:  VecDeque::from(bins), pattern }
             }
             _ => {
                 panic!("Called KnownListDiskStream using a sort structure that isn't KNOWN_LIST");
