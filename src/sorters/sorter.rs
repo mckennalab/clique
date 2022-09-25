@@ -152,6 +152,7 @@ impl Sorter {
         current_iterators.push(read_iterator);
 
         for sort in sort_list {
+            println!("Sort level {}",sort.to_string());
             let mut next_level_iterators = Vec::new();
 
             for mut iter in current_iterators {
