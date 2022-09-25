@@ -354,8 +354,8 @@ impl OutputReadSetWriter {
         let rfc = ReadFileContainer{
             read_one: run_specs.create_temp_file(),
             read_two: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
-            index_one: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
-            index_two: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
+            index_one: if pt.contains_i1() { Some(run_specs.create_temp_file()) } else { None },
+            index_two: if pt.contains_i2() { Some(run_specs.create_temp_file()) } else { None },
         };
 
         OutputReadSetWriter::from_read_file_container(&rfc)
