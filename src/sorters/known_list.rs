@@ -67,7 +67,6 @@ impl SortStream for KnownListDiskStream {
                 let pattern = ReadPattern::from_read_iterator(&read_iter);
 
                 let read_pattern = ReadPattern::from_read_iterator(&read_iter);
-                let mut writer = RoundRobinDiskWriter::from(run_specs,&read_pattern);
                 let mut rrs = RoundRobinDiskWriter::from(run_specs, &read_pattern);
 
                 let bar2 = ProgressBar::new((run_specs.estimated_reads as u64));
