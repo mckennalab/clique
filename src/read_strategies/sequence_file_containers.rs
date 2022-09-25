@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use crate::itertools::Itertools;
 use crate::RunSpecifications;
 use serde::ser::{SerializeSeq, Serializer};
-use backtrace::Backtrace;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ReadPattern {
@@ -364,12 +363,6 @@ impl OutputReadSetWriter {
 
     fn create_writer(filename: &PathBuf) -> flate2::write::GzEncoder<File> {
         println!("create writer {:?}",&filename);
-        println!("GHOSTS");
-        let bt = Backtrace::new();
-
-        // do_some_work();
-
-        println!("{:?}", bt);
         let f = File::create(filename).unwrap();
         let mut gz = GzBuilder::new()
             .write(f, Compression::best());
