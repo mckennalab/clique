@@ -183,10 +183,11 @@ fn main() {
     let mut known_list_hash = HashMap::new();
     known_list_hash.insert(read_layout.clone(), Arc::new(Mutex::new(known_list)));
 
+    println!("Sorting");
     let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
-
     let read_piles = Sorter::sort(sort_structure, &read_bundle, &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout, &mut run_specs);
 
+    println!("Consensus");
     threaded_write_consensus_reads(read_piles,
                                    &parameters.output_base,
                                    &ReadPattern::from_read_file_container(&read_bundle),
@@ -204,12 +205,6 @@ pub struct RunSpecifications {
 
 impl RunSpecifications {
     pub fn create_temp_file(&mut self) -> PathBuf {
-        let bt = Backtrace::new();
-
-        // do_some_work();
-
-        println!("{:?}", bt);
-        //let file_path = self.tmp_location.path().join(self.file_count.to_string());
         let file_path = PathBuf::from("/analysis/tmp/").join(self.file_count.to_string());
         self.file_count += 1;
         file_path
