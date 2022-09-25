@@ -343,8 +343,8 @@ impl OutputReadSetWriter {
         let rfc = ReadFileContainer{
             read_one: [base_path, "read1.fq.gz"].iter().collect(),
             read_two: if pt.contains_r2() { Some(PathBuf::from(format!("{}{}",base_path, "/read2.fq.gz"))) } else { None },
-            index_one: if pt.contains_r2() { Some(PathBuf::from(format!("{}{}",base_path, "/index1.fq.gz"))) } else { None },
-            index_two: if pt.contains_r2() { Some(PathBuf::from(format!("{}{}",base_path, "/index2.fq.gz"))) } else { None },
+            index_one: if pt.contains_i1() { Some(PathBuf::from(format!("{}{}",base_path, "/index1.fq.gz"))) } else { None },
+            index_two: if pt.contains_i2() { Some(PathBuf::from(format!("{}{}",base_path, "/index2.fq.gz"))) } else { None },
         };
 
         OutputReadSetWriter::from_read_file_container(&rfc)
