@@ -206,42 +206,4 @@ impl Sorter {
             }
         }
     }
-    /*
-        pub fn bin_by_tag(bin: &ReadFileContainer, sort_structure: &SortStructure, layout: &LayoutType) -> Vec<(usize, ReadFileContainer)> {
-            let read_iterator = ReadIterator::new_from_bundle(bin);
-
-            let temp_location_base = Path::new("./tmp/");
-            let mut temp_files = OutputReadSetWriter::create_x_bins(&read_iterator, &"unsorted".to_string(), splits.bins, &temp_location_base);
-            let mut output_bins = temp_files.iter().map(|(id,x)|
-                OutputReadSetWriter::from_sorting_container(&x)).collect::<Vec<OutputReadSetWriter>>();
-
-            let mut counts: HashMap<usize,i32> = HashMap::new();
-
-            let mut cnt = 0;
-            let mut dropped = 0;
-            for rd in read_iterator {
-                let transformed_reads = transform(rd, layout);
-                assert!(transformed_reads.has_original_reads());
-
-                let field = sort_structure.get_field(&transformed_reads).unwrap();
-
-                let target_bin = splits.hit_to_container_number.get(field);
-
-                if let Some(target_bin) = target_bin {
-                    let original_reads = transformed_reads.original_reads().unwrap();
-                    cnt += 1;
-                    let bin_count: i32 = *counts.get(target_bin).unwrap_or(&0);
-                    counts.insert(*target_bin,bin_count + 1);
-                    output_bins[*target_bin].write(original_reads);
-                } else {
-                    dropped += 1;
-                }
-            }
-            counts.iter().for_each(|(k,v)| println!("K {} v {}",k,v));
-
-            info!("Read count {}, dropped {}",cnt, dropped);
-
-            temp_files
-        }
-    */
 }

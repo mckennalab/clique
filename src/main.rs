@@ -22,6 +22,7 @@ extern crate tempfile;
 extern crate backtrace;
 
 use backtrace::Backtrace;
+use rand::Rng;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -205,7 +206,11 @@ pub struct RunSpecifications {
 
 impl RunSpecifications {
     pub fn create_temp_file(&mut self) -> PathBuf {
-        let file_path = PathBuf::from("/analysis/tmp/").join(self.file_count.to_string());
+        let mut rng = rand::thread_rng();
+
+        let name = format!("{}_temp_{}.fq.gz", self.file_count.to_string(), rng.gen::<f64>());
+
+        let file_path = PathBuf::from("/analysis/tmp/").join(name);
         self.file_count += 1;
         file_path
     }
