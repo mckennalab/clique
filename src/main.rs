@@ -201,7 +201,8 @@ pub struct RunSpecifications {
 
 impl RunSpecifications {
     pub fn create_temp_file(&mut self) -> PathBuf {
-        let file_path = self.tmp_location.path().join(self.file_count.to_string());
+        //let file_path = self.tmp_location.path().join(self.file_count.to_string());
+        let file_path = PathBuf::from("/analysis/tmp/").join(self.file_count.to_string());
         self.file_count += 1;
         file_path
     }
