@@ -29,6 +29,7 @@ log = "*"
 serde = "*"
 itertools = "*"
 bincode = "*"
+backtrace = "0.3"
 
 [profile.release]
 lto = true
