@@ -87,7 +87,8 @@ impl SortStream for KnownListDiskStream {
                     bar2.inc(1);
                     true_reads += 1;
                 }
-                let bins = rrs.get_writers().into_iter().map(|mut n| n.files()).collect::<Vec<ReadFileContainer>>();
+                let bins = rrs.get_writers();
+                drop(rrs);
                 KnownListDiskStream { sorted_bins:  VecDeque::from(bins), pattern }
             }
             _ => {

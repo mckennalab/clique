@@ -6,6 +6,7 @@ use crate::read_strategies::sequence_file_containers::OutputReadSetWriter;
 use crate::RunSpecifications;
 use indicatif::style::ProgressTracker;
 use std::borrow::{BorrowMut, Borrow};
+use crate::read_strategies::sequence_file_containers::ReadFileContainer;
 
 pub struct RoundRobinDiskWriter {
     writers: Vec<OutputReadSetWriter>,
@@ -52,7 +53,11 @@ impl RoundRobinDiskWriter {
         }
     }
 
-    pub fn get_writers(&mut self) -> VecDeque<OutputReadSetWriter> {
-        VecDeque::from(self.writers.clone())
+    pub fn get_writers(&mut self) -> VecDeque<ReadFileContainer> {
+        let mut writer_files = Vec::new();
+        for writer in &mut self.writers {
+            writer_files.push(writer.files().clone());
+        }
+        VecDeque::from(writer_files)
     }
 }
