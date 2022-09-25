@@ -15,7 +15,7 @@ pub struct RoundRobinDiskWriter {
 }
 
 impl RoundRobinDiskWriter {
-    pub fn from(run_specs: &RunSpecifications, read_pattern: &ReadPattern) -> RoundRobinDiskWriter {
+    pub fn from(run_specs: &mut RunSpecifications, read_pattern: &ReadPattern) -> RoundRobinDiskWriter {
         let mut writers = Vec::new();
         let mut assigned_sequences: HashMap<Vec<u8>, usize> = HashMap::new();
         let mut output_counts: HashMap<usize, usize> = HashMap::new();

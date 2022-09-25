@@ -285,7 +285,7 @@ impl ReadFileContainer {
                 index_two: if rd.index_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read4))) } else { None },
             }
     */
-    pub fn temporary(rd: &ReadIterator, run_specs: &RunSpecifications) -> ReadFileContainer {
+    pub fn temporary(rd: &ReadIterator, run_specs: &mut RunSpecifications) -> ReadFileContainer {
         ReadFileContainer {
             read_one: run_specs.create_temp_file(),
             read_two: if rd.read_two.is_some() { Some(run_specs.create_temp_file()) } else { None },
@@ -294,7 +294,7 @@ impl ReadFileContainer {
         }
     }
 
-    pub fn temporary_from_pattern(pattern: &ReadPattern, run_specs: &RunSpecifications) -> ReadFileContainer {
+    pub fn temporary_from_pattern(pattern: &ReadPattern, run_specs: &mut RunSpecifications) -> ReadFileContainer {
         let file_layout = ReadPattern::reverse_pattern(pattern);
         ReadFileContainer {
             read_one: run_specs.create_temp_file(),
@@ -350,7 +350,7 @@ impl OutputReadSetWriter {
         OutputReadSetWriter::from_read_file_container(&rfc)
     }
 
-    pub fn temp(pt: &ReadPattern, run_specs: &RunSpecifications) -> OutputReadSetWriter {
+    pub fn temp(pt: &ReadPattern, run_specs: &mut RunSpecifications) -> OutputReadSetWriter {
         let rfc = ReadFileContainer{
             read_one: run_specs.create_temp_file(),
             read_two: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
@@ -403,7 +403,7 @@ impl OutputReadSetWriter {
         println!("Read 1 {}, read 2 {} read 3 {} read 4 {}", self.written_read1, self.written_read2, self.written_read3, self.written_read4);
     }
 
-    pub fn create_x_bins(rd: &ReadIterator, x_bins: usize, run_specs: &RunSpecifications) -> Vec<(usize, ReadFileContainer)> {
+    pub fn create_x_bins(rd: &ReadIterator, x_bins: usize, run_specs: &mut RunSpecifications) -> Vec<(usize, ReadFileContainer)> {
         (0..x_bins).map(|id|
             (id, ReadFileContainer::temporary(rd, run_specs))).collect::<Vec<(usize, ReadFileContainer)>>()
     }

@@ -142,7 +142,7 @@ impl Sorter {
                 tmp_location: &String,
                 sorted_output: &String,
                 layout: &LayoutType,
-                run_specs: &RunSpecifications) -> Vec<ReadIterator> {
+                run_specs: &mut RunSpecifications) -> Vec<ReadIterator> {
         let temp_location_base = Path::new(tmp_location);
 
         let mut read_iterator = ReadIterator::new_from_bundle(input_reads);
@@ -169,7 +169,7 @@ impl Sorter {
         current_iterators
     }
 
-    pub fn sort_level(sort_structure: &SortStructure, iterator: ReadIterator, layout: &LayoutType, run_specs: &RunSpecifications) -> Option<Vec<ReadIterator>> {
+    pub fn sort_level(sort_structure: &SortStructure, iterator: ReadIterator, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Option<Vec<ReadIterator>> {
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 assert_eq!(*on_disk, true);

@@ -21,8 +21,8 @@ use crate::read_strategies::sequence_file_containers::{ReadFileContainer, Output
 
 
 pub trait SortStream {
-    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &RunSpecifications) -> Self;
-    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &RunSpecifications) -> Self;
+    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Self;
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &mut RunSpecifications) -> Self;
     fn sorted_read_set(&mut self) -> Option<ClusteredReadIterator>;
 }
 
@@ -31,7 +31,6 @@ pub struct ClusteredDiskSortStream {
     sort_structure: SortStructure,
     layout: LayoutType,
     pattern: ReadPattern,
-    run_spec: RunSpecifications,
 }
 
 impl ClusteredDiskSortStream {
@@ -45,14 +44,13 @@ impl ClusteredDiskSortStream {
 }
 
 impl SortStream for ClusteredDiskSortStream {
-    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &RunSpecifications) -> Self {
+    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Self {
         let mut reads: HashMap<Vec<u8>, Vec<ReadSetContainer>> = HashMap::new();
         let mut mem_sort = ClusteredDiskSortStream {
             reads,
             sort_structure: sort_structure.clone(),
             layout: layout.clone(),
             pattern: ReadPattern::from_read_iterator(&read_iter),
-            run_spec: run_specs.clone(),
         };
         for read in read_iter {
             mem_sort.push(read.clone());
@@ -60,14 +58,13 @@ impl SortStream for ClusteredDiskSortStream {
         mem_sort
     }
 
-    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &RunSpecifications) -> Self {
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &mut RunSpecifications) -> Self {
         let mut reads: HashMap<Vec<u8>, Vec<ReadSetContainer>> = HashMap::new();
         let mut mem_sort = ClusteredDiskSortStream {
             reads,
             sort_structure: sort_structure.clone(),
             layout: layout.clone(),
             pattern: pattern.clone(),
-            run_spec: run_specs.clone(),
         };
         for read in ReadIterator::from_collection(read_collection) {
             mem_sort.push(read.clone());

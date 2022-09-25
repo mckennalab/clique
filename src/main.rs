@@ -2,6 +2,7 @@ extern crate bgzip;
 extern crate bio;
 extern crate fastq;
 extern crate flate2;
+extern crate indicatif;
 extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
@@ -18,7 +19,6 @@ extern crate rust_spoa;
 extern crate seq_io;
 extern crate suffix;
 extern crate tempfile;
-extern crate indicatif;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -35,7 +35,7 @@ use noodles_fastq as Fastq;
 use petgraph::algo::connected_components;
 use rayon::prelude::*;
 use seq_io::fasta::{OwnedRecord, Reader, Record};
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
@@ -51,7 +51,6 @@ use crate::sorters::known_list::KnownList;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::sorter::{Sorter, SortStructure};
 use crate::umis::sequence_clustering::*;
-
 
 //use flate2::GzBuilder;
 //use flate2::Compression;
@@ -161,12 +160,15 @@ fn main() {
         _ => Some(PathBuf::from(parameters.temp_dir)),
     };
 
-    let run_specs = RunSpecifications {
+    let tmp_location = TempDir::new().unwrap();
+
+    let mut run_specs = RunSpecifications {
         estimated_reads: est_read_count,
         sorting_file_count: parameters.max_bins,
         sorting_threads: parameters.sorting_threads,
         processing_threads: parameters.processing_threads,
-        tmp_location: temp_dir,
+        tmp_location,
+        file_count: 0,
     };
 
     let reference = reference_file_to_struct(&parameters.reference);
@@ -180,7 +182,7 @@ fn main() {
 
     let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
 
-    let read_piles = Sorter::sort(sort_structure, &read_bundle, &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout, &run_specs);
+    let read_piles = Sorter::sort(sort_structure, &read_bundle, &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout, &mut run_specs);
 
     threaded_write_consensus_reads(read_piles,
                                    &parameters.output_base,
@@ -193,32 +195,15 @@ pub struct RunSpecifications {
     pub sorting_file_count: usize,
     pub sorting_threads: usize,
     pub processing_threads: usize,
-    pub tmp_location: Option<PathBuf>,
+    pub tmp_location: TempDir,
+    pub file_count: u64,
 }
 
 impl RunSpecifications {
-    pub fn create_temp_file(&self) -> PathBuf {
-        let tmp_file = match &self.tmp_location {
-            None => { NamedTempFile::new() }
-            Some(x) => { NamedTempFile::new_in(&x.as_path()) }
-        };
-        match tmp_file {
-            Ok(x) => { x.into_temp_path().to_path_buf() }
-            Err(error) => {
-                panic!("Problem opening a new temporary file: {:?}", error);
-            }
-        }
-    }
-}
-impl Clone for RunSpecifications {
-    fn clone(&self) -> RunSpecifications {
-        RunSpecifications {
-            estimated_reads: self.estimated_reads,
-            sorting_file_count: self.sorting_file_count,
-            sorting_threads: self.sorting_threads,
-            processing_threads: self.processing_threads,
-            tmp_location: self.tmp_location.clone(),
-        }
+    pub fn create_temp_file(&mut self) -> PathBuf {
+        let file_path = self.tmp_location.path().join(self.file_count.to_string()).join("my-temporary-note.txt");
+        self.file_count += 1;
+        file_path
     }
 }
 

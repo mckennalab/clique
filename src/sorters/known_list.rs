@@ -58,7 +58,7 @@ impl KnownListDiskStream {
 
 
 impl SortStream for KnownListDiskStream {
-    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &RunSpecifications) -> Self {
+    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Self {
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
 
@@ -96,7 +96,7 @@ impl SortStream for KnownListDiskStream {
         }
     }
 
-    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &RunSpecifications) -> Self {
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &mut RunSpecifications) -> Self {
         KnownListDiskStream::from_read_iterator(ReadIterator::from_collection(read_collection), sort_structure, layout, run_specs)
     }
 
