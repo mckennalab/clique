@@ -351,6 +351,7 @@ impl OutputReadSetWriter {
     }
 
     pub fn temp(pt: &ReadPattern, run_specs: &mut RunSpecifications) -> OutputReadSetWriter {
+        println!("r2 {} i1 {} i2 {}",pt.contains_r2(),pt.contains_i1(),pt.contains_i2());
         let rfc = ReadFileContainer{
             read_one: run_specs.create_temp_file(),
             read_two: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
