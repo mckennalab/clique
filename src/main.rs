@@ -19,6 +19,7 @@ extern crate rust_spoa;
 extern crate seq_io;
 extern crate suffix;
 extern crate tempfile;
+extern crate backtrace;
 
 use backtrace::Backtrace;
 
