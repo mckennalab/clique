@@ -20,6 +20,8 @@ extern crate seq_io;
 extern crate suffix;
 extern crate tempfile;
 
+use backtrace::Backtrace;
+
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Error, Write};
