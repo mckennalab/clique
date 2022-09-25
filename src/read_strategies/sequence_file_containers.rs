@@ -363,6 +363,7 @@ impl OutputReadSetWriter {
 
     fn create_writer(filename: &PathBuf) -> flate2::write::GzEncoder<File> {
         println!("create writer {:?}",&filename);
+        println!("GHOSTS");
         let f = File::create(filename).unwrap();
         let mut gz = GzBuilder::new()
             .write(f, Compression::best());
