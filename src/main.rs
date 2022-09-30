@@ -254,7 +254,7 @@ fn main() {
 
                     let output = Arc::clone(&output);
                     let mut output = output.lock().unwrap();
-                    write!(output, ">ref{}\n{}\n>{}\n{}\n{}\n",
+                    write!(output, ">ref\n{}\n{}\n>{}\n{}\n{}\n",
                            str::from_utf8(&reference.sequence).unwrap(),
                            str::from_utf8(&results.1).unwrap(),
                            str::replace(name, " ", "_"),
@@ -270,7 +270,7 @@ fn main() {
 
                     let output = Arc::clone(&output);
                     let mut output = output.lock().unwrap();
-                    write!(output, ">ref{}\n{}\n>{}\n{}\n{}\n",
+                    write!(output, ">ref\n{}\n{}\n>{}\n{}\n{}\n",
                            str::from_utf8(&reference.sequence).unwrap(),
                            str::from_utf8(&results.0).unwrap(),
                            str::replace(name, " ", "_"),
