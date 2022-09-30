@@ -116,14 +116,14 @@ impl SortStream for ClusteredDiskSortStream {
             }
         }
 
-        /*
+/*
         let mut output = OutputReadSetWriter::from_read_file_container(
-            &ReadFileContainer::temporary_from_pattern(&self.pattern, &self.run_spec));
+            &ReadFileContainer::temporary_from_pattern(&self.pattern, run_spec));
 
         for (string_name, read) in final_vec {
             output_container.write(&read);
         }
-        */
+*/
 
         Some(ClusteredReadIterator::new_from_vec(final_vec, self.pattern.clone()))
     }

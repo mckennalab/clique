@@ -221,7 +221,7 @@ pub fn estimate_read_count(location: &String) -> Option<usize> {
             }
         }
         let average = first_100_reads_sizes as f64 / 100.0;
-        Some(((file_size as f64) / ((average as f64) * 0.17)) as usize) //
+        Some(((file_size as f64) / ((average as f64) * 0.16)) as usize) //
     } else {
         None
     }
@@ -649,20 +649,7 @@ impl ClusteredReads {
     //pub fn deserialize_from_file(path: &PathBuf) -> ClusteredReads {}
 }
 
-pub struct ClusteredReadOutputStream {
-    output_stream: File,
-    //serializer: serde::Serializer,
-    //config: bincode::config,
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SuperCluster {
+    clusters: Vec<ClusteredReads>
 }
-/*
-impl ClusteredReadOutputStream {
-    pub fn from(file: &Path) -> ClusteredReadOutputStream {
-        let output_stream = File::open(file).unwrap();
-        let serializer : serde_
-        ClusteredReadOutputStream{ output_stream }
-    }
-
-    pub fn write(reads: ClusteredReads) {
-
-    }
-}*/

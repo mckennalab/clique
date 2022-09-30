@@ -1,3 +1,4 @@
+extern crate backtrace;
 extern crate bgzip;
 extern crate bio;
 extern crate fastq;
@@ -19,10 +20,6 @@ extern crate rust_spoa;
 extern crate seq_io;
 extern crate suffix;
 extern crate tempfile;
-extern crate backtrace;
-
-use backtrace::Backtrace;
-use rand::Rng;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -33,10 +30,12 @@ use std::str;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
+use backtrace::Backtrace;
 use bio::alignment::Alignment;
 use log::{LevelFilter, SetLoggerError};
 use noodles_fastq as Fastq;
 use petgraph::algo::connected_components;
+use rand::Rng;
 use rayon::prelude::*;
 use seq_io::fasta::{OwnedRecord, Reader, Record};
 use tempfile::{NamedTempFile, TempDir};
@@ -44,6 +43,7 @@ use tempfile::{NamedTempFile, TempDir};
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
 use clap::Parser;
+use clap::StructOpt;
 
 use crate::consensus::consensus_builders::threaded_write_consensus_reads;
 use crate::extractor::extract_tagged_sequences;
@@ -55,9 +55,6 @@ use crate::sorters::known_list::KnownList;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::sorter::{Sorter, SortStructure};
 use crate::umis::sequence_clustering::*;
-
-//use flate2::GzBuilder;
-//use flate2::Compression;
 
 mod linked_alignment;
 pub mod extractor;
@@ -101,14 +98,26 @@ mod reference {
     pub mod fasta_reference;
 }
 
+#[derive(Debug, StructOpt)]
+enum Cmd {
+    Collapse,
+    Align,
+}
+
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    #[structopt(subcommand)]
+    cmd: Cmd,
+
     #[clap(long)]
     reference: String,
 
     #[clap(long)]
     output_base: String,
+
+    #[clap(long)]
+    output: String,
 
     #[clap(long)]
     read1: String,
@@ -149,50 +158,130 @@ struct Args {
 
 fn main() {
     let parameters = Args::parse();
+    match &parameters.cmd {
+        Collapse => {
+            let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
 
-    let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
+            let read_bundle = ReadFileContainer::new(&parameters.read1, &parameters.read2, &parameters.index1, &parameters.index2);
 
-    let read_bundle = ReadFileContainer::new(&parameters.read1, &parameters.read2, &parameters.index1, &parameters.index2);
+            let est_read_count = estimate_read_count(&parameters.read1).unwrap_or(0);
 
-    let est_read_count = estimate_read_count(&parameters.read1).unwrap_or(0);
+            println!("estimated read set/pair count = {}", est_read_count);
 
-    println!("estimated read set/pair count = {}", est_read_count);
+            let no_temp_file: String = String::from("NONE");
+            let temp_dir: Option<PathBuf> = match &parameters.temp_dir {
+                no_temp_file => None,
+                _ => Some(PathBuf::from(parameters.temp_dir)),
+            };
 
-    let no_temp_file: String = String::from("NONE");
-    let temp_dir: Option<PathBuf> = match &parameters.temp_dir {
-        no_temp_file => None,
-        _ => Some(PathBuf::from(parameters.temp_dir)),
-    };
+            let tmp_location = TempDir::new().unwrap();
 
-    let tmp_location = TempDir::new().unwrap();
+            let mut run_specs = RunSpecifications {
+                estimated_reads: est_read_count,
+                sorting_file_count: parameters.max_bins,
+                sorting_threads: parameters.sorting_threads,
+                processing_threads: parameters.processing_threads,
+                tmp_location,
+                file_count: 0,
+            };
 
-    let mut run_specs = RunSpecifications {
-        estimated_reads: est_read_count,
-        sorting_file_count: parameters.max_bins,
-        sorting_threads: parameters.sorting_threads,
-        processing_threads: parameters.processing_threads,
-        tmp_location,
-        file_count: 0,
-    };
 
-    let reference = reference_file_to_struct(&parameters.reference);
+            // setup our thread pool
+            rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
-    // setup our thread pool
-    rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
+            let mut known_list = KnownList::new(&parameters.known_list, 7);
+            let mut known_list_hash = HashMap::new();
+            known_list_hash.insert(read_layout.clone(), Arc::new(Mutex::new(known_list)));
 
-    let mut known_list = KnownList::new(&parameters.known_list, 7);
-    let mut known_list_hash = HashMap::new();
-    known_list_hash.insert(read_layout.clone(), Arc::new(Mutex::new(known_list)));
+            println!("Sorting");
+            let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
+            let read_piles = Sorter::sort(sort_structure, &read_bundle, &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout, &mut run_specs);
 
-    println!("Sorting");
-    let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
-    let read_piles = Sorter::sort(sort_structure, &read_bundle, &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout, &mut run_specs);
+            println!("Consensus");
+            threaded_write_consensus_reads(read_piles,
+                                           &parameters.output_base,
+                                           &ReadPattern::from_read_file_container(&read_bundle),
+                                           &run_specs);
+        }
+        Align => {
+            let reference = reference_file_to_struct(&parameters.reference);
 
-    println!("Consensus");
-    threaded_write_consensus_reads(read_piles,
-                                   &parameters.output_base,
-                                   &ReadPattern::from_read_file_container(&read_bundle),
-                                   &run_specs);
+            let output_file = File::create(parameters.output).unwrap();
+
+            let read_iterator = ReadIterator::new(PathBuf::from(&parameters.read1),
+                                                  Some(PathBuf::from(&parameters.read2)),
+                                                  Some(PathBuf::from(&parameters.index1)),
+                                                  Some(PathBuf::from(&parameters.index2)));
+            ;
+
+            let reference_lookup = find_seeds(&reference.sequence, 20);
+            let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
+
+            // setup our thread pool
+            rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
+
+
+            let my_score = InversionScoring {
+                match_score: 10.0,
+                mismatch_score: -11.0,
+                gap_open: -15.0,
+                gap_extend: -5.0,
+                inversion_penalty: -2.0,
+            };
+
+
+            let my_aff_score = AffineScoring {
+                match_score: 10.0,
+                mismatch_score: -11.0,
+                special_character_score: 7.0,
+                gap_open: -15.0,
+                gap_extend: -5.0,
+            };
+
+            // This is a little ugly since we're wrapping in the para_bridge, which introduces some scope issues
+
+
+            read_iterator.par_bridge().for_each(|xx| {
+                let x = xx.read_one;
+                let name = &String::from(x.id()).to_string();
+
+                let is_forward = orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup);
+
+                if is_forward.0 {
+                    let fwd_score_mp = find_greedy_non_overlapping_segments(&x.seq().to_vec(), &reference.sequence, &reference_lookup);
+                    let results = align_string_with_anchors(&x.seq().to_vec(), &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
+
+                    let output = Arc::clone(&output);
+                    let mut output = output.lock().unwrap();
+                    write!(output, ">ref{}\n{}\n>{}\n{}\n{}\n",
+                           str::from_utf8(&reference.sequence).unwrap(),
+                           str::from_utf8(&results.1).unwrap(),
+                           str::replace(name, " ", "_"),
+                           str::from_utf8(&results.0).unwrap(),
+                            results.2.iter().map(|tag| format!("{}",tag)).collect::<Vec<String>>().join(",")).
+                        expect("Unable to write to output file");
+
+                    output.flush().expect("Unable to flush output");
+                } else {
+                    let fwd_score_mp = find_greedy_non_overlapping_segments(&x.seq().to_vec(), &reference.sequence, &reference_lookup);
+
+                    let results = align_string_with_anchors(&reverse_complement(&x.seq().to_vec()), &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
+
+                    let output = Arc::clone(&output);
+                    let mut output = output.lock().unwrap();
+                    write!(output, ">ref{}\n{}\n>{}\n{}\n{}\n",
+                           str::from_utf8(&reference.sequence).unwrap(),
+                           str::from_utf8(&results.0).unwrap(),
+                           str::replace(name, " ", "_"),
+                           str::from_utf8(&results.1).unwrap(),
+                           results.2.iter().map(|tag| format!("{}",tag)).collect::<Vec<String>>().join(",")).
+                        expect("Unable to write to output file");
+
+                    output.flush().expect("Unable to flush output");
+                }
+            });
+        }
+    }
 }
 
 pub struct RunSpecifications {
@@ -206,11 +295,7 @@ pub struct RunSpecifications {
 
 impl RunSpecifications {
     pub fn create_temp_file(&mut self) -> PathBuf {
-        let mut rng = rand::thread_rng();
-
-        let name = format!("{}_temp_{}.fq.gz", self.file_count.to_string(), rng.gen::<f64>());
-
-        let file_path = PathBuf::from("/analysis/tmp/").join(name);
+        let file_path = PathBuf::from("/analysis/tmp/").join(self.file_count.to_string());
         self.file_count += 1;
         file_path
     }
