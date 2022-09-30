@@ -228,6 +228,7 @@ fn main() {
                 gap_open: -16.0,
                 gap_extend: -6.0,
                 inversion_penalty: -20.0,
+                min_inversion_length: 20,
             };
 
 

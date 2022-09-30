@@ -944,7 +944,7 @@ pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score:
             let converted_path = aligned_inv_local.convert_inverted_path(read.len());
             let bounding = converted_path.bounding_box.unwrap().clone();
             let true_position = AlignmentLocation { x: bounding.1.x, y: bounding.1.y };
-            aligned_inv = if length > 4 && aligned_inv_local.score > my_score.match_score * 2.0 {
+            aligned_inv = if length >= my_score.min_inversion_length {
                 info!("INVERSION put in buffer: {} with score {} position {} {} truepos = {} {} ",String::from_utf8(aligned_inv_local.alignment_string1.clone()).unwrap(),aligned_inv_local.score, position.x, position.y,true_position.x, true_position.y);
                 clean_and_find_next_best_match_3d(&mut inversion_mat, &reference, &rev_comp_read, my_aff_score, &aligned_inv_local);
                 long_enough_hits.insert(true_position, converted_path);

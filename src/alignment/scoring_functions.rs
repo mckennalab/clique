@@ -99,6 +99,7 @@ pub struct InversionScoring {
     pub(crate) gap_open: f64,
     pub(crate) gap_extend: f64,
     pub(crate) inversion_penalty: f64,
+    pub(crate) min_inversion_length: usize,
 }
 
 
