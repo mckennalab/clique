@@ -128,8 +128,8 @@ impl fmt::Display for AlignmentTag {
             AlignmentTag::MatchMismatch(size) => write!(f, "{}M", size),
             AlignmentTag::Del(size) => write!(f, "{}D", size),
             AlignmentTag::Ins(size) => write!(f, "{}I", size),
-            AlignmentTag::InversionOpen => write!(f, "N<"),
-            AlignmentTag::InversionClose => write!(f, "N<"),
+            AlignmentTag::InversionOpen => write!(f, "<"),
+            AlignmentTag::InversionClose => write!(f, ">"),
         }
     }
 }
