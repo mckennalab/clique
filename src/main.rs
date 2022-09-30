@@ -223,11 +223,11 @@ fn main() {
 
 
             let my_score = InversionScoring {
-                match_score: 10.0,
-                mismatch_score: -11.0,
-                gap_open: -15.0,
-                gap_extend: -5.0,
-                inversion_penalty: -2.0,
+                match_score: 9.0,
+                mismatch_score: -21.0,
+                gap_open: -16.0,
+                gap_extend: -6.0,
+                inversion_penalty: -20.0,
             };
 
 
