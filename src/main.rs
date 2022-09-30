@@ -254,10 +254,11 @@ fn main() {
 
                     let output = Arc::clone(&output);
                     let mut output = output.lock().unwrap();
-                    write!(output, ">ref\n{}\n>{}\n{}\n{}\n",
+                    write!(output, ">ref\n{}\n>{}\n{}\n{}\n{}\n",
                            str::from_utf8(&results.0).unwrap(),
                            str::replace(name, " ", "_"),
                            str::from_utf8(&results.1).unwrap(),
+                           str::from_utf8(&x.seq().to_vec()).unwrap(),
                             results.2.iter().map(|tag| format!("{}",tag)).collect::<Vec<String>>().join(",")).
                         expect("Unable to write to output file");
 
@@ -269,10 +270,11 @@ fn main() {
 
                     let output = Arc::clone(&output);
                     let mut output = output.lock().unwrap();
-                    write!(output, ">ref\n{}\n>{}\n{}\n{}\n",
+                    write!(output, ">ref\n{}\n>{}\n{}\n{}\n{}\n",
                            str::from_utf8(&results.0).unwrap(),
                            str::replace(name, " ", "_"),
                            str::from_utf8(&results.1).unwrap(),
+                           str::from_utf8(&reverse_complement(&x.seq().to_vec())).unwrap(),
                            results.2.iter().map(|tag| format!("{}",tag)).collect::<Vec<String>>().join(",")).
                         expect("Unable to write to output file");
 
