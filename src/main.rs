@@ -158,8 +158,9 @@ struct Args {
 
 fn main() {
     let parameters = Args::parse();
+    println!("{:?}",&parameters.cmd);
     match &parameters.cmd {
-        Collapse => {
+        Cmd::Collapse => {
             let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
 
             let read_bundle = ReadFileContainer::new(&parameters.read1, &parameters.read2, &parameters.index1, &parameters.index2);
@@ -203,7 +204,7 @@ fn main() {
                                            &ReadPattern::from_read_file_container(&read_bundle),
                                            &run_specs);
         }
-        Align => {
+        Cmd::Align => {
             let reference = reference_file_to_struct(&parameters.reference);
 
             let output_file = File::create(parameters.output).unwrap();
