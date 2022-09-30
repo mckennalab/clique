@@ -1135,7 +1135,7 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 }
             }
             1 => {
-                if movement_delta.1 > 0 {cigars.push(AlignmentTag::Ins(1))};
+                if movement_delta.1 > 0 {cigars.push(AlignmentTag::Del(1))};
                 //info!("PUSH INS");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(*sequence1.get(_starting_x - 1).unwrap());
@@ -1144,7 +1144,7 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 }
             }
             2 => {
-                if movement_delta.1 > 0 {cigars.push(AlignmentTag::Del(1))};
+                if movement_delta.1 > 0 {cigars.push(AlignmentTag::Ins(1))};
                 //info!("PUSH DEL");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(b'-');
@@ -1161,13 +1161,13 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         alignment1.push(*sequence1.get(_starting_x - 1).unwrap());
         alignment2.push(b'-');
         _starting_x -= 1;
-        cigars.push(AlignmentTag::Ins(1));
+        cigars.push(AlignmentTag::Del(1));
     }
     while _starting_y > 0 && !alignment.is_local {
         alignment1.push(b'-');
         alignment2.push(*sequence2.get(_starting_y - 1).unwrap());
         _starting_y -= 1;
-        cigars.push(AlignmentTag::Del(1));
+        cigars.push(AlignmentTag::Ins(1));
     }
     alignment1.reverse();
     alignment2.reverse();
