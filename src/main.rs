@@ -225,7 +225,7 @@ fn main() {
             let my_score = InversionScoring {
                 match_score: 9.0,
                 mismatch_score: -21.0,
-                special_character_score: 6.0,
+                special_character_score: 8.0,
                 gap_open: -16.0,
                 gap_extend: -6.0,
                 inversion_penalty: -20.0,
