@@ -225,10 +225,10 @@ fn main() {
             let my_score = InversionScoring {
                 match_score: 9.0,
                 mismatch_score: -21.0,
-                special_character_score: 8.0,
-                gap_open: -16.0,
-                gap_extend: -6.0,
-                inversion_penalty: -20.0,
+                special_character_score: 9.0,
+                gap_open: -25.0,
+                gap_extend: -5.0,
+                inversion_penalty: -40.0,
                 min_inversion_length: 20,
             };
 
@@ -236,8 +236,8 @@ fn main() {
             let my_aff_score = AffineScoring {
                 match_score: 10.0,
                 mismatch_score: -11.0,
-                special_character_score: 7.0,
-                gap_open: -15.0,
+                special_character_score: 10.0,
+                gap_open: -20.0,
                 gap_extend: -5.0,
             };
 
