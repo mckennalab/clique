@@ -141,8 +141,8 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, o
         read_alignment_last_position += read_slice.len();
         ref_alignment_last_position += ref_slice.len();
 
-        alignment_ref.extend(alignment.alignment_string2);
-        alignment_read.extend(alignment.alignment_string1);
+        alignment_ref.extend(alignment.alignment_string1);
+        alignment_read.extend(alignment.alignment_string2);
         alignment_cigar.extend(alignment.cigar_string);
 
         alignment_ref.extend_from_slice(&reference[overlap.ref_start..overlap.ref_start+overlap.length]);
@@ -164,15 +164,15 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, o
             let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, reference.len());
             let alignment = inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false);
 
-            alignment_ref.extend(alignment.alignment_string2);
-            alignment_read.extend(alignment.alignment_string1);
+            alignment_ref.extend(alignment.alignment_string1);
+            alignment_read.extend(alignment.alignment_string2);
             alignment_cigar.extend(alignment.cigar_string);
         }
     } else {
         let alignment = inversion_alignment(&search_string, &reference, my_score, my_aff_score,true);
 
-        alignment_ref.extend(alignment.alignment_string2);
-        alignment_read.extend(alignment.alignment_string1);
+        alignment_ref.extend(alignment.alignment_string1);
+        alignment_read.extend(alignment.alignment_string2);
         alignment_cigar.extend(alignment.cigar_string);
     }
     (alignment_ref,alignment_read,alignment_cigar)
