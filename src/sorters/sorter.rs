@@ -10,14 +10,15 @@ use std::sync::{Arc, Mutex};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use log::{info, warn};
-use rust_htslib::bgzf::Writer;
 use rayon::prelude::*;
+use rust_htslib::bgzf::Writer;
 
-use crate::consensus::consensus_builders::create_seq_layout_poa_consensus;
 use crate::read_strategies::sequence_file_containers::{ReadFileContainer, ReadIterator, ReadSetContainer};
-use crate::read_strategies::sequence_file_containers::ClusteredReadIterator;
 use crate::read_strategies::sequence_file_containers::ClusteredReads;
 use crate::read_strategies::sequence_file_containers::OutputReadSetWriter;
+use crate::read_strategies::sequence_file_containers::ReadPattern;
+use crate::read_strategies::sequence_file_containers::SuperCluster;
+use crate::read_strategies::sequence_file_containers::SuperClusterOnDiskIterator;
 use crate::read_strategies::sequence_layout::LayoutType;
 use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::read_strategies::sequence_layout::transform;
@@ -142,67 +143,57 @@ impl Sorter {
                 tmp_location: &String,
                 sorted_output: &String,
                 layout: &LayoutType,
-                run_specs: &mut RunSpecifications) -> Vec<ReadIterator> {
+                read_pattern: &ReadPattern,
+                run_specs: &mut RunSpecifications) -> Vec<SuperClusterOnDiskIterator> {
         let temp_location_base = Path::new(tmp_location);
 
         let mut read_iterator = ReadIterator::new_from_bundle(input_reads);
 
         let mut current_iterators = Vec::new();
 
-        current_iterators.push(read_iterator);
+        let current_iter = ClusteredReads {
+            reads: Box::new(read_iterator),
+            pattern: read_pattern.clone(),
+            average_distance: None,
+        };
+        let current_sc = SuperClusterOnDiskIterator::new_from_vec(vec![current_iter], read_pattern.clone());
+
+        current_iterators.push(current_sc);
 
         for sort in sort_list {
-            println!("Sort level {}",sort.to_string());
+            println!("Sort level {}", sort.to_string());
             let mut next_level_iterators = Vec::new();
 
             for mut iter in current_iterators {
-                let it = Sorter::sort_level(&sort, iter, layout, run_specs);
-                match it {
-                    None => {}
-                    Some(x) => {
-                        next_level_iterators.extend(x);
+                for mut cluster in iter {
+                    for subiter in cluster.into_iter() {
+                        let it = Sorter::sort_level(&sort, Box::new(subiter.into_iter()), read_pattern, layout, run_specs);
+                        match it {
+                            None => {}
+                            Some(x) => {
+                                next_level_iterators.push(x);
+                            }
+                        }
                     }
                 }
             }
             current_iterators = next_level_iterators;
-
         }
         current_iterators
     }
 
-    pub fn sort_level(sort_structure: &SortStructure, iterator: ReadIterator, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Option<Vec<ReadIterator>> {
+    pub fn sort_level(sort_structure: &SortStructure, iterator: Box<dyn Iterator<Item=ReadSetContainer>>, read_pattern: &ReadPattern, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Option<SuperClusterOnDiskIterator> {
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 assert_eq!(*on_disk, true);
-                let mut sorter = KnownListDiskStream::from_read_iterator(iterator, sort_structure, layout, run_specs);
-                let mut read_sets = sorter.sorted_read_set();
-                match read_sets {
-                    None => None,
-                    Some(x) => {
-                        let mut ret = Vec::new();
-                        for ci in x {
-                            ret.push(ReadIterator::from_collection(ci));
-                        }
-                        Some(ret)
-                    }
-                }
+                let mut sorter = KnownListDiskStream::from_read_iterator(iterator, read_pattern, sort_structure, layout, run_specs);
+                sorter.sorted_read_set()
             }
             SortStructure::HD_UMI { layout_type, max_distance, on_disk } |
             SortStructure::LD_UMI { layout_type, max_distance, on_disk } => {
                 assert_eq!(*on_disk, false);
-                let mut sorter = ClusteredDiskSortStream::from_read_iterator(iterator, sort_structure, layout, run_specs);
-                let read_sets = sorter.sorted_read_set();
-                match read_sets {
-                    None => None,
-                    Some(x) => {
-                        let mut ret = Vec::new();
-                        for ci in x {
-                            ret.push(ReadIterator::from_collection(ci));
-                        }
-                        //println!("ITERRRRRATOR LENGTH {}", ret.len());
-                        Some(ret)
-                    }
-                }
+                let mut sorter = ClusteredDiskSortStream::from_read_iterator(iterator, read_pattern, sort_structure, layout, run_specs);
+                sorter.sorted_read_set()
             }
         }
     }

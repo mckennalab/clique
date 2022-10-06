@@ -39,18 +39,21 @@ pub fn null_cap(strs: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     }).collect::<Vec<Vec<u8>>>()
 }
 
-pub fn threaded_write_consensus_reads(read_iterators: Vec<ReadIterator>, output_file_base: &String, pattern: &ReadPattern, run_spec: &RunSpecifications) {
+pub fn threaded_write_consensus_reads(read_iterators: Vec<SuperClusterOnDiskIterator>, output_file_base: &String, pattern: &ReadPattern, run_spec: &RunSpecifications) {
     let mut output_writer = OutputReadSetWriter::from_pattern(&PathBuf::from(output_file_base), pattern);
 
     let output = Arc::new(Mutex::new(output_writer));
     let pool = rayon::ThreadPoolBuilder::new().num_threads(run_spec.processing_threads).build().unwrap();
     let pooled_install = pool.install(|| {
-        read_iterators.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
-            let conc = create_iterator_poa_consensus(xx);
-            let output = Arc::clone(&output);
-            let mut output_unwrapped = output.lock().unwrap();
-            output_unwrapped.write(&conc);
-        });
+        //let iters = read_iterators.into_iter();
+        for read_iterator in read_iterators {
+            read_iterator.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
+                for subiter in xx.clusters {
+                    let output = Arc::clone(&output);
+                    let conc = output_poa_consensus(Box::new(subiter.reads), output);
+                }
+            });
+        }
     });
 }
 
@@ -61,15 +64,10 @@ pub fn create_poa_consensus(sequences: &Vec<Vec<u8>>) -> Vec<u8> {
     consensus
 }
 
-pub fn create_iterator_poa_consensus(reads: ReadIterator) -> ReadSetContainer {
-    let all_reads = reads.collect::<Vec<ReadSetContainer>>();
-    create_seq_layout_poa_consensus(&all_reads)
-}
-
 
 /// Create a consensus sequence from an input set of reads. We merge reads by their underlying
 /// sequence, not the ReadLayout we get from the transformed reads
-pub fn create_seq_layout_poa_consensus(reads: &Vec<ReadSetContainer>) -> ReadSetContainer {
+pub fn output_poa_consensus(reads: Box<dyn Iterator<Item=ReadSetContainer>>, output: Arc<Mutex<OutputReadSetWriter>>) {
     let mut read1_agg = Vec::new();
     let mut read2_agg = Vec::new();
     let mut read3_agg = Vec::new();
@@ -77,7 +75,7 @@ pub fn create_seq_layout_poa_consensus(reads: &Vec<ReadSetContainer>) -> ReadSet
 
     let mut read_name: Option<Vec<u8>> = None;
     let mut read_count: usize = 0;
-    &reads.iter().for_each(|n| {
+    &reads.for_each(|n| {
         if !read_name.is_some() { read_name = Some(n.read_one.id().clone().as_bytes().to_vec()) }
         read1_agg.push(n.read_one.seq().clone().to_vec());
         n.read_two.as_ref().map(|r| read2_agg.push(r.seq().clone().to_vec()));
@@ -112,12 +110,16 @@ pub fn create_seq_layout_poa_consensus(reads: &Vec<ReadSetContainer>) -> ReadSet
     } else {
         None
     };
-    ReadSetContainer {
+
+    let conc = ReadSetContainer {
         read_one: read_one_conc,
         read_two: read_two_conc,
         index_one: read_three_conc,
         index_two: read_four_conc,
-    }
+    };
+
+    let mut output_unwrapped = output.lock().unwrap();
+    output_unwrapped.write(&conc);
 }
 
 pub fn to_read(base_name: &Vec<u8>, sequence: &Vec<u8>, read_position: &usize, read_count: &usize) -> Record {
@@ -159,7 +161,7 @@ mod tests {
         let read2 = ReadSetContainer::new_from_read1(Record::with_attrs("id_str", Some("desc"), b"ATGCGGG", b"QQQQQQQ"));
         let read3 = ReadSetContainer::new_from_read1(Record::with_attrs("id_str", Some("desc"), b"ATACGGG", b"QQQQQQQ"));
         let read_vec = vec![read1, read2, read3];
-        let conc = create_seq_layout_poa_consensus(&read_vec);
+        let conc = _poa_consensus(&read_vec);
         assert_eq!(b"ATGCGGG".to_vec(), conc.read_one.seq());
     }
 }

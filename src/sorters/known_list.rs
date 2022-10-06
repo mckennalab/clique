@@ -11,7 +11,6 @@ use rayon::iter::ParallelBridge;
 use rayon::prelude::*;
 use rayon::prelude::IntoParallelRefMutIterator;
 
-use crate::consensus::consensus_builders::create_seq_layout_poa_consensus;
 use crate::fasta_comparisons::*;
 use crate::read_strategies::sequence_file_containers::*;
 use crate::read_strategies::sequence_layout::*;
@@ -27,7 +26,7 @@ use indicatif::ProgressBar;
 use crate::sorters::balanced_split_output::RoundRobinDiskWriter;
 
 pub struct KnownListDiskStream {
-    sorted_bins: VecDeque<ReadFileContainer>,
+    sorted_bins: SuperClusterOnDiskIterator,
     pattern: ReadPattern,
 }
 
@@ -57,16 +56,14 @@ impl KnownListDiskStream {
 }
 
 
-impl SortStream for KnownListDiskStream {
-    fn from_read_iterator(read_iter: ReadIterator, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Self {
+impl<'z> SortStream<'z> for KnownListDiskStream {
+    fn from_read_iterator(read_iter: Box<dyn Iterator<Item=ReadSetContainer>>, read_pattern: &ReadPattern, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &'z mut RunSpecifications) -> Self {
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
 
 
                 let mut consensus_manager = KnownListConsensus::new();
-                let pattern = ReadPattern::from_read_iterator(&read_iter);
 
-                let read_pattern = ReadPattern::from_read_iterator(&read_iter);
                 let mut rrs = RoundRobinDiskWriter::from(run_specs, &read_pattern);
 
                 let bar2 = ProgressBar::new((run_specs.estimated_reads as u64));
@@ -88,7 +85,7 @@ impl SortStream for KnownListDiskStream {
                 }
                 let bins = rrs.get_writers();
                 drop(rrs);
-                KnownListDiskStream { sorted_bins:  VecDeque::from(bins), pattern }
+                KnownListDiskStream { sorted_bins:  bins, pattern: read_pattern.clone() }
             }
             _ => {
                 panic!("Called KnownListDiskStream using a sort structure that isn't KNOWN_LIST");
@@ -96,17 +93,12 @@ impl SortStream for KnownListDiskStream {
         }
     }
 
-    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &mut RunSpecifications) -> Self {
-        KnownListDiskStream::from_read_iterator(ReadIterator::from_collection(read_collection), sort_structure, layout, run_specs)
+    fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &'z mut RunSpecifications) -> Self {
+        KnownListDiskStream::from_read_iterator(read_collection.reads, &pattern, sort_structure, layout, run_specs)
     }
 
-    fn sorted_read_set(&mut self) -> Option<ClusteredReadIterator> {
-        match self.sorted_bins.len() {
-            0 => None,
-            _ => {
-                Some(ClusteredReadIterator::new_from_files(self.sorted_bins.clone(), self.pattern.clone()))
-            }
-        }
+    fn sorted_read_set(self) -> Option<SuperClusterOnDiskIterator> {
+        Some(self.sorted_bins)
     }
 }
 

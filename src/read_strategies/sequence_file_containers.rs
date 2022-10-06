@@ -1,8 +1,8 @@
+use std::{fs, io, fmt};
 use std::borrow::BorrowMut;
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
+use std::fs::*;
 use std::io::{BufReader, BufWriter};
-use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::slice::Chunks;
@@ -21,10 +21,10 @@ use core::clone::Clone;
 use core::option::Option;
 use core::option::Option::{None, Some};
 use serde::{Deserialize, Serialize};
+use serde::ser::{Serializer, SerializeSeq};
 
 use crate::itertools::Itertools;
 use crate::RunSpecifications;
-use serde::ser::{SerializeSeq, Serializer};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ReadPattern {
@@ -271,20 +271,7 @@ impl ReadFileContainer {
     }
 
     fn format_temp_read_name(index: usize, prefix: String) -> String { format!("{}_{}.fastq.gz", prefix, index).to_string() }
-    /*
-        pub fn new_temp_files(tmp_generator: fn() -> TempPath) -> ReadFileContainer {
-            let mut read1 = tmp_generator();
-            let mut read2 = tmp_generator();
-            let mut read3 = tmp_generator();
-            let mut read4 = tmp_generator();
 
-            ReadFileContainer {
-                read_one: read1,
-                read_two: if rd.read_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read2))) } else { None },
-                index_one: if rd.index_one.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read3))) } else { None },
-                index_two: if rd.index_two.is_some() { Some(temp_dir.join(ReadFileContainer::format_temp_read_name(id, read4))) } else { None },
-            }
-    */
     pub fn temporary(rd: &ReadIterator, run_specs: &mut RunSpecifications) -> ReadFileContainer {
         ReadFileContainer {
             read_one: run_specs.create_temp_file(),
@@ -313,7 +300,7 @@ pub struct OutputReadSetWriter {
     file_3: Option<flate2::write::GzEncoder<File>>,
     file_4: Option<flate2::write::GzEncoder<File>>,
 
-    files :  ReadFileContainer,
+    files: ReadFileContainer,
 
     written_read1: usize,
     written_read2: usize,
@@ -340,11 +327,11 @@ impl OutputReadSetWriter {
 
     pub fn from_pattern(base: &PathBuf, pt: &ReadPattern) -> OutputReadSetWriter {
         let base_path = base.as_path().to_str().unwrap();
-        let rfc = ReadFileContainer{
+        let rfc = ReadFileContainer {
             read_one: [base_path, "read1.fq.gz"].iter().collect(),
-            read_two: if pt.contains_r2() { Some(PathBuf::from(format!("{}{}",base_path, "/read2.fq.gz"))) } else { None },
-            index_one: if pt.contains_i1() { Some(PathBuf::from(format!("{}{}",base_path, "/index1.fq.gz"))) } else { None },
-            index_two: if pt.contains_i2() { Some(PathBuf::from(format!("{}{}",base_path, "/index2.fq.gz"))) } else { None },
+            read_two: if pt.contains_r2() { Some(PathBuf::from(format!("{}{}", base_path, "/read2.fq.gz"))) } else { None },
+            index_one: if pt.contains_i1() { Some(PathBuf::from(format!("{}{}", base_path, "/index1.fq.gz"))) } else { None },
+            index_two: if pt.contains_i2() { Some(PathBuf::from(format!("{}{}", base_path, "/index2.fq.gz"))) } else { None },
         };
 
         OutputReadSetWriter::from_read_file_container(&rfc)
@@ -352,7 +339,7 @@ impl OutputReadSetWriter {
 
     pub fn temp(pt: &ReadPattern, run_specs: &mut RunSpecifications) -> OutputReadSetWriter {
         //println!("r2 {} i1 {} i2 {}",pt.contains_r2(),pt.contains_i1(),pt.contains_i2());
-        let rfc = ReadFileContainer{
+        let rfc = ReadFileContainer {
             read_one: run_specs.create_temp_file(),
             read_two: if pt.contains_r2() { Some(run_specs.create_temp_file()) } else { None },
             index_one: if pt.contains_i1() { Some(run_specs.create_temp_file()) } else { None },
@@ -414,6 +401,7 @@ impl Clone for OutputReadSetWriter {
         OutputReadSetWriter::from_read_file_container(&self.files)
     }
 }
+
 unsafe impl Send for ReadIterator {}
 
 unsafe impl Sync for ReadIterator {}
@@ -423,8 +411,6 @@ pub struct ReadIterator {
     read_two: Option<Records<BufReader<Reader>>>,
     index_one: Option<Records<BufReader<Reader>>>,
     index_two: Option<Records<BufReader<Reader>>>,
-
-    read_collection: Option<ClusteredReads>,
 
     path_one: PathBuf,
     path_two: Option<PathBuf>,
@@ -462,73 +448,48 @@ impl Iterator for ReadIterator {
     type Item = ReadSetContainer;
 
     fn next(&mut self) -> Option<ReadSetContainer> {
-        match self.read_collection.as_mut() {
-            Some(mut x) => {
-                x.reads.pop_front()
-            }
-            None => {
-                let next_read_one = self.read_one.as_mut().unwrap().next();
-                if next_read_one.is_some() {
-                    let ret = match next_read_one.unwrap() {
-                        Ok(v) => {
-                            Some(ReadSetContainer {
-                                read_one: v,
-                                read_two: unwrap_reader(&mut self.read_two),
-                                index_one: unwrap_reader(&mut self.index_one),
-                                index_two: unwrap_reader(&mut self.index_two),
-                            })
-                        }
-                        Err(e) => {
-                            println!("error parsing header: {e:?}");
-                            None
-                        }
-                    };
-                    match ret {
-                        Some(x) => {
-                            if self.read2 && !x.read_two.is_some() {
-                                self.broken_reads += 1;
-                                None
-                            } else if self.index1 && !x.index_one.is_some() {
-                                self.broken_reads += 1;
-                                None
-                            } else if self.index2 && !x.index_two.is_some() {
-                                self.broken_reads += 1;
-                                None
-                            } else {
-                                self.reads_processed += 1;
-                                Some(x)
-                            }
-                        }
-                        None => None
-                    }
-                } else {
+        let next_read_one = self.read_one.as_mut().unwrap().next();
+        if next_read_one.is_some() {
+            let ret = match next_read_one.unwrap() {
+                Ok(v) => {
+                    Some(ReadSetContainer {
+                        read_one: v,
+                        read_two: unwrap_reader(&mut self.read_two),
+                        index_one: unwrap_reader(&mut self.index_one),
+                        index_two: unwrap_reader(&mut self.index_two),
+                    })
+                }
+                Err(e) => {
+                    println!("error parsing header: {:?}", e);
                     None
                 }
+            };
+            match ret {
+                Some(x) => {
+                    if self.read2 && !x.read_two.is_some() {
+                        self.broken_reads += 1;
+                        None
+                    } else if self.index1 && !x.index_one.is_some() {
+                        self.broken_reads += 1;
+                        None
+                    } else if self.index2 && !x.index_two.is_some() {
+                        self.broken_reads += 1;
+                        None
+                    } else {
+                        self.reads_processed += 1;
+                        Some(x)
+                    }
+                }
+                None => None
             }
+        } else {
+            None
         }
     }
 }
 
 impl ReadIterator
 {
-    pub fn from_collection(read_collection: ClusteredReads) -> ReadIterator {
-        ReadIterator {
-            read_one: None,
-            read_two: None,
-            index_one: None,
-            index_two: None,
-            read_collection: Some(read_collection),
-            path_one: Default::default(),
-            path_two: None,
-            path_i1: None,
-            path_i2: None,
-            reads_processed: 0,
-            read2: false,
-            index1: false,
-            index2: false,
-            broken_reads: 0,
-        }
-    }
     pub fn new(read_1: PathBuf,
                read_2: Option<PathBuf>,
                index_1: Option<PathBuf>,
@@ -551,7 +512,6 @@ impl ReadIterator
             read_two: read2,
             index_one: index1,
             index_two: index2,
-            read_collection: None,
             path_one: read_1.clone(),
             path_two: read_2.clone(),
             path_i1: index_1.clone(),
@@ -583,73 +543,152 @@ impl ReadIterator
     }
 }
 
-
-/// This is ugly, but I don't have the energy for some dyn nightmare right now
-pub struct ClusteredReadIterator {
-    reads: VecDeque<ClusteredReads>,
-    read_files: VecDeque<ReadFileContainer>,
-    read_pattern: ReadPattern,
+/// A light wrapper around a read set iterator with some underlying details of it's layout
+//#[derive(Serialize, Deserialize, Debug)]
+pub struct ClusteredReads {
+    pub reads: Box<dyn Iterator<Item=ReadSetContainer>>,
+    pub pattern: ReadPattern,
+    pub average_distance: Option<f64>,
 }
 
-impl Iterator for ClusteredReadIterator {
+impl fmt::Debug for ClusteredReads {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClusteredReads")
+            .field("pattern", &self.pattern)
+            .field("average_distance", &self.average_distance)
+            .finish()
+    }
+}
+
+
+
+impl Iterator for ClusteredReads {
+    type Item = ReadSetContainer;
+
+    fn next(&mut self) -> Option<ReadSetContainer> {
+        self.reads.next()
+    }
+}
+
+unsafe impl Send for ClusteredReads {}
+unsafe impl Sync for ClusteredReads {}
+
+impl ClusteredReads {
+    pub fn new(reads: Box<dyn Iterator<Item=ReadSetContainer>>, pattern: ReadPattern, average_dist: f64) -> ClusteredReads {
+        ClusteredReads { reads, pattern, average_distance: Some(average_dist) }
+    }
+/*
+    pub fn serialize_to_disk(path: &PathBuf, clustered_reads: &ClusteredReads<T>) {
+        let xs: Vec<u8> = bincode::serialize(&clustered_reads).unwrap();
+        write(path, xs).unwrap();
+    }
+
+    pub fn deserialize_from_file(path: &PathBuf) -> ClusteredReads<T> {
+        let byte_buffer = fs::read(path).unwrap();
+        let cr: ClusteredReads<T> = bincode::deserialize(&byte_buffer).unwrap();
+        cr
+    }
+
+    pub fn deserialize_from_read_file_containers(rfc: ReadFileContainer, pattern: ReadPattern) -> ClusteredReads<T> {
+        let read_iterator = ReadIterator::new_from_bundle(&rfc);
+        ClusteredReads {
+            reads: read_iterator,
+            pattern,
+            average_distance: None,
+        }
+    }*/
+}
+
+#[derive(Debug)]
+pub struct SuperCluster  {
+    pub clusters: Vec<ClusteredReads>
+}
+
+impl SuperCluster {
+    /*pub fn serialize_to_disk(path: &PathBuf, clustered_reads: &SuperCluster<T>) {
+        let xs: Vec<u8> = bincode::serialize(&clustered_reads).unwrap();
+        write(path, xs).unwrap();
+    }
+
+    pub fn deserialize_from_file(path: &PathBuf) -> SuperCluster<T> {
+        let byte_buffer = fs::read(path).unwrap();
+        let cr: SuperCluster<T> = bincode::deserialize(&byte_buffer).unwrap();
+        cr
+    }
+*/
+    pub fn from_clusters(clusters: Vec<ClusteredReads>) -> SuperCluster {
+        SuperCluster { clusters }
+    }
+
+    //pub fn from_iterator(read_iterator: ReadIterator, pattern: ReadPattern) -> SuperCluster<T> {}
+}
+
+unsafe impl Send for SuperCluster {}
+unsafe impl Sync for SuperCluster {}
+
+impl Iterator for SuperCluster {
     type Item = ClusteredReads;
 
     fn next(&mut self) -> Option<ClusteredReads> {
-        match self.reads.len() {
-            0 => {
-                while self.read_files.len() > 0 && self.reads.len() == 0 {
-                    match self.read_files.pop_front() {
-                        None => {}
-                        Some(x) => {
-                            let mut readset = VecDeque::new();
-                            for r in ReadIterator::new_from_bundle(&x) {
-                                readset.push_back(r);
-                            }
-                            self.reads.push_back(ClusteredReads { reads: readset, pattern: self.read_pattern.clone(), average_distance: None })
-                        }
-                    }
-                }
-                self.reads.pop_front()
-            }
-            _ => self.reads.pop_front(),
-        }
+        self.clusters.pop()
     }
 }
 
-impl ClusteredReadIterator {
-    pub fn new_from_vec(reads: Vec<ClusteredReads>, read_pattern: ReadPattern) -> ClusteredReadIterator {
-        ClusteredReadIterator {
-            reads: VecDeque::from(reads),
-            read_files: VecDeque::new(),
-            read_pattern,
-        }
-    }
 
-    pub fn new_from_files(reads: VecDeque<ReadFileContainer>, read_pattern: ReadPattern) -> ClusteredReadIterator {
-        ClusteredReadIterator {
-            reads: VecDeque::new(),
-            read_files: reads,
-            read_pattern,
-        }
-    }
-}
+unsafe impl Send for SuperClusterOnDiskIterator {}
+unsafe impl Sync for SuperClusterOnDiskIterator {}
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ClusteredReads {
-    reads: VecDeque<ReadSetContainer>,
+pub struct SuperClusterOnDiskIterator {
+    read_files: VecDeque<PathBuf>,
+    read_container: VecDeque<ReadFileContainer>,
     pattern: ReadPattern,
-    average_distance: Option<f64>,
 }
 
-impl ClusteredReads {
-    pub fn new(reads: VecDeque<ReadSetContainer>, pattern: ReadPattern, average_dist: f64) -> ClusteredReads {
-        ClusteredReads { reads, pattern, average_distance: Some(average_dist) }
+impl Iterator for SuperClusterOnDiskIterator {
+    type Item = SuperCluster;
+
+    fn next(&mut self) -> Option<SuperCluster> {
+        match (self.read_files.len(), self.read_container.len()) {
+            (x,y) if y == 0 => {
+                let next_file = self.read_files.pop_front();
+                match next_file {
+                    None => None,
+                    Some(f) => None // TODO: Some(SuperCluster::deserialize_from_file(&f))
+                }
+            }
+            (x,y) if x == 0 => {
+                let next_file = self.read_container.pop_front();
+                match next_file {
+                    None => None,
+                    Some(f) => None // TODO: Some(SuperCluster::from_clusters(vec![ClusteredReads::deserialize_from_read_file_containers(f, self.pattern.clone())]))
+                }
+            }
+            (0,0) => {
+                None
+            }
+            (x,y) if x > 0 && y > 0 => {
+                panic!("I write ugly code sometimes (two gt1 seen in SuperClusteredOnDiskIterator)")
+            }
+            (_,_) => {
+                panic!("I write ugly code sometimes (two uncovered values seen in SuperClusteredOnDiskIterator)")
+            }
+        }
+    }
+}
+
+impl SuperClusterOnDiskIterator {
+    pub fn new_from_vec(final_vec: Vec<ClusteredReads>, read_pattern: ReadPattern) -> SuperClusterOnDiskIterator {
+        //SuperCluster::serialize_to_disk(output_file, &SuperCluster::from_clusters(final_vec));
+        SuperClusterOnDiskIterator { read_files: VecDeque::new(), read_container: VecDeque::new(), pattern: read_pattern} // TODO: from(vec![output_file.clone()]))
     }
 
-    //pub fn deserialize_from_file(path: &PathBuf) -> ClusteredReads {}
-}
+    pub fn new_from_read_file_container(rfc: Vec<ReadFileContainer>, read_pattern: ReadPattern) -> SuperClusterOnDiskIterator {
+        SuperClusterOnDiskIterator {
+            read_files: VecDeque::new(),
+            read_container: VecDeque::from(rfc),
+            pattern: read_pattern.clone(),
+        }
+    }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SuperCluster {
-    clusters: Vec<ClusteredReads>
+    //pub fn turtles_all_the_way_down(iterator)
 }

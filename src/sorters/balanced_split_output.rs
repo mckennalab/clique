@@ -7,12 +7,15 @@ use crate::RunSpecifications;
 use indicatif::style::ProgressTracker;
 use std::borrow::{BorrowMut, Borrow};
 use crate::read_strategies::sequence_file_containers::ReadFileContainer;
+use crate::read_strategies::sequence_file_containers::SuperClusterOnDiskIterator;
+use crate::read_strategies::sequence_file_containers::ReadIterator;
 
 pub struct RoundRobinDiskWriter {
     writers: Vec<OutputReadSetWriter>,
     assigned_sequences: HashMap<Vec<u8>, usize>,
     output_counts: HashMap<usize, usize>,
     current_bin: usize,
+    read_pattern: ReadPattern,
 }
 
 impl RoundRobinDiskWriter {
@@ -30,7 +33,8 @@ impl RoundRobinDiskWriter {
             writers,
             assigned_sequences,
             output_counts,
-            current_bin: 0
+            current_bin: 0,
+            read_pattern: read_pattern.clone(),
         }
     }
 
@@ -53,11 +57,11 @@ impl RoundRobinDiskWriter {
         }
     }
 
-    pub fn get_writers(&mut self) -> VecDeque<ReadFileContainer> {
+    pub fn get_writers(&mut self) -> SuperClusterOnDiskIterator {
         let mut writer_files = Vec::new();
         for writer in &mut self.writers {
             writer_files.push(writer.files().clone());
         }
-        VecDeque::from(writer_files)
+        SuperClusterOnDiskIterator::new_from_read_file_container(writer_files, self.read_pattern.clone())
     }
 }

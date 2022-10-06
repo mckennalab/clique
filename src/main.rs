@@ -196,7 +196,13 @@ fn main() {
 
             println!("Sorting");
             let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
-            let read_piles = Sorter::sort(sort_structure, &read_bundle, &"./tmp/".to_string(), &"test_sorted.txt.gz".to_string(), &read_layout, &mut run_specs);
+            let read_piles = Sorter::sort(sort_structure,
+                                          &read_bundle,
+                                          &"./tmp/".to_string(),
+                                          &"test_sorted.txt.gz".to_string(),
+                                          &read_layout,
+                                          &ReadPattern::from_read_file_container(&read_bundle),
+                                          &mut run_specs);
 
             println!("Consensus");
             threaded_write_consensus_reads(read_piles,
@@ -232,7 +238,6 @@ fn main() {
                 min_inversion_length: 20,
             };
 
-
             let my_aff_score = AffineScoring {
                 match_score: 10.0,
                 mismatch_score: -11.0,
@@ -240,9 +245,6 @@ fn main() {
                 gap_open: -20.0,
                 gap_extend: -5.0,
             };
-
-            // This is a little ugly since we're wrapping in the para_bridge, which introduces some scope issues
-
 
             read_iterator.par_bridge().for_each(|xx| {
                 let x = xx.read_one;
