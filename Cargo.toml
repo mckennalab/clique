@@ -30,6 +30,8 @@ serde = "*"
 itertools = "*"
 bincode = "*"
 backtrace = "0.3"
+typetag = "0.2"
+nanoid = "0.4.0"
 
 [profile.release]
 lto = true

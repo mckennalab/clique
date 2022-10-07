@@ -3,7 +3,6 @@ use std::slice::Iter;
 
 use crate::consensus::consensus_builders::create_poa_consensus;
 use crate::read_strategies::sequence_file_containers::{ReadIterator, ReadSetContainer};
-use crate::read_strategies::sequence_file_containers::NamedReadSetContainer;
 use crate::read_strategies::sequence_file_containers::ClusteredReads;
 use crate::read_strategies::sequence_file_containers::SuperClusterOnDiskIterator;
 use crate::read_strategies::sequence_file_containers::ReadPattern;
@@ -18,6 +17,9 @@ use crate::umis::sequence_clustering::InputList;
 use crate::umis::sequence_clustering::average_dist;
 use crate::RunSpecifications;
 use crate::read_strategies::sequence_file_containers::{ReadFileContainer, OutputReadSetWriter};
+use std::cell::RefCell;
+use std::io::Read;
+use std::sync::Mutex;
 
 
 pub trait SortStream<'z> {
@@ -31,7 +33,7 @@ pub struct ClusteredDiskSortStream<'z> {
     sort_structure: SortStructure,
     layout: LayoutType,
     pattern: ReadPattern,
-    run_specs: &'z RunSpecifications,
+    run_specs: &'z mut RunSpecifications,
 }
 
 impl<'z> ClusteredDiskSortStream<'z> {
@@ -52,7 +54,7 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
             sort_structure: sort_structure.clone(),
             layout: layout.clone(),
             pattern: read_pattern.clone(),
-            run_specs,
+            run_specs: run_specs,
         };
         for read in read_iter {
             mem_sort.push(read.clone());
@@ -67,7 +69,7 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
             sort_structure: sort_structure.clone(),
             layout: layout.clone(),
             pattern: pattern.clone(),
-            run_specs,
+            run_specs: run_specs,
         };
         for read in read_collection {
             mem_sort.push(read.clone());
@@ -96,14 +98,13 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
             let issubgroups = split_subgroup(&mut minigraph);
             match issubgroups {
                 None => {
-                    let average_distance = average_dist(&minilist.strings, string_distance);
                     let mut rc = Vec::new();
                     for s in &minilist.strings {
                         if let Some(i) = self.reads.get(s) {
                             rc.extend(i.clone());
                         }
                     }
-                    final_vec.push(ClusteredReads::new(Box::new(VecDeque::from(rc).into_iter()), self.pattern.clone(), average_distance));
+                    final_vec.push(ClusteredReads::new(Box::new(VecDeque::from(rc).into_iter()), self.pattern.clone()));
                 }
                 Some(x) => {
                     for sgroup in &x {
@@ -115,13 +116,11 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
                             }
                         }
                         let iter  = Box::new(VecDeque::from(rc).into_iter());
-                        final_vec.push(ClusteredReads::new(iter, self.pattern.clone(), average_distance));
+                        final_vec.push(ClusteredReads::new(iter, self.pattern.clone()));
                     }
                 }
             }
         }
-
-        //let temp_file = self.run_specs.create_temp_file().clone();
-        Some(SuperClusterOnDiskIterator::new_from_vec(final_vec, self.pattern.clone()))
+        Some(SuperClusterOnDiskIterator::new_from_vec(final_vec, self.pattern.clone(), &mut self.run_specs.clone()))
     }
 }

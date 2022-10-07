@@ -1,27 +1,29 @@
-use std::{fs, io, fmt};
+use std::{fmt, fs, io};
 use std::borrow::BorrowMut;
 use std::collections::{HashMap, VecDeque};
 use std::fs::*;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufRead, BufReader, BufWriter};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::slice::Chunks;
+use std::str::FromStr;
 
 use bgzip::BGZFReader;
 use bio::io::fastq::{Error, Record, Records};
 use bio::io::fastq::Reader as FqReader;
 use flate2::*;
 use flate2::GzBuilder;
-use flate2::read::GzEncoder;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
 use num_traits::FromPrimitive;
 use rust_htslib::bgzf::{Reader, Writer};
+use serde::{Deserialize, Serialize};
+use serde::ser::{Serializer, SerializeSeq};
 use tempfile::TempPath;
 
 use core::clone::Clone;
 use core::option::Option;
 use core::option::Option::{None, Some};
-use serde::{Deserialize, Serialize};
-use serde::ser::{Serializer, SerializeSeq};
 
 use crate::itertools::Itertools;
 use crate::RunSpecifications;
@@ -38,7 +40,117 @@ pub enum ReadPattern {
     ONEI1I2,
 }
 
+impl FromStr for ReadPattern {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<ReadPattern, Self::Err> {
+        match input {
+            "ONE" => Ok(ReadPattern::ONE),
+            "ONETWO" => Ok(ReadPattern::ONETWO),
+            "ONETWOI1" => Ok(ReadPattern::ONETWOI1),
+            "ONETWOI2" => Ok(ReadPattern::ONETWOI2),
+            "ONETWOI1I2" => Ok(ReadPattern::ONETWOI1I2),
+            "ONEI1" => Ok(ReadPattern::ONEI1),
+            "ONEI2" => Ok(ReadPattern::ONEI2),
+            "ONEI1I2" => Ok(ReadPattern::ONEI1I2),
+            _ => Err(()),
+        }
+    }
+}
+
+impl fmt::Display for ReadPattern {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 impl ReadPattern {
+    pub fn read_count(&self) -> usize {
+        match self {
+            ReadPattern::ONE => { 1 }
+            ReadPattern::ONETWO => { 2 }
+            ReadPattern::ONETWOI1 => { 3 }
+            ReadPattern::ONETWOI2 => { 3 }
+            ReadPattern::ONETWOI1I2 => { 4 }
+            ReadPattern::ONEI1 => { 2 }
+            ReadPattern::ONEI2 => { 2 }
+            ReadPattern::ONEI1I2 => { 3 }
+        }
+    }
+
+    pub fn to_read_collection(&self, reads: &mut VecDeque<Record>) -> Option<ReadSetContainer> {
+        if reads.len() != self.read_count() {
+            None
+        } else {
+            Some(match self {
+                ReadPattern::ONE => {
+                    ReadSetContainer {
+                        read_one: reads.pop_front().unwrap(),
+                        read_two: None,
+                        index_one: None,
+                        index_two: None,
+                    }
+                }
+                ReadPattern::ONETWO => {
+                    ReadSetContainer {
+                        read_one: reads.pop_front().unwrap(),
+                        read_two: Some(reads.pop_front().unwrap()),
+                        index_one: None,
+                        index_two: None,
+                    }
+                }
+                ReadPattern::ONETWOI1 => {
+                    ReadSetContainer {
+                        read_one: reads.pop_front().unwrap(),
+                        read_two: Some(reads.pop_front().unwrap()),
+                        index_one: Some(reads.pop_front().unwrap()),
+                        index_two: None,
+                    }
+                }
+                ReadPattern::ONETWOI2 => {
+                    ReadSetContainer {
+                        read_one: reads.pop_front().unwrap(),
+                        read_two: Some(reads.pop_front().unwrap()),
+                        index_one: None,
+                        index_two: Some(reads.pop_front().unwrap()),
+                    }
+                }
+                ReadPattern::ONETWOI1I2 => {
+                    ReadSetContainer {
+                        read_one: reads.pop_front().unwrap(),
+                        read_two: Some(reads.pop_front().unwrap()),
+                        index_one: Some(reads.pop_front().unwrap()),
+                        index_two: Some(reads.pop_front().unwrap()),
+                    }
+                }
+                ReadPattern::ONEI1 => {
+                    ReadSetContainer {
+                        read_one: reads.pop_front().unwrap(),
+                        read_two: None,
+                        index_one: Some(reads.pop_front().unwrap()),
+                        index_two: None,
+                    }
+                }
+                ReadPattern::ONEI2 => {
+                    ReadSetContainer {
+                        read_one: reads.pop_front().unwrap(),
+                        read_two: None,
+                        index_one: None,
+                        index_two: Some(reads.pop_front().unwrap()),
+                    }
+                }
+                ReadPattern::ONEI1I2 => {
+                    ReadSetContainer {
+                        read_one: reads.pop_front().unwrap(),
+                        read_two: None,
+                        index_one: Some(reads.pop_front().unwrap()),
+                        index_two: Some(reads.pop_front().unwrap()),
+                    }
+                }
+            })
+        }
+    }
+
     pub fn contains_r2(&self) -> bool {
         match self {
             ReadPattern::ONE => { false }
@@ -153,20 +265,6 @@ impl ReadSetContainer {
     }
 }
 
-pub struct NamedReadSetContainer {
-    pub sort_string: Vec<u8>,
-    pub reads: ReadSetContainer,
-}
-
-impl Clone for NamedReadSetContainer {
-    fn clone(&self) -> NamedReadSetContainer {
-        NamedReadSetContainer {
-            sort_string: self.sort_string.clone(),
-            reads: self.reads.clone(),
-        }
-    }
-}
-
 // with_attrs(id: &str, desc: Option<&str>, seq: TextSlice<'_>, qual: &[u8])
 //#[derive(Serialize, Deserialize)]
 //#[serde(remote = "Record")]
@@ -185,7 +283,6 @@ impl From<RecordDef> for Record {
         Record::with_attrs(def.id.as_str(), None, def.seq.as_slice(), def.qual.as_slice())
     }
 }
-
 
 impl std::fmt::Display for ReadSetContainer {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -295,10 +392,10 @@ impl ReadFileContainer {
 
 /// manage writing read sets to disk
 pub struct OutputReadSetWriter {
-    file_1: flate2::write::GzEncoder<File>,
-    file_2: Option<flate2::write::GzEncoder<File>>,
-    file_3: Option<flate2::write::GzEncoder<File>>,
-    file_4: Option<flate2::write::GzEncoder<File>>,
+    file_1: GzEncoder<File>,
+    file_2: Option<GzEncoder<File>>,
+    file_3: Option<GzEncoder<File>>,
+    file_4: Option<GzEncoder<File>>,
 
     files: ReadFileContainer,
 
@@ -349,7 +446,7 @@ impl OutputReadSetWriter {
         OutputReadSetWriter::from_read_file_container(&rfc)
     }
 
-    fn create_writer(filename: &PathBuf) -> flate2::write::GzEncoder<File> {
+    pub fn create_writer(filename: &PathBuf) -> GzEncoder<File> {
         let f = File::create(filename).unwrap();
         let mut gz = GzBuilder::new()
             .write(f, Compression::best());
@@ -544,23 +641,20 @@ impl ReadIterator
 }
 
 /// A light wrapper around a read set iterator with some underlying details of it's layout
-//#[derive(Serialize, Deserialize, Debug)]
+//#[derive(Serialize, Deserialize)]
 pub struct ClusteredReads {
     pub reads: Box<dyn Iterator<Item=ReadSetContainer>>,
     pub pattern: ReadPattern,
-    pub average_distance: Option<f64>,
+    pub known_size: Option<i64>,
 }
 
 impl fmt::Debug for ClusteredReads {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ClusteredReads")
             .field("pattern", &self.pattern)
-            .field("average_distance", &self.average_distance)
             .finish()
     }
 }
-
-
 
 impl Iterator for ClusteredReads {
     type Item = ReadSetContainer;
@@ -571,59 +665,135 @@ impl Iterator for ClusteredReads {
 }
 
 unsafe impl Send for ClusteredReads {}
+
 unsafe impl Sync for ClusteredReads {}
 
 impl ClusteredReads {
-    pub fn new(reads: Box<dyn Iterator<Item=ReadSetContainer>>, pattern: ReadPattern, average_dist: f64) -> ClusteredReads {
-        ClusteredReads { reads, pattern, average_distance: Some(average_dist) }
+    pub fn new(reads: Box<dyn Iterator<Item=ReadSetContainer>>, pattern: ReadPattern) -> ClusteredReads {
+        ClusteredReads { reads, pattern, known_size: None }
     }
-/*
-    pub fn serialize_to_disk(path: &PathBuf, clustered_reads: &ClusteredReads<T>) {
-        let xs: Vec<u8> = bincode::serialize(&clustered_reads).unwrap();
-        write(path, xs).unwrap();
+    pub fn new_sized(reads: Box<dyn Iterator<Item=ReadSetContainer>>, pattern: ReadPattern, size: i64) -> ClusteredReads {
+        ClusteredReads { reads, pattern, known_size: Some(size) }
     }
 
-    pub fn deserialize_from_file(path: &PathBuf) -> ClusteredReads<T> {
-        let byte_buffer = fs::read(path).unwrap();
-        let cr: ClusteredReads<T> = bincode::deserialize(&byte_buffer).unwrap();
-        cr
+    pub fn write_records(self, output: &mut GzEncoder<File>) {
+        let length: i64 = match self.known_size {
+            None => { -1 }
+            Some(x) => { x }
+        };
+        ClusteredReads::to_disk(output, &self.pattern, length, self.reads.into_iter());
     }
 
-    pub fn deserialize_from_read_file_containers(rfc: ReadFileContainer, pattern: ReadPattern) -> ClusteredReads<T> {
-        let read_iterator = ReadIterator::new_from_bundle(&rfc);
-        ClusteredReads {
-            reads: read_iterator,
-            pattern,
-            average_distance: None,
+    pub fn write_header(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64) {
+        write!(output, "{}\n", pattern);
+        write!(output, "{}\n", length);
+    }
+
+    pub fn to_disk(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64, reads: impl Iterator<Item=ReadSetContainer>) {
+        ClusteredReads::write_header(output,pattern,length);
+
+        for rl in reads {
+            write!(output, "{}", rl.read_one);
+            if let Some(rd) = &rl.read_two {
+                write!(output, "{}", rd);
+            };
+            if let Some(rd) = &rl.index_one {
+                write!(output, "{}", rd);
+            };
+            if let Some(rd) = &rl.index_two {
+                write!(output, "{}", rd);
+            };
         }
-    }*/
+        output.flush();
+    }
+
+    pub fn try_to_read_line_to_string(reader: &mut BufReader<GzDecoder<File>>) -> Option<String> {
+        let mut header = String::new();
+        let len = reader.read_line(&mut header);
+        match len {
+            Ok(_) => { Some(header) }
+            Err(_) => { None }
+        }
+    }
+
+    pub fn read_record(reader: &mut BufReader<GzDecoder<File>>) -> Option<Record> {
+        let line1 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line2 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line3 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line4 = ClusteredReads::try_to_read_line_to_string(reader);
+        match (line1, line2, line3, line4) {
+            (Some(l1), Some(l2), Some(l3), Some(l4)) => {
+                let mut header = l1[1..].trim_end().splitn(2, ' ');
+                let hd = header.next().unwrap_or_default().to_owned();
+
+                Some(Record::with_attrs(hd.as_str(), None, l2.as_bytes(), l4.as_bytes()))
+            }
+            (_, _, _, _) => None
+        }
+    }
+
+    pub fn from_disk(reader: &mut BufReader<GzDecoder<File>>) -> Option<ClusteredReads> {
+        //pub fn with_attrs(id: &str, desc: Option<&str>, seq: TextSlice<'_>, qual: &[u8]) -> Self {
+        let mut line = String::new();
+        let len = reader.read_line(&mut line).unwrap();
+
+        let pattern = ReadPattern::from_str(line.as_str()).unwrap();
+        let len = reader.read_line(&mut line).unwrap();
+
+        let read_count = usize::from_str(line.as_str()).unwrap();
+        let mut return_vec = Vec::new();
+
+        if read_count >= 0 {
+            for x in 0..read_count {
+                let readcount = pattern.read_count();
+                let mut collected_reads = Vec::new();
+
+                for i in 0..readcount {
+                    let read = ClusteredReads::read_record(reader);
+                    if let Some(x) = read { collected_reads.push(x) }
+                }
+                let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
+                match converted_read {
+                    None => { panic!("Unable to read from underlying sequence stream") }
+                    Some(x) => { return_vec.push(x); }
+                }
+            }
+            let ln = return_vec.len();
+            Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
+        } else {
+            loop {
+                let mut collected_reads = Vec::new();
+
+                for i in 0..read_count {
+                    let read = ClusteredReads::read_record(reader);
+                    if let Some(x) = read { collected_reads.push(x) }
+                }
+                let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
+                match converted_read {
+                    None => { break; }
+                    Some(x) => { return_vec.push(x); }
+                }
+            }
+            let ln = return_vec.len();
+            Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
+        }
+    }
 }
 
+
 #[derive(Debug)]
-pub struct SuperCluster  {
+pub struct SuperCluster {
     pub clusters: Vec<ClusteredReads>
 }
 
 impl SuperCluster {
-    /*pub fn serialize_to_disk(path: &PathBuf, clustered_reads: &SuperCluster<T>) {
-        let xs: Vec<u8> = bincode::serialize(&clustered_reads).unwrap();
-        write(path, xs).unwrap();
-    }
-
-    pub fn deserialize_from_file(path: &PathBuf) -> SuperCluster<T> {
-        let byte_buffer = fs::read(path).unwrap();
-        let cr: SuperCluster<T> = bincode::deserialize(&byte_buffer).unwrap();
-        cr
-    }
-*/
     pub fn from_clusters(clusters: Vec<ClusteredReads>) -> SuperCluster {
         SuperCluster { clusters }
     }
-
-    //pub fn from_iterator(read_iterator: ReadIterator, pattern: ReadPattern) -> SuperCluster<T> {}
 }
 
 unsafe impl Send for SuperCluster {}
+
 unsafe impl Sync for SuperCluster {}
 
 impl Iterator for SuperCluster {
@@ -636,59 +806,88 @@ impl Iterator for SuperCluster {
 
 
 unsafe impl Send for SuperClusterOnDiskIterator {}
+
 unsafe impl Sync for SuperClusterOnDiskIterator {}
 
 pub struct SuperClusterOnDiskIterator {
+    cluster_counts: VecDeque<i64>,
     read_files: VecDeque<PathBuf>,
-    read_container: VecDeque<ReadFileContainer>,
+
+    current_cluster_count: Option<i64>,
+    current_reader: Option<BufReader<GzDecoder<File>>>,
+
     pattern: ReadPattern,
 }
 
 impl Iterator for SuperClusterOnDiskIterator {
-    type Item = SuperCluster;
+    type Item = ClusteredReads;
 
-    fn next(&mut self) -> Option<SuperCluster> {
-        match (self.read_files.len(), self.read_container.len()) {
-            (x,y) if y == 0 => {
-                let next_file = self.read_files.pop_front();
-                match next_file {
-                    None => None,
-                    Some(f) => None // TODO: Some(SuperCluster::deserialize_from_file(&f))
+    fn next(&mut self) -> Option<ClusteredReads> {
+        let ret = if self.current_reader.is_some() && self.current_cluster_count.is_some() && self.current_cluster_count.unwrap() > 0 {
+            self.current_cluster_count = Some(self.current_cluster_count.unwrap() - 1);
+            ClusteredReads::from_disk(&mut self.current_reader.as_mut().unwrap())
+        } else {
+            None
+        };
+
+        match self.current_cluster_count {
+            Some(x) if x == 0 => {
+                match self.read_files.pop_front() {
+                    None => {
+                        // we're done
+                        self.current_cluster_count = None;
+                        self.current_reader = None;
+                    }
+                    Some(x) => {
+                        self.current_cluster_count = self.cluster_counts.pop_front();
+                        self.current_reader = Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap())));
+                    }
                 }
+
             }
-            (x,y) if x == 0 => {
-                let next_file = self.read_container.pop_front();
-                match next_file {
-                    None => None,
-                    Some(f) => None // TODO: Some(SuperCluster::from_clusters(vec![ClusteredReads::deserialize_from_read_file_containers(f, self.pattern.clone())]))
-                }
-            }
-            (0,0) => {
-                None
-            }
-            (x,y) if x > 0 && y > 0 => {
-                panic!("I write ugly code sometimes (two gt1 seen in SuperClusteredOnDiskIterator)")
-            }
-            (_,_) => {
-                panic!("I write ugly code sometimes (two uncovered values seen in SuperClusteredOnDiskIterator)")
-            }
+            _ => {}
         }
+        ret
     }
 }
 
 impl SuperClusterOnDiskIterator {
-    pub fn new_from_vec(final_vec: Vec<ClusteredReads>, read_pattern: ReadPattern) -> SuperClusterOnDiskIterator {
-        //SuperCluster::serialize_to_disk(output_file, &SuperCluster::from_clusters(final_vec));
-        SuperClusterOnDiskIterator { read_files: VecDeque::new(), read_container: VecDeque::new(), pattern: read_pattern} // TODO: from(vec![output_file.clone()]))
-    }
+    fn to_disk(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
+        let temp_file = run_specs.create_temp_file();
+        let mut temp_file_writer: GzEncoder<File> = OutputReadSetWriter::create_writer(&temp_file);
+        let cluster_count = clusters.len();
+        for cluster in clusters {
+            ClusteredReads::to_disk(&mut temp_file_writer, &read_pattern, cluster_count as i64, cluster.reads);
+        }
 
-    pub fn new_from_read_file_container(rfc: Vec<ReadFileContainer>, read_pattern: ReadPattern) -> SuperClusterOnDiskIterator {
+        let input = BufReader::new(GzDecoder::new(File::open(&temp_file.as_path()).unwrap()));
+        let files: Vec<PathBuf> = Vec::new();
+        let counts: Vec<i64> = Vec::new();
         SuperClusterOnDiskIterator {
-            read_files: VecDeque::new(),
-            read_container: VecDeque::from(rfc),
-            pattern: read_pattern.clone(),
+            cluster_counts: VecDeque::from(counts),
+            read_files: VecDeque::from(files),
+            current_cluster_count: Some(cluster_count as i64),
+            current_reader: Some(BufReader::new(GzDecoder::new(File::open(temp_file.as_path()).unwrap()))),
+            pattern: read_pattern,
         }
     }
 
-    //pub fn turtles_all_the_way_down(iterator)
+
+    pub fn new_from_vec(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
+        SuperClusterOnDiskIterator::to_disk(clusters, read_pattern, run_specs)
+    }
+
+    pub fn new_from_read_file_container(writer_files: Vec<PathBuf>, read_pattern: ReadPattern, run_specs: RunSpecifications) -> SuperClusterOnDiskIterator {
+        let ln = writer_files.len();
+        let mut queued_files = VecDeque::from(writer_files);
+        let next = queued_files.pop_front();
+
+        SuperClusterOnDiskIterator {
+            read_files: queued_files,
+            cluster_counts: VecDeque::from(vec![-1; ln]),
+            current_cluster_count: Some(-1),
+            current_reader: Some(BufReader::new(GzDecoder::new(File::open(next.unwrap().as_path()).unwrap()))),
+            pattern: read_pattern,
+        }
+    }
 }

@@ -154,9 +154,9 @@ impl Sorter {
         let current_iter = ClusteredReads {
             reads: Box::new(read_iterator),
             pattern: read_pattern.clone(),
-            average_distance: None,
+            known_size: None
         };
-        let current_sc = SuperClusterOnDiskIterator::new_from_vec(vec![current_iter], read_pattern.clone());
+        let current_sc = SuperClusterOnDiskIterator::new_from_vec(vec![current_iter], read_pattern.clone(), run_specs);
 
         current_iterators.push(current_sc);
 
@@ -166,13 +166,11 @@ impl Sorter {
 
             for mut iter in current_iterators {
                 for mut cluster in iter {
-                    for subiter in cluster.into_iter() {
-                        let it = Sorter::sort_level(&sort, Box::new(subiter.into_iter()), read_pattern, layout, run_specs);
-                        match it {
-                            None => {}
-                            Some(x) => {
-                                next_level_iterators.push(x);
-                            }
+                    let it = Sorter::sort_level(&sort, Box::new(cluster.into_iter()), read_pattern, layout, run_specs);
+                    match it {
+                        None => {}
+                        Some(x) => {
+                            next_level_iterators.push(x);
                         }
                     }
                 }

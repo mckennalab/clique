@@ -47,7 +47,6 @@ impl KnownListDiskStream {
         println!("sorted size {}", sorted.len());
         sorted.sort_by(|a, b| b.0.cmp(&a.0));
 
-        //drop(read_iterator);
         let mut output_container = OutputReadSetWriter::from_read_file_container(&bin);
         for (string_name, read) in sorted {
             output_container.write(&read);
@@ -84,7 +83,7 @@ impl<'z> SortStream<'z> for KnownListDiskStream {
                     true_reads += 1;
                 }
                 let bins = rrs.get_writers();
-                drop(rrs);
+
                 KnownListDiskStream { sorted_bins:  bins, pattern: read_pattern.clone() }
             }
             _ => {

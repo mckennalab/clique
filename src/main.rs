@@ -20,6 +20,7 @@ extern crate rust_spoa;
 extern crate seq_io;
 extern crate suffix;
 extern crate tempfile;
+extern crate serde;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -38,7 +39,7 @@ use petgraph::algo::connected_components;
 use rand::Rng;
 use rayon::prelude::*;
 use seq_io::fasta::{OwnedRecord, Reader, Record};
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::{NamedTempFile, TempDir, Builder};
 
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
@@ -55,10 +56,14 @@ use crate::sorters::known_list::KnownList;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::sorter::{Sorter, SortStructure};
 use crate::umis::sequence_clustering::*;
+use std::rc::Rc;
+use std::borrow::Borrow;
+use nanoid::nanoid;
 
 mod linked_alignment;
 pub mod extractor;
 mod simple_umi_clustering;
+
 
 mod umis {
     pub mod bronkerbosch;
@@ -182,8 +187,7 @@ fn main() {
                 sorting_file_count: parameters.max_bins,
                 sorting_threads: parameters.sorting_threads,
                 processing_threads: parameters.processing_threads,
-                tmp_location,
-                file_count: 0,
+                tmp_location: tmp_location.into(),
             };
 
 
@@ -294,17 +298,28 @@ pub struct RunSpecifications {
     pub sorting_file_count: usize,
     pub sorting_threads: usize,
     pub processing_threads: usize,
-    pub tmp_location: TempDir,
-    pub file_count: u64,
+    pub tmp_location: Arc<TempDir>,
 }
 
 impl RunSpecifications {
     pub fn create_temp_file(&mut self) -> PathBuf {
-        let file_path = PathBuf::from("/analysis/tmp/").join(self.file_count.to_string());
-        self.file_count += 1;
+        let file_path = PathBuf::from(&self.tmp_location.clone().path()).join(nanoid!());
         file_path
     }
 }
+
+impl Clone for RunSpecifications {
+    fn clone(&self) -> RunSpecifications {
+        RunSpecifications {
+            estimated_reads: self.estimated_reads,
+            sorting_file_count: self.sorting_file_count,
+            sorting_threads: self.sorting_threads,
+            processing_threads: self.processing_threads,
+            tmp_location: Arc::clone(&self.tmp_location),
+        }
+    }
+}
+
 
 #[allow(dead_code)]
 struct AlignedWithFeatures {

@@ -8,17 +8,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use bio::io::fastq::Record;
-use rayon::prelude::{IntoParallelRefIterator, IntoParallelIterator};
+use flate2::{Compression, GzBuilder};
+use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator};
+use rayon::prelude::*;
+use rust_htslib::bgzf::Writer;
 use rust_spoa::poa_consensus;
 
 use crate::read_strategies::sequence_file_containers::*;
 use crate::read_strategies::sequence_layout::*;
+use crate::RunSpecifications;
 use crate::sorters::known_list::KnownListBinSplit;
 use crate::umis::sequence_clustering::*;
-use rayon::prelude::*;
-use rust_htslib::bgzf::Writer;
-use flate2::{GzBuilder, Compression};
-use crate::RunSpecifications;
 
 pub struct ConsensusCandidate {
     pub reads: Vec<ReadSetContainer>,
@@ -48,10 +48,8 @@ pub fn threaded_write_consensus_reads(read_iterators: Vec<SuperClusterOnDiskIter
         //let iters = read_iterators.into_iter();
         for read_iterator in read_iterators {
             read_iterator.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
-                for subiter in xx.clusters {
-                    let output = Arc::clone(&output);
-                    let conc = output_poa_consensus(Box::new(subiter.reads), output);
-                }
+                let output = Arc::clone(&output);
+                output_poa_consensus(Box::new(xx.reads), output);
             });
         }
     });
