@@ -736,7 +736,7 @@ impl ClusteredReads {
         //pub fn with_attrs(id: &str, desc: Option<&str>, seq: TextSlice<'_>, qual: &[u8]) -> Self {
         let mut line = String::new();
         let len = reader.read_line(&mut line).unwrap();
-
+        println!("line {}",&line);
         let pattern = ReadPattern::from_str(line.as_str()).unwrap();
         let len = reader.read_line(&mut line).unwrap();
 
