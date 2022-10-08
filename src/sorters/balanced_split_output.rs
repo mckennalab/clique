@@ -63,14 +63,14 @@ impl RoundRobinDiskWriter {
         match self.assigned_sequences.get(sort_string) {
             Some(x) => {
                 let mut writer = self.writers.get_mut(*x).unwrap();
-                println!("1opening the file {:?}", &self.underlying_files.get(*x));
+                //println!("1opening the file {:?}", &self.underlying_files.get(*x));
                 RoundRobinDiskWriter::write_all_reads(&mut writer, read);
             },
             _ => {
                 self.assigned_sequences.insert(sort_string.clone(),self.current_bin);
                 self.output_counts.insert(self.current_bin,
                                           self.output_counts.get(&self.current_bin).unwrap_or(&(0 as usize)) + 1);
-                println!("2opening the file {:?}", &self.underlying_files.get(self.current_bin));
+                //println!("2opening the file {:?}", &self.underlying_files.get(self.current_bin));
                 RoundRobinDiskWriter::write_all_reads(&mut self.writers.get_mut(self.current_bin).unwrap(), read);
                 self.current_bin += 1;
                 if self.current_bin >= self.output_counts.len() {
