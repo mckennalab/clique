@@ -843,6 +843,7 @@ impl ClusteredReads {
                         }
                         Some(x) => {
                             self.current_cluster_count = self.cluster_counts.pop_front();
+                            println!("opening the file {}",&x.as_path());
                             self.current_reader = Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap())));
                         }
                     }
