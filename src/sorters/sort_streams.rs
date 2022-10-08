@@ -88,7 +88,7 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
         let mut graph = input_list_to_graph(&collection, string_distance, false);
 
         let cc = get_connected_components(&graph);
-
+        println!("CC SIZE: {}",&cc.len());
         let mut final_vec: Vec<ClusteredReads> = Vec::new();
 
         for group in cc {

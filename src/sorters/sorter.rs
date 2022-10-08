@@ -164,7 +164,7 @@ impl Sorter {
                 for mut cluster in iter {
                     let it = Sorter::sort_level(&sort, Box::new(cluster.into_iter()), read_pattern, layout, run_specs);
                     match it {
-                        None => {}
+                        None => {println!("Warning: empty iterator result");}
                         Some(x) => {
                             next_level_iterators.push(x);
                         }
