@@ -690,7 +690,7 @@ impl ClusteredReads {
     }
 
     pub fn to_disk(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64, reads: impl Iterator<Item=ReadSetContainer>) {
-        ClusteredReads::write_header(output,pattern,length);
+        ClusteredReads::write_header(output, pattern, length);
 
         for rl in reads {
             write!(output, "{}", rl.read_one);
@@ -736,158 +736,160 @@ impl ClusteredReads {
         //pub fn with_attrs(id: &str, desc: Option<&str>, seq: TextSlice<'_>, qual: &[u8]) -> Self {
         let mut line = String::new();
         let len = reader.read_line(&mut line).unwrap();
-        println!("line -----{}----",&line);
-        let pattern = ReadPattern::from_str(line.as_str()).unwrap();
-        let len = reader.read_line(&mut line).unwrap();
+        println!("line -----{}----", &line);
+        let pt_read = ReadPattern::from_str(line.as_str());
+        match pt_read {
+            Ok(pattern) => {
+                let len = reader.read_line(&mut line).unwrap();
 
-        let read_count = usize::from_str(line.as_str()).unwrap();
-        let mut return_vec = Vec::new();
+                let read_count = usize::from_str(line.as_str()).unwrap();
+                let mut return_vec = Vec::new();
 
-        if read_count >= 0 {
-            for x in 0..read_count {
-                let readcount = pattern.read_count();
-                let mut collected_reads = Vec::new();
+                if read_count >= 0 {
+                    for x in 0..read_count {
+                        let readcount = pattern.read_count();
+                        let mut collected_reads = Vec::new();
 
-                for i in 0..readcount {
-                    let read = ClusteredReads::read_record(reader);
-                    if let Some(x) = read { collected_reads.push(x) }
-                }
-                let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
-                match converted_read {
-                    None => { panic!("Unable to read from underlying sequence stream") }
-                    Some(x) => { return_vec.push(x); }
-                }
-            }
-            let ln = return_vec.len();
-            Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
-        } else {
-            loop {
-                let mut collected_reads = Vec::new();
-
-                for i in 0..read_count {
-                    let read = ClusteredReads::read_record(reader);
-                    if let Some(x) = read { collected_reads.push(x) }
-                }
-                let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
-                match converted_read {
-                    None => { break; }
-                    Some(x) => { return_vec.push(x); }
-                }
-            }
-            let ln = return_vec.len();
-            Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
-        }
-    }
-}
-
-
-#[derive(Debug)]
-pub struct SuperCluster {
-    pub clusters: Vec<ClusteredReads>
-}
-
-impl SuperCluster {
-    pub fn from_clusters(clusters: Vec<ClusteredReads>) -> SuperCluster {
-        SuperCluster { clusters }
-    }
-}
-
-unsafe impl Send for SuperCluster {}
-
-unsafe impl Sync for SuperCluster {}
-
-impl Iterator for SuperCluster {
-    type Item = ClusteredReads;
-
-    fn next(&mut self) -> Option<ClusteredReads> {
-        self.clusters.pop()
-    }
-}
-
-
-unsafe impl Send for SuperClusterOnDiskIterator {}
-
-unsafe impl Sync for SuperClusterOnDiskIterator {}
-
-pub struct SuperClusterOnDiskIterator {
-    cluster_counts: VecDeque<i64>,
-    read_files: VecDeque<PathBuf>,
-
-    current_cluster_count: Option<i64>,
-    current_reader: Option<BufReader<GzDecoder<File>>>,
-
-    pattern: ReadPattern,
-}
-
-impl Iterator for SuperClusterOnDiskIterator {
-    type Item = ClusteredReads;
-
-    fn next(&mut self) -> Option<ClusteredReads> {
-        let ret = if self.current_reader.is_some() && self.current_cluster_count.is_some() && self.current_cluster_count.unwrap() > 0 {
-            self.current_cluster_count = Some(self.current_cluster_count.unwrap() - 1);
-            ClusteredReads::from_disk(&mut self.current_reader.as_mut().unwrap())
-        } else {
-            None
-        };
-
-        match self.current_cluster_count {
-            Some(x) if x == 0 => {
-                match self.read_files.pop_front() {
-                    None => {
-                        // we're done
-                        self.current_cluster_count = None;
-                        self.current_reader = None;
+                        for i in 0..readcount {
+                            let read = ClusteredReads::read_record(reader);
+                            if let Some(x) = read { collected_reads.push(x) }
+                        }
+                        let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
+                        match converted_read {
+                            None => { panic!("Unable to read from underlying sequence stream") }
+                            Some(x) => { return_vec.push(x); }
+                        }
                     }
-                    Some(x) => {
-                        self.current_cluster_count = self.cluster_counts.pop_front();
-                        self.current_reader = Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap())));
+                    let ln = return_vec.len();
+                    Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
+                } else {
+                    loop {
+                        let mut collected_reads = Vec::new();
+
+                        for i in 0..read_count {
+                            let read = ClusteredReads::read_record(reader);
+                            if let Some(x) = read { collected_reads.push(x) }
+                        }
+                        let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
+                        match converted_read {
+                            None => { break; }
+                            Some(x) => { return_vec.push(x); }
+                        }
+                    }
+                    let ln = return_vec.len();
+                    Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
+                }
+            }
+            Err(_) => { None }
+        }
+    }
+
+
+    #[derive(Debug)]
+    pub struct SuperCluster {
+        pub clusters: Vec<ClusteredReads>
+    }
+
+    impl SuperCluster {
+        pub fn from_clusters(clusters: Vec<ClusteredReads>) -> SuperCluster {
+            SuperCluster { clusters }
+        }
+    }
+
+    unsafe impl Send for SuperCluster {}
+
+    unsafe impl Sync for SuperCluster {}
+
+    impl Iterator for SuperCluster {
+        type Item = ClusteredReads;
+
+        fn next(&mut self) -> Option<ClusteredReads> {
+            self.clusters.pop()
+        }
+    }
+
+    unsafe impl Send for SuperClusterOnDiskIterator {}
+
+    unsafe impl Sync for SuperClusterOnDiskIterator {}
+
+    pub struct SuperClusterOnDiskIterator {
+        cluster_counts: VecDeque<i64>,
+        read_files: VecDeque<PathBuf>,
+
+        current_cluster_count: Option<i64>,
+        current_reader: Option<BufReader<GzDecoder<File>>>,
+
+        pattern: ReadPattern,
+    }
+
+    impl Iterator for SuperClusterOnDiskIterator {
+        type Item = ClusteredReads;
+
+        fn next(&mut self) -> Option<ClusteredReads> {
+            let ret = if self.current_reader.is_some() && self.current_cluster_count.is_some() && self.current_cluster_count.unwrap() > 0 {
+                self.current_cluster_count = Some(self.current_cluster_count.unwrap() - 1);
+                ClusteredReads::from_disk(&mut self.current_reader.as_mut().unwrap())
+            } else {
+                None
+            };
+
+            match self.current_cluster_count {
+                Some(x) if x == 0 => {
+                    match self.read_files.pop_front() {
+                        None => {
+                            // we're done
+                            self.current_cluster_count = None;
+                            self.current_reader = None;
+                        }
+                        Some(x) => {
+                            self.current_cluster_count = self.cluster_counts.pop_front();
+                            self.current_reader = Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap())));
+                        }
                     }
                 }
-
+                _ => {}
             }
-            _ => {}
-        }
-        ret
-    }
-}
-
-impl SuperClusterOnDiskIterator {
-    fn to_disk(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
-        let temp_file = run_specs.create_temp_file();
-        let mut temp_file_writer: GzEncoder<File> = OutputReadSetWriter::create_writer(&temp_file);
-        let cluster_count = clusters.len();
-        for cluster in clusters {
-            ClusteredReads::to_disk(&mut temp_file_writer, &read_pattern, cluster_count as i64, cluster.reads);
-        }
-
-        let input = BufReader::new(GzDecoder::new(File::open(&temp_file.as_path()).unwrap()));
-        let files: Vec<PathBuf> = Vec::new();
-        let counts: Vec<i64> = Vec::new();
-        SuperClusterOnDiskIterator {
-            cluster_counts: VecDeque::from(counts),
-            read_files: VecDeque::from(files),
-            current_cluster_count: Some(cluster_count as i64),
-            current_reader: Some(BufReader::new(GzDecoder::new(File::open(temp_file.as_path()).unwrap()))),
-            pattern: read_pattern,
+            ret
         }
     }
 
+    impl SuperClusterOnDiskIterator {
+        fn to_disk(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
+            let temp_file = run_specs.create_temp_file();
+            let mut temp_file_writer: GzEncoder<File> = OutputReadSetWriter::create_writer(&temp_file);
+            let cluster_count = clusters.len();
+            for cluster in clusters {
+                ClusteredReads::to_disk(&mut temp_file_writer, &read_pattern, cluster_count as i64, cluster.reads);
+            }
 
-    pub fn new_from_vec(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
-        SuperClusterOnDiskIterator::to_disk(clusters, read_pattern, run_specs)
-    }
+            let input = BufReader::new(GzDecoder::new(File::open(&temp_file.as_path()).unwrap()));
+            let files: Vec<PathBuf> = Vec::new();
+            let counts: Vec<i64> = Vec::new();
+            SuperClusterOnDiskIterator {
+                cluster_counts: VecDeque::from(counts),
+                read_files: VecDeque::from(files),
+                current_cluster_count: Some(cluster_count as i64),
+                current_reader: Some(BufReader::new(GzDecoder::new(File::open(temp_file.as_path()).unwrap()))),
+                pattern: read_pattern,
+            }
+        }
 
-    pub fn new_from_read_file_container(writer_files: Vec<PathBuf>, read_pattern: ReadPattern, run_specs: RunSpecifications) -> SuperClusterOnDiskIterator {
-        let ln = writer_files.len();
-        let mut queued_files = VecDeque::from(writer_files);
-        let next = queued_files.pop_front();
 
-        SuperClusterOnDiskIterator {
-            read_files: queued_files,
-            cluster_counts: VecDeque::from(vec![-1; ln]),
-            current_cluster_count: Some(-1),
-            current_reader: Some(BufReader::new(GzDecoder::new(File::open(next.unwrap().as_path()).unwrap()))),
-            pattern: read_pattern,
+        pub fn new_from_vec(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
+            SuperClusterOnDiskIterator::to_disk(clusters, read_pattern, run_specs)
+        }
+
+        pub fn new_from_read_file_container(writer_files: Vec<PathBuf>, read_pattern: ReadPattern, run_specs: RunSpecifications) -> SuperClusterOnDiskIterator {
+            let ln = writer_files.len();
+            let mut queued_files = VecDeque::from(writer_files);
+            let next = queued_files.pop_front();
+
+            SuperClusterOnDiskIterator {
+                read_files: queued_files,
+                cluster_counts: VecDeque::from(vec![-1; ln]),
+                current_cluster_count: Some(-1),
+                current_reader: Some(BufReader::new(GzDecoder::new(File::open(next.unwrap().as_path()).unwrap()))),
+                pattern: read_pattern,
+            }
         }
     }
-}
