@@ -156,8 +156,9 @@ impl Sorter {
             pattern: read_pattern.clone(),
             known_size: None
         };
+        println!("making first iter");
         let current_sc = SuperClusterOnDiskIterator::new_from_vec(vec![current_iter], read_pattern.clone(), run_specs);
-
+        println!("done");
         current_iterators.push(current_sc);
 
         for sort in sort_list {
