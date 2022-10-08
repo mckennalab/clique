@@ -172,11 +172,13 @@ impl Sorter {
                 }
             }
             current_iterators = next_level_iterators;
+            println!("Current iter len: {}",&current_iterators.len());
         }
         current_iterators
     }
 
     pub fn sort_level(sort_structure: &SortStructure, iterator: Box<dyn Iterator<Item=ReadSetContainer>>, read_pattern: &ReadPattern, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Option<SuperClusterOnDiskIterator> {
+        println!("Sort structure {}",sort_structure);
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 assert_eq!(*on_disk, true);
