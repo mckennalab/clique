@@ -816,10 +816,9 @@ unsafe impl Sync for SuperClusterOnDiskIterator {}
 pub struct SuperClusterOnDiskIterator {
     cluster_counts: VecDeque<i64>,
     read_files: VecDeque<PathBuf>,
-
     current_cluster_count: Option<i64>,
     current_reader: Option<BufReader<GzDecoder<File>>>,
-
+    override_clusters: Option<VecDeque<ClusteredReads>>,
     pattern: ReadPattern,
 }
 
@@ -827,31 +826,38 @@ impl Iterator for SuperClusterOnDiskIterator {
     type Item = ClusteredReads;
 
     fn next(&mut self) -> Option<ClusteredReads> {
-        let ret = if self.current_reader.is_some() && self.current_cluster_count.is_some() && self.current_cluster_count.unwrap() > 0 {
-            self.current_cluster_count = Some(self.current_cluster_count.unwrap() - 1);
-            ClusteredReads::from_disk(&mut self.current_reader.as_mut().unwrap())
-        } else {
-            None
-        };
+        match &mut self.override_clusters {
+            None => {
+                let ret = if self.current_reader.is_some() && self.current_cluster_count.is_some() && self.current_cluster_count.unwrap() > 0 {
+                    self.current_cluster_count = Some(self.current_cluster_count.unwrap() - 1);
+                    ClusteredReads::from_disk(&mut self.current_reader.as_mut().unwrap())
+                } else {
+                    None
+                };
 
-        match self.current_cluster_count {
-            Some(x) if x == 0 => {
-                match self.read_files.pop_front() {
-                    None => {
-                        // we're done
-                        self.current_cluster_count = None;
-                        self.current_reader = None;
+                match self.current_cluster_count {
+                    Some(x) if x == 0 => {
+                        match self.read_files.pop_front() {
+                            None => {
+                                // we're done
+                                self.current_cluster_count = None;
+                                self.current_reader = None;
+                            }
+                            Some(x) => {
+                                self.current_cluster_count = self.cluster_counts.pop_front();
+                                println!("opening the file {:?}", &x.as_path());
+                                self.current_reader = Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap())));
+                            }
+                        }
                     }
-                    Some(x) => {
-                        self.current_cluster_count = self.cluster_counts.pop_front();
-                        println!("opening the file {:?}", &x.as_path());
-                        self.current_reader = Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap())));
-                    }
+                    _ => {}
                 }
+                ret
             }
-            _ => {}
+            Some(x) => {
+                x.pop_front()
+            }
         }
-        ret
     }
 }
 
@@ -872,6 +878,7 @@ impl SuperClusterOnDiskIterator {
             read_files: VecDeque::from(files),
             current_cluster_count: Some(cluster_count as i64),
             current_reader: Some(BufReader::new(GzDecoder::new(File::open(temp_file.as_path()).unwrap()))),
+            override_clusters: None,
             pattern: read_pattern,
         }
     }
@@ -879,6 +886,23 @@ impl SuperClusterOnDiskIterator {
 
     pub fn new_from_vec(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
         SuperClusterOnDiskIterator::to_disk(clusters, read_pattern, run_specs)
+    }
+
+    pub fn new_from_flat_iterator(iter: ReadIterator, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
+        let cr = vec![ClusteredReads {
+            reads: Box::new(iter),
+            pattern: read_pattern.clone(),
+            known_size: None,
+        }];
+
+        SuperClusterOnDiskIterator{
+            cluster_counts: VecDeque::new(),
+            read_files: VecDeque::new(),
+            current_cluster_count: None,
+            current_reader: None,
+            override_clusters: Some(VecDeque::from(cr)),
+            pattern: read_pattern.clone(),
+        }
     }
 
     pub fn new_from_read_file_container(writer_files: Vec<PathBuf>, read_pattern: ReadPattern, run_specs: RunSpecifications) -> SuperClusterOnDiskIterator {
@@ -891,6 +915,7 @@ impl SuperClusterOnDiskIterator {
             cluster_counts: VecDeque::from(vec![-1; ln]),
             current_cluster_count: Some(-1),
             current_reader: Some(BufReader::new(GzDecoder::new(File::open(next.unwrap().as_path()).unwrap()))),
+            override_clusters: None,
             pattern: read_pattern,
         }
     }

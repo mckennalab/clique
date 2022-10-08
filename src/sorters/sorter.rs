@@ -151,13 +151,8 @@ impl Sorter {
 
         let mut current_iterators = Vec::new();
 
-        let current_iter = ClusteredReads {
-            reads: Box::new(read_iterator),
-            pattern: read_pattern.clone(),
-            known_size: None
-        };
         println!("making first iter");
-        let current_sc = SuperClusterOnDiskIterator::new_from_vec(vec![current_iter], read_pattern.clone(), run_specs);
+        let current_sc = SuperClusterOnDiskIterator::new_from_flat_iterator(read_iterator, read_pattern.clone(), run_specs);
         println!("done");
         current_iterators.push(current_sc);
 
