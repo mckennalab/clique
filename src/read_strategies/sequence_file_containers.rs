@@ -780,7 +780,10 @@ impl ClusteredReads {
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 }
             }
-            Err(_) => { None }
+            Err(_) => {
+                println!("Errored out reading!");
+                panic!("errrrrr");
+            }
         }
     }
 }
