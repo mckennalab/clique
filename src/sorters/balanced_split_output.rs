@@ -34,6 +34,7 @@ impl RoundRobinDiskWriter {
 
         for i in 0..run_specs.sorting_file_count {
             let temp_file = run_specs.create_temp_file();
+            println!("setting up input file: {:?}",temp_file);
             underlying_files.push(temp_file.clone());
             let mut writer: GzEncoder<File> = OutputReadSetWriter::create_writer(&temp_file);
             ClusteredReads::write_header(&mut writer, read_pattern, -1);
