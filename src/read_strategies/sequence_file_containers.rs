@@ -733,7 +733,6 @@ impl ClusteredReads {
     }
 
     pub fn from_disk(reader: &mut BufReader<GzDecoder<File>>) -> Option<ClusteredReads> {
-        //pub fn with_attrs(id: &str, desc: Option<&str>, seq: TextSlice<'_>, qual: &[u8]) -> Self {
         let mut line = String::new();
         let len = reader.read_line(&mut line).unwrap();
         println!("line -----{}----", &line);
@@ -782,7 +781,7 @@ impl ClusteredReads {
             }
             Err(_) => {
                 println!("Errored out reading!");
-                panic!("errrrrr");
+                //panic!("errrrrr");
             }
         }
     }
@@ -933,3 +932,5 @@ impl SuperClusterOnDiskIterator {
         }
     }
 }
+
+
