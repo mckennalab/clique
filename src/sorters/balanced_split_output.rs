@@ -81,6 +81,9 @@ impl RoundRobinDiskWriter {
     }
 
     pub fn get_writers(self) -> SuperClusterOnDiskIterator {
-        SuperClusterOnDiskIterator::new_from_read_file_container(self.underlying_files, self.read_pattern.clone(), self.run_specs.clone())
+        SuperClusterOnDiskIterator::new_from_read_file_container(
+            self.underlying_files,
+            self.read_pattern.clone(),
+            self.run_specs.clone())
     }
 }
