@@ -788,9 +788,10 @@ impl ClusteredReads {
                         let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
                         match converted_read {
                             None => { println!("Nope!"); break; }
-                            Some(x) => { println!("Yup! {}",cnn); return_vec.push(x); }
+                            Some(x) => { return_vec.push(x); }
                         }
                     }
+                    println!("Yup! {}",cnn);
                     let ln = return_vec.len();
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 }
