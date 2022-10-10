@@ -697,7 +697,7 @@ impl ClusteredReads {
     }
 
     pub fn read_record(reader: &mut BufReader<GzDecoder<File>>) -> Option<Record> {
-        println!("reading record...");
+        //println!("reading record...");
         let line1 = ClusteredReads::try_to_read_line_to_string(reader);
         let line2 = ClusteredReads::try_to_read_line_to_string(reader);
         let line3 = ClusteredReads::try_to_read_line_to_string(reader);
@@ -932,6 +932,7 @@ impl SuperClusterOnDiskIterator {
         let ln = writer_files.len();
         let mut queued_files = VecDeque::from(writer_files);
         let next = queued_files.pop_front();
+        println!("First file opening {:?}",next.unwrap());
 
         SuperClusterOnDiskIterator {
             read_files: queued_files,
