@@ -847,22 +847,21 @@ impl Iterator for SuperClusterOnDiskIterator {
     fn next(&mut self) -> Option<ClusteredReads> {
         match &mut self.override_clusters {
             None => {
-                //println!("222 : No cluster {}, {}, {}",self.current_reader.is_some(), self.current_cluster_count.is_some(), self.current_cluster_count.unwrap());
                 let ret = if self.current_reader.is_some() &&
                     self.current_cluster_count.is_some() &&
                     (self.current_cluster_count.unwrap() > 0 ||
                         self.current_cluster_count.unwrap() < 0) {
                     println!("555 : No cluster");
 
-                    self.current_cluster_count = Some(self.current_cluster_count.unwrap() - 1);
                     ClusteredReads::from_disk(&mut self.current_reader.as_mut().unwrap())
+
                 } else {
                     println!("111 : No cluster");
                     None
                 };
 
                 match self.current_cluster_count {
-                    Some(x) if x == 0 => {
+                    Some(x) if x <= 0 => {
                         match self.read_files.pop_front() {
                             None => {
                                 // we're done
@@ -883,7 +882,6 @@ impl Iterator for SuperClusterOnDiskIterator {
             }
             Some(x) => {
                 println!("299 : No cluster");
-
                 x.pop_front()
             }
         }
