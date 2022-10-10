@@ -689,6 +689,7 @@ impl ClusteredReads {
         let len = reader.read_line(&mut header);
         match len {
             Ok(_) => {
+                println!("Header {}",&header);
                 header.pop();
                 Some(header)
             }
