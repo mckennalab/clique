@@ -781,8 +781,8 @@ impl ClusteredReads {
                         }
                         let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
                         match converted_read {
-                            None => { break; }
-                            Some(x) => { return_vec.push(x); }
+                            None => { println!("Nope!"); break; }
+                            Some(x) => { println!("Yup!"); return_vec.push(x); }
                         }
                     }
                     let ln = return_vec.len();
