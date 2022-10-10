@@ -796,7 +796,7 @@ impl ClusteredReads {
                 }
             }
             Err(_) => {
-                panic!("Errored out reading!");
+                println!("Errored out reading!");
                 //panic!("errrrrr");
                 None
             }
