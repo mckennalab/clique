@@ -692,7 +692,7 @@ impl ClusteredReads {
                 None
             }
             Ok(_) => {
-                println!("Header {}",&header);
+                //println!("Header {}",&header);
                 header.pop();
                 Some(header)
             }
