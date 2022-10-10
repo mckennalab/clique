@@ -743,7 +743,7 @@ impl ClusteredReads {
     pub fn from_disk(reader: &mut BufReader<GzDecoder<File>>) -> Option<ClusteredReads> {
         let mut line = String::new();
         let len = reader.read_line(&mut line).unwrap();
-        println!("line -----{}----", &line);
+        println!("line ---aaaa--{}--aaaa--", &line);
         line.pop();
         let pt_read = ReadPattern::from_str(line.as_str());
         match pt_read {
