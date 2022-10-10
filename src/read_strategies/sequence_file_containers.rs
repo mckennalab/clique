@@ -931,14 +931,14 @@ impl SuperClusterOnDiskIterator {
     pub fn new_from_read_file_container(writer_files: Vec<PathBuf>, read_pattern: ReadPattern, run_specs: RunSpecifications) -> SuperClusterOnDiskIterator {
         let ln = writer_files.len();
         let mut queued_files = VecDeque::from(writer_files);
-        let next = queued_files.pop_front();
-        println!("First file opening {:?}",next.unwrap());
+        let next = queued_files.pop_front().unwrap();
+        println!("First file opening {:?}",&next);
 
         SuperClusterOnDiskIterator {
             read_files: queued_files,
             cluster_counts: VecDeque::from(vec![-1; ln]),
             current_cluster_count: Some(-1),
-            current_reader: Some(BufReader::new(GzDecoder::new(File::open(next.unwrap().as_path()).unwrap()))),
+            current_reader: Some(BufReader::new(GzDecoder::new(File::open(next.as_path()).unwrap()))),
             override_clusters: None,
             pattern: read_pattern,
         }
