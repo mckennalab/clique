@@ -318,7 +318,7 @@ pub fn estimate_read_count(location: &String) -> Option<usize> {
             }
         }
         let average = first_100_reads_sizes as f64 / 100.0;
-        Some(((file_size as f64) / ((average as f64) * 0.16)) as usize) //
+        Some(((file_size as f64) / ((average as f64) * 0.14)) as usize) //
     } else {
         None
     }
@@ -684,6 +684,35 @@ impl ClusteredReads {
         ClusteredReads::to_disk(output, &self.pattern, length, self.reads.into_iter());
     }
 
+    pub fn try_to_read_line_to_string(reader: &mut BufReader<GzDecoder<File>>) -> Option<String> {
+        let mut header = String::new();
+        let len = reader.read_line(&mut header);
+        match len {
+            Ok(_) => {
+                header.pop();
+                Some(header)
+            }
+            Err(_) => { None }
+        }
+    }
+
+    pub fn read_record(reader: &mut BufReader<GzDecoder<File>>) -> Option<Record> {
+        println!("reading record...");
+        let line1 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line2 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line3 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line4 = ClusteredReads::try_to_read_line_to_string(reader);
+        match (line1, line2, line3, line4) {
+            (Some(l1), Some(l2), Some(l3), Some(l4)) => {
+                //let mut header = l1[1..].trim_end().splitn(2, ' ');
+                //let hd = header.next().unwrap_or_default().to_owned();
+
+                Some(Record::with_attrs(l1.as_str(), None, l2.as_bytes(), l4.as_bytes()))
+            }
+            (_, _, _, _) => None
+        }
+    }
+
     pub fn write_header(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64) {
         write!(output, "{}\n", pattern);
         write!(output, "{}\n", length);
@@ -707,49 +736,29 @@ impl ClusteredReads {
         output.flush();
     }
 
-    pub fn try_to_read_line_to_string(reader: &mut BufReader<GzDecoder<File>>) -> Option<String> {
-        let mut header = String::new();
-        let len = reader.read_line(&mut header);
-        match len {
-            Ok(_) => { Some(header) }
-            Err(_) => { None }
-        }
-    }
-
-    pub fn read_record(reader: &mut BufReader<GzDecoder<File>>) -> Option<Record> {
-        let line1 = ClusteredReads::try_to_read_line_to_string(reader);
-        let line2 = ClusteredReads::try_to_read_line_to_string(reader);
-        let line3 = ClusteredReads::try_to_read_line_to_string(reader);
-        let line4 = ClusteredReads::try_to_read_line_to_string(reader);
-        match (line1, line2, line3, line4) {
-            (Some(l1), Some(l2), Some(l3), Some(l4)) => {
-                let mut header = l1[1..].trim_end().splitn(2, ' ');
-                let hd = header.next().unwrap_or_default().to_owned();
-
-                Some(Record::with_attrs(hd.as_str(), None, l2.as_bytes(), l4.as_bytes()))
-            }
-            (_, _, _, _) => None
-        }
-    }
-
     pub fn from_disk(reader: &mut BufReader<GzDecoder<File>>) -> Option<ClusteredReads> {
         let mut line = String::new();
         let len = reader.read_line(&mut line).unwrap();
         println!("line -----{}----", &line);
+        line.pop();
         let pt_read = ReadPattern::from_str(line.as_str());
         match pt_read {
             Ok(pattern) => {
+                let mut line = String::new();
                 let len = reader.read_line(&mut line).unwrap();
+                line.pop();
+                println!("line ----->{}<----", &line);
 
-                let read_count = usize::from_str(line.as_str()).unwrap();
+
+                let read_count = i64::from_str(line.as_str()).unwrap();
                 let mut return_vec = Vec::new();
 
                 if read_count >= 0 {
                     for x in 0..read_count {
-                        let readcount = pattern.read_count();
+                        let reads_per_pattern = pattern.read_count();
                         let mut collected_reads = Vec::new();
 
-                        for i in 0..readcount {
+                        for i in 0..reads_per_pattern {
                             let read = ClusteredReads::read_record(reader);
                             if let Some(x) = read { collected_reads.push(x) }
                         }
@@ -763,9 +772,10 @@ impl ClusteredReads {
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 } else {
                     loop {
+                        let reads_per_pattern = pattern.read_count();
                         let mut collected_reads = Vec::new();
 
-                        for i in 0..read_count {
+                        for i in 0..reads_per_pattern {
                             let read = ClusteredReads::read_record(reader);
                             if let Some(x) = read { collected_reads.push(x) }
                         }
@@ -780,7 +790,7 @@ impl ClusteredReads {
                 }
             }
             Err(_) => {
-                println!("Errored out reading!");
+                panic!("Errored out reading!");
                 //panic!("errrrrr");
                 None
             }

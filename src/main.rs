@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use ::std::io::Result;
 
 use backtrace::Backtrace;
 use bio::alignment::Alignment;
@@ -39,7 +40,8 @@ use petgraph::algo::connected_components;
 use rand::Rng;
 use rayon::prelude::*;
 use seq_io::fasta::{OwnedRecord, Reader, Record};
-use tempfile::{NamedTempFile, TempDir, Builder};
+use tempfile::{NamedTempFile, Builder};
+use tempfile::TempDir as ActualTempDir;
 
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
@@ -301,8 +303,31 @@ pub struct RunSpecifications {
     pub tmp_location: Arc<TempDir>,
 }
 
+
+#[derive(Debug)]
+pub struct TempDir(Option<ActualTempDir>);
+
+// Forward inherent methods to the tempdir crate.
+impl TempDir {
+    pub fn new() -> Result<TempDir>
+    { ActualTempDir::new().map(Some).map(TempDir) }
+
+    pub fn path(&self) -> &Path
+    { self.0.as_ref().unwrap().path() }
+}
+
+/// Leaks the inner TempDir if we are unwinding.
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        if ::std::thread::panicking() {
+            ::std::mem::forget(self.0.take())
+        }
+    }
+}
+
 impl RunSpecifications {
     pub fn create_temp_file(&mut self) -> PathBuf {
+
         let file_path = PathBuf::from(&self.tmp_location.clone().path()).join(nanoid!());
         file_path
     }
