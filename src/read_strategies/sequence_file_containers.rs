@@ -727,10 +727,12 @@ impl ClusteredReads {
                         let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
                         match converted_read {
                             None => { panic!("Unable to read from underlying sequence stream") }
-                            Some(x) => { return_vec.push(x); }
+                            Some(rd) => { return_vec.push(rd); }
                         }
                     }
                     let ln = return_vec.len();
+                    let last_read = return_vec.get(0).unwrap();
+                    //println!("Last read: {}",&return_vec.)
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 } else {
                     let mut cnn = 0;
