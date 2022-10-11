@@ -19,6 +19,7 @@ pub struct RoundRobinDiskWriter {
     writers: Vec<GzEncoder<File>>,
     underlying_files: Vec<PathBuf>,
     assigned_sequences: HashMap<Vec<u8>, usize>,
+    assigned_sequences_count: HashMap<Vec<u8>, usize>,
     output_counts: HashMap<usize, usize>,
     current_bin: usize,
     read_pattern: ReadPattern,
@@ -30,6 +31,8 @@ impl RoundRobinDiskWriter {
         let mut writers = Vec::new();
         let mut underlying_files = Vec::new();
         let mut assigned_sequences: HashMap<Vec<u8>, usize> = HashMap::new();
+        let mut assigned_sequences_count: HashMap<Vec<u8>, usize> = HashMap::new();
+
         let mut output_counts: HashMap<usize, usize> = HashMap::new();
 
         for i in 0..run_specs.sorting_file_count {
@@ -46,6 +49,7 @@ impl RoundRobinDiskWriter {
             writers,
             underlying_files,
             assigned_sequences,
+            assigned_sequences_count,
             output_counts,
             current_bin: 0,
             read_pattern: read_pattern.clone(),
@@ -65,6 +69,10 @@ impl RoundRobinDiskWriter {
             Some(x) => {
                 let mut writer = self.writers.get_mut(*x).unwrap();
                 //println!("1opening the file {:?}", &self.underlying_files.get(*x));
+                self.assigned_sequences_count.insert(
+                    sort_string.clone(),
+                    self.assigned_sequences_count.get(sort_string).unwrap_or(&(0 as usize)) + 1
+                );
                 RoundRobinDiskWriter::write_all_reads(&mut writer, read);
                 self.output_counts.insert(*x,
                                           self.output_counts.get(x).unwrap_or(&(0 as usize)) + 1);
@@ -93,7 +101,8 @@ impl RoundRobinDiskWriter {
         }
         println!("lookup set size = {}",self.assigned_sequences.len());
         for (s,i) in self.assigned_sequences.iter() {
-            println!("seq = {}, {}", String::from_utf8(s.clone()).unwrap(), i);
+            println!("seq = {}, {} count {}", String::from_utf8(s.clone()).unwrap(), i, self.assigned_sequences_count.get(s).unwrap());
+
         }
         SuperClusterOnDiskIterator::new_from_read_file_container(
             self.underlying_files,
