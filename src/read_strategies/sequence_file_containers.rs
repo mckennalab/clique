@@ -732,7 +732,7 @@ impl ClusteredReads {
                     }
                     let ln = return_vec.len();
                     let last_read = return_vec.get(0).unwrap();
-                    //println!("Last read: {}",&return_vec.)
+                    println!("Last read: {}",&last_read.read_one.id());
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 } else {
                     let mut cnn = 0;
