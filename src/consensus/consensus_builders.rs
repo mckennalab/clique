@@ -47,7 +47,7 @@ pub fn threaded_write_consensus_reads(read_iterators: Vec<SuperClusterOnDiskIter
     let pooled_install = pool.install(|| {
         //let iters = read_iterators.into_iter();
         for read_iterator in read_iterators {
-            read_iterator.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
+            read_iterator.for_each(|xx| { // read_iterator.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
                 let output = Arc::clone(&output);
                 output_poa_consensus(Box::new(xx.reads), output);
             });
