@@ -56,9 +56,12 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
             pattern: read_pattern.clone(),
             run_specs: run_specs,
         };
+        let mut read_count = 0;
         for read in read_iter {
+            read_count += 1;
             mem_sort.push(read.clone());
         }
+        println!("Memory sort size : {}",read_count);
         mem_sort
     }
 
@@ -78,6 +81,7 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
     }
 
     fn sorted_read_set(self) -> Option<SuperClusterOnDiskIterator> {
+
         let max_dist = match &self.sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => { maximum_distance }
             SortStructure::HD_UMI { layout_type, max_distance, on_disk } => { max_distance }
