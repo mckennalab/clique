@@ -712,6 +712,7 @@ impl ClusteredReads {
                 let len = reader.read_line(&mut line).unwrap();
                 line.pop();
                 let read_count = i64::from_str(line.as_str()).unwrap();
+                println!("READ count {}",read_count);
                 let mut return_vec = Vec::new();
 
                 if read_count >= 0 {
