@@ -161,9 +161,9 @@ impl Sorter {
             let mut next_level_iterators = Vec::new();
 
             for mut iter in current_iterators {
-                println!("outer cluster");
+                //println!("outer cluster");
                 for mut cluster in iter {
-                    println!("inner cluster");
+                    //println!("inner cluster");
                     let it = Sorter::sort_level(&sort, Box::new(cluster.into_iter()), read_pattern, layout, run_specs);
                     match it {
                         None => {println!("Warning: empty iterator result");}

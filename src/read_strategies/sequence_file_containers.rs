@@ -743,7 +743,6 @@ impl ClusteredReads {
     pub fn from_disk(reader: &mut BufReader<GzDecoder<File>>) -> Option<ClusteredReads> {
         let mut line = String::new();
         let len = reader.read_line(&mut line).unwrap();
-        println!("line ---aaaa--{}--aaaa--", &line);
         line.pop();
         let pt_read = ReadPattern::from_str(line.as_str());
         match pt_read {
@@ -751,9 +750,6 @@ impl ClusteredReads {
                 let mut line = String::new();
                 let len = reader.read_line(&mut line).unwrap();
                 line.pop();
-                println!("line ----->{}<----", &line);
-
-
                 let read_count = i64::from_str(line.as_str()).unwrap();
                 let mut return_vec = Vec::new();
 
@@ -787,18 +783,15 @@ impl ClusteredReads {
                         }
                         let converted_read = pattern.to_read_collection(&mut VecDeque::from(collected_reads));
                         match converted_read {
-                            None => { println!("Nope!"); break; }
+                            None => { break; }
                             Some(x) => { return_vec.push(x); }
                         }
                     }
-                    println!("Yup! {}",cnn);
                     let ln = return_vec.len();
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 }
             }
             Err(_) => {
-                println!("Errored out reading!");
-                //panic!("errrrrr");
                 None
             }
         }
