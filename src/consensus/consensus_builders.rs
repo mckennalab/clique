@@ -82,7 +82,6 @@ pub fn output_poa_consensus(reads: Box<dyn Iterator<Item=ReadSetContainer>>, out
         read_count += 1;
     });
 
-
     let read_one_conc: Record = to_read(read_name.as_ref().unwrap(),
                                         &create_poa_consensus(&null_cap(read1_agg)).into_iter().collect::<Vec<u8>>(),
                                         &1, &read_count);

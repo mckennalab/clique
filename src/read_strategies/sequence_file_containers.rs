@@ -700,49 +700,10 @@ impl ClusteredReads {
         }
     }
 
-    pub fn read_record(reader: &mut BufReader<GzDecoder<File>>) -> Option<Record> {
-        //println!("reading record...");
-        let line1 = ClusteredReads::try_to_read_line_to_string(reader);
-        let line2 = ClusteredReads::try_to_read_line_to_string(reader);
-        let line3 = ClusteredReads::try_to_read_line_to_string(reader);
-        let line4 = ClusteredReads::try_to_read_line_to_string(reader);
-        match (line1, line2, line3, line4) {
-            (Some(l1), Some(l2), Some(l3), Some(l4)) => {
-                //let mut header = l1[1..].trim_end().splitn(2, ' ');
-                //let hd = header.next().unwrap_or_default().to_owned();
-
-                Some(Record::with_attrs(l1.as_str(), None, l2.as_bytes(), l4.as_bytes()))
-            }
-            (_, _, _, _) => None
-        }
-    }
-
-    pub fn write_header(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64) {
-        write!(output, "{}\n", pattern);
-        write!(output, "{}\n", length);
-    }
-
-    pub fn to_disk(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64, reads: impl Iterator<Item=ReadSetContainer>) {
-        ClusteredReads::write_header(output, pattern, length);
-
-        for rl in reads {
-            write!(output, "{}", rl.read_one);
-            if let Some(rd) = &rl.read_two {
-                write!(output, "{}", rd);
-            };
-            if let Some(rd) = &rl.index_one {
-                write!(output, "{}", rd);
-            };
-            if let Some(rd) = &rl.index_two {
-                write!(output, "{}", rd);
-            };
-        }
-        output.flush();
-    }
-
     pub fn from_disk(reader: &mut BufReader<GzDecoder<File>>) -> Option<ClusteredReads> {
         let mut line = String::new();
         let len = reader.read_line(&mut line).unwrap();
+        println!("line ---aaaa--{}--aaaa--", &line);
         line.pop();
         let pt_read = ReadPattern::from_str(line.as_str());
         match pt_read {
@@ -787,15 +748,58 @@ impl ClusteredReads {
                             Some(x) => { return_vec.push(x); }
                         }
                     }
+                    println!("Yup! {}",cnn);
                     let ln = return_vec.len();
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 }
             }
             Err(_) => {
+                println!("Errored out reading!");
+                panic!("errrrrr");
                 None
             }
         }
     }
+    pub fn read_record(reader: &mut BufReader<GzDecoder<File>>) -> Option<Record> {
+        //println!("reading record...");
+        let line1 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line2 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line3 = ClusteredReads::try_to_read_line_to_string(reader);
+        let line4 = ClusteredReads::try_to_read_line_to_string(reader);
+        match (line1, line2, line3, line4) {
+            (Some(l1), Some(l2), Some(l3), Some(l4)) => {
+                //let mut header = l1[1..].trim_end().splitn(2, ' ');
+                //let hd = header.next().unwrap_or_default().to_owned();
+
+                Some(Record::with_attrs(l1.as_str(), None, l2.as_bytes(), l4.as_bytes()))
+            }
+            (_, _, _, _) => None
+        }
+    }
+
+    pub fn write_header(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64) {
+        write!(output, "{}\n", pattern);
+        write!(output, "{}\n", length);
+    }
+
+    pub fn to_disk(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64, reads: impl Iterator<Item=ReadSetContainer>) {
+        ClusteredReads::write_header(output, pattern, length);
+
+        for rl in reads {
+            write!(output, "{}", rl.read_one);
+            if let Some(rd) = &rl.read_two {
+                write!(output, "{}", rd);
+            };
+            if let Some(rd) = &rl.index_one {
+                write!(output, "{}", rd);
+            };
+            if let Some(rd) = &rl.index_two {
+                write!(output, "{}", rd);
+            };
+        }
+        output.flush();
+    }
+
 }
 
 
@@ -845,7 +849,7 @@ impl Iterator for SuperClusterOnDiskIterator {
                     self.current_cluster_count.is_some() &&
                     (self.current_cluster_count.unwrap() > 0 ||
                         self.current_cluster_count.unwrap() < 0) {
-                    println!("555 : No cluster");
+                    println!("555 : No current cluster, trying to reload");
 
                     ClusteredReads::from_disk(&mut self.current_reader.as_mut().unwrap())
 

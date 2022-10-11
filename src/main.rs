@@ -192,7 +192,6 @@ fn main() {
                 tmp_location: tmp_location.into(),
             };
 
-
             // setup our thread pool
             rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
