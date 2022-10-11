@@ -888,12 +888,13 @@ impl Iterator for SuperClusterOnDiskIterator {
 }
 
 impl SuperClusterOnDiskIterator {
-    fn to_disk(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
+    fn to_disk(clusters: Vec<(ClusteredReads,usize)>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
         let temp_file = run_specs.create_temp_file();
         let mut temp_file_writer: GzEncoder<File> = OutputReadSetWriter::create_writer(&temp_file);
-        let cluster_count = clusters.len();
-        for cluster in clusters {
-            ClusteredReads::to_disk(&mut temp_file_writer, &read_pattern, cluster_count as i64, cluster.reads);
+        let total_clusters = clusters.len();
+        for (cluster,sz) in clusters {
+            if sz < 0 { assert_eq!(total_clusters, 1) };
+            ClusteredReads::to_disk(&mut temp_file_writer, &read_pattern, sz as i64, cluster.reads);
         }
 
         let input = BufReader::new(GzDecoder::new(File::open(&temp_file.as_path()).unwrap()));
@@ -902,7 +903,7 @@ impl SuperClusterOnDiskIterator {
         SuperClusterOnDiskIterator {
             cluster_counts: VecDeque::from(counts),
             read_files: VecDeque::from(files),
-            current_cluster_count: Some(cluster_count as i64),
+            current_cluster_count: Some(total_clusters as i64),
             current_reader: Some(BufReader::new(GzDecoder::new(File::open(temp_file.as_path()).unwrap()))),
             override_clusters: None,
             pattern: read_pattern,
@@ -910,7 +911,7 @@ impl SuperClusterOnDiskIterator {
     }
 
 
-    pub fn new_from_vec(clusters: Vec<ClusteredReads>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
+    pub fn new_from_vec(clusters: Vec<(ClusteredReads,usize)>, read_pattern: ReadPattern, run_specs: &mut RunSpecifications) -> SuperClusterOnDiskIterator {
         SuperClusterOnDiskIterator::to_disk(clusters, read_pattern, run_specs)
     }
 

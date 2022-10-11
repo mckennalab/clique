@@ -93,7 +93,7 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
 
         let cc = get_connected_components(&graph);
         println!("CC SIZE: {}",&cc.len());
-        let mut final_vec: Vec<ClusteredReads> = Vec::new();
+        let mut final_vec: Vec<(ClusteredReads,usize)> = Vec::new();
 
         for group in cc {
             let minilist = InputList { strings: group, max_dist: *max_dist as u64 };
@@ -108,7 +108,8 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
                             rc.extend(i.clone());
                         }
                     }
-                    final_vec.push(ClusteredReads::new(Box::new(VecDeque::from(rc).into_iter()), self.pattern.clone()));
+                    let sz = rc.len();
+                    final_vec.push((ClusteredReads::new(Box::new(VecDeque::from(rc).into_iter()), self.pattern.clone()), sz));
                 }
                 Some(x) => {
                     for sgroup in &x {
@@ -119,8 +120,10 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
                                 rc.extend(i.clone());
                             }
                         }
+                        let sz = rc.len();
+
                         let iter  = Box::new(VecDeque::from(rc).into_iter());
-                        final_vec.push(ClusteredReads::new(iter, self.pattern.clone()));
+                        final_vec.push((ClusteredReads::new(iter, self.pattern.clone()),sz));
                     }
                 }
             }
