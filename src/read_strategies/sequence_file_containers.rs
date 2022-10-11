@@ -897,6 +897,7 @@ impl SuperClusterOnDiskIterator {
             ClusteredReads::to_disk(&mut temp_file_writer, &read_pattern, sz as i64, cluster.reads);
         }
         drop(temp_file_writer);
+        println!("temp file turned: {:?}",&temp_file.as_path());
         let input = BufReader::new(GzDecoder::new(File::open(&temp_file.as_path()).unwrap()));
         let files: Vec<PathBuf> = Vec::new();
         let counts: Vec<i64> = Vec::new();
