@@ -85,9 +85,10 @@ impl RoundRobinDiskWriter {
             drop(writer);
         };
 
-        for (bin, count) in self.output_counts.iter() {
-            println!("bin = {} size = {}", bin, count);
+        for i in 0..self.underlying_files.len() {
+            println!("bin = {} size = {}, file {:?}", i, self.output_counts.get(&i).unwrap(), self.underlying_files.get(i).unwrap());
         }
+
         SuperClusterOnDiskIterator::new_from_read_file_container(
             self.underlying_files,
             self.read_pattern.clone(),
