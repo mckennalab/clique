@@ -41,6 +41,7 @@ impl RoundRobinDiskWriter {
             writers.push(writer);
             output_counts.insert(i, 0);
         }
+
         RoundRobinDiskWriter {
             writers,
             underlying_files,
@@ -90,7 +91,7 @@ impl RoundRobinDiskWriter {
         for i in 0..self.underlying_files.len() {
             println!("bin = {} size = {}, file {:?}", i, self.output_counts.get(&i).unwrap(), self.underlying_files.get(i).unwrap());
         }
-
+        println!("lookup set size = {}",self.assigned_sequences.len());
         SuperClusterOnDiskIterator::new_from_read_file_container(
             self.underlying_files,
             self.read_pattern.clone(),
