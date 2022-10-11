@@ -65,6 +65,8 @@ impl RoundRobinDiskWriter {
                 let mut writer = self.writers.get_mut(*x).unwrap();
                 //println!("1opening the file {:?}", &self.underlying_files.get(*x));
                 RoundRobinDiskWriter::write_all_reads(&mut writer, read);
+                self.output_counts.insert(*x,
+                                          self.output_counts.get(x).unwrap_or(&(0 as usize)) + 1);
             },
             _ => {
                 self.assigned_sequences.insert(sort_string.clone(),self.current_bin);
