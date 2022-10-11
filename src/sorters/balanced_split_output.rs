@@ -92,6 +92,9 @@ impl RoundRobinDiskWriter {
             println!("bin = {} size = {}, file {:?}", i, self.output_counts.get(&i).unwrap(), self.underlying_files.get(i).unwrap());
         }
         println!("lookup set size = {}",self.assigned_sequences.len());
+        for (s,i) in self.assigned_sequences.iter() {
+            println!("seq = {}, {}", String::from_utf8(s.clone()).unwrap(), i);
+        }
         SuperClusterOnDiskIterator::new_from_read_file_container(
             self.underlying_files,
             self.read_pattern.clone(),
