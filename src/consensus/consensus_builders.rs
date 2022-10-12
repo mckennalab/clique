@@ -151,14 +151,4 @@ mod tests {
 
         assert_eq!(create_poa_consensus(&all), "TATGATAAGG".as_bytes().to_owned());
     }
-
-    #[test]
-    fn basic_read_consensus() {
-        let read1 = ReadSetContainer::new_from_read1(Record::with_attrs("id_str", Some("desc"), b"ATGCGGG", b"QQQQQQQ"));
-        let read2 = ReadSetContainer::new_from_read1(Record::with_attrs("id_str", Some("desc"), b"ATGCGGG", b"QQQQQQQ"));
-        let read3 = ReadSetContainer::new_from_read1(Record::with_attrs("id_str", Some("desc"), b"ATACGGG", b"QQQQQQQ"));
-        let read_vec = vec![read1, read2, read3];
-        let conc = _poa_consensus(&read_vec);
-        assert_eq!(b"ATGCGGG".to_vec(), conc.read_one.seq());
-    }
 }

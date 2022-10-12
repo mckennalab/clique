@@ -518,7 +518,7 @@ fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
 
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
-                                     alignment_inversion: &HashMap<AlignmentLocation, AlignmentResult>,
+                                     alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
                                      sequence1: &Vec<u8>,
                                      sequence2: &Vec<u8>,
                                      scoring_function: &dyn InversionScoringFunction) {
@@ -560,7 +560,7 @@ fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
 }
 
 fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
-                              alignment_inversion: &HashMap<AlignmentLocation, AlignmentResult>,
+                              alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
                               sequence1: &Vec<u8>,
                               sequence2: &Vec<u8>,
                               scoring_function: &dyn InversionScoringFunction,
@@ -571,7 +571,7 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
     let mut _update_z = false;
 
     if x == 0 && y == 0 {
-        info!("length 1 {} length 2 {}", sequence1.len(), sequence2.len());
+        //println!("length 1 {} length 2 {}", sequence1.len(), sequence2.len());
         alignment_inversion.iter().for_each(|x| info!("------------> {:?}",x.0.clone()));
     }
 
@@ -587,30 +587,26 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
         ];
         let max_match_mismatch = max_match_mismatch.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
 
-        if pos.x == 88 && pos.y == 86 {
-            info!("Positions: 88 86, {} {}",alignment_inversion.contains_key(&pos.clone()), alignment_inversion.len() );
-        }
-
         let best_match = vec![
             if alignment_inversion.contains_key(&pos.clone()) {
-                info!("pos {} {} {:?}", pos.x, pos.y, alignment_inversion.get(&pos.clone()).unwrap().score);
+                //println!("pos {} {} {:?}", pos.x, pos.y, alignment_inversion.get(&pos.clone()).unwrap().alignment_result.score);
                 let inv = alignment_inversion.get(&pos.clone());
                 if let Some(inversion) = inv {
-                    let bounding = &inversion.bounding_box.unwrap();
-                    let first_path = bounding.0.clone();
-                    let last_path = bounding.1.clone();
+                    let bounding = &inversion.bounding_box.0;
+                    let first_path = &inversion.bounding_box.0.clone();
+                    let last_path = inversion.bounding_box.1.clone();
                     assert_eq!(&last_path,&pos);
-                    info!("Score {} {}", &inversion.score, alignment.scores[[first_path.x - 1, first_path.y - 1, 0]]);
+                    //println!("Score {} {} {} {} {} {}",first_path.x, first_path.y, x,y, &inversion.alignment_result.score, alignment.scores[[first_path.x - 1, first_path.y - 1, 0]]);
 
                     let inv_best_match = vec![
-                        (alignment.scores[[x - 1, y - 1, 1]] , InvMove::UP(1)),
-                        (alignment.scores[[x - 1, y - 1, 2]], InvMove::LEFT(1)),
-                        (alignment.scores[[x - 1, y - 1, 0]], InvMove::DIAG(1)),];
+                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 1]] , InvMove::UP(1)),
+                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 2]], InvMove::LEFT(1)),
+                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 0]], InvMove::DIAG(1)),];
+                    //println!("+++++++++ Positions {:?}",&inv_best_match);
                     let inv_best_match = inv_best_match.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap();
-                    if pos.x == 88 && pos.y == 86 {
-                        info!("+++++++++ Positions: 88 86, {:?} {}",&inv_best_match,&inversion.score);
-                    }
-                    (inversion.score + inv_best_match.0 + scoring_function.inversion_cost(), AlignmentDirection::INV(first_path.clone(), last_path.clone(), inv_best_match.1))
+                    //println!("+++++++++ Positions {:?} {}",&inv_best_match,&inversion.alignment_result.score);
+
+                    (inversion.alignment_result.score + inv_best_match.0 + scoring_function.inversion_cost(), AlignmentDirection::INV(first_path.clone(), last_path.clone(), inv_best_match.1))
                 } else {
                     (MAX_NEG_SCORE, AlignmentDirection::UP(1))
                 }
@@ -619,9 +615,7 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
             (alignment.scores[[x - 1, y - 1, 1]] + match_score, AlignmentDirection::UP(1)),
             (alignment.scores[[x - 1, y - 1, 2]] + match_score, AlignmentDirection::LEFT(1)),
         ];
-        if pos.x == 88 && pos.y == 86 {
-            info!("Poadfasdfsitions: 88 86, {} {} {:?}",alignment_inversion.contains_key(&pos.clone()), alignment_inversion.len(), &best_match);
-        }
+
         let mut best_match = best_match.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap().clone();
 
         best_match = match best_match.1 {
@@ -629,11 +623,10 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
 
                 let aln = &alignment_inversion.get(&pos.clone());
                 if let Some(align) = aln {
-                    let start_pos = &align.path.get(0).unwrap().clone();
-                    let end_pos = &align.path.get(&align.path.len()-1).unwrap().clone();
-                    // TODO: internal inversion postjion wrong?
+                    let start_pos = &align.bounding_box.0.clone();
+                    let end_pos = &align.bounding_box.1.clone();
                     let inv = AlignmentDirection::INV(start_pos.clone(), pos2.clone(), jump);
-                    info!("ADDING INVERSION {},{},{},{} score {}  ---- {},{}", start_pos.x, start_pos.y, x, y, align.score, end_pos.x, end_pos.y);
+                    //println!("ADDING INVERSION {},{},{},{} score {}  ---- {},{}", start_pos.x, start_pos.y, x, y, align.alignment_result.score, end_pos.x, end_pos.y);
                     (best_match.0, inv)
                 } else {
                     info!("SCORES: {},{},{},{}",alignment.scores[[x - 1, y - 1, 1]] + match_score,alignment.scores[[x - 1, y - 1, 2]] + match_score,max_match_mismatch,best_match.0);
@@ -821,10 +814,8 @@ impl AlignmentResult {
         let half_point = total_string_length as f64 / 2.0;
 
         for path_obj in &self.path {
-            //info!("222Old {},{} new {},{},{}", path_obj.x, path_obj.y, path_obj.x, path_obj.y, y_shift_base);
-            //info!("Old {},{} new {},{}", path_obj.x, path_obj.y, path_obj.x, y_shift - (y_shift_base - path_obj.y));
             let new_y = (1.0 + half_point + (half_point - (path_obj.y as f64))).round() as usize;
-            info!("old {},{} new {}",path_obj.x,path_obj.y,new_y);
+            println!("old {},{} new {}",path_obj.x,path_obj.y,new_y);
             new_path.push(AlignmentLocation { x: path_obj.x, y: new_y});
         }
         new_path.reverse();
@@ -920,12 +911,17 @@ pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentL
     }
 }
 
+struct BoundedAlignment {
+    alignment_result: AlignmentResult,
+    bounding_box: (AlignmentLocation,AlignmentLocation)
+}
+
 pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::AFFINE, local);
     let mut inversion_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::AFFINE, true);
 
     info!("GGGGGGGGGG --------> ref: {} read: {}", String::from_utf8(reference.clone()).unwrap(), String::from_utf8(read.clone()).unwrap());
-    let mut long_enough_hits: HashMap<AlignmentLocation, AlignmentResult> = HashMap::new();
+    let mut long_enough_hits: HashMap<AlignmentLocation, BoundedAlignment> = HashMap::new();
     let rev_comp_read = &reverse_complement(&read);
     perform_affine_alignment(&mut inversion_mat, &reference, rev_comp_read, my_aff_score);
     //pretty_print_3d_matrix(&inversion_mat, &reference, &reverse_complement(&test_read));
@@ -933,21 +929,23 @@ pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score:
 
     let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, &reference, &rev_comp_read, None));
 
-    info!("-------------------------------Adding INVERSIONS");
+    //println!("-------------------------------Adding INVERSIONS");
     while aligned_inv.is_some() {
         let aligned_inv_local = aligned_inv.unwrap();
         let length = aligned_inv_local.path.len();
         if length > 1 {
             let first_pos = &aligned_inv_local.path[0].clone();
             let position = &aligned_inv_local.path[length - 1].clone();
-            info!("============={},{}============={},{}================",first_pos.x,first_pos.y,position.x,position.y);
+            //println!("============={},{}============={},{}================",first_pos.x,first_pos.y,position.x,position.y);
             let converted_path = aligned_inv_local.convert_inverted_path(read.len());
             let bounding = converted_path.bounding_box.unwrap().clone();
+            //println!("============={},{}============={},{}================",bounding.0.x,bounding.0.y,bounding.1.x,bounding.1.y);
+            let bAlignment = BoundedAlignment{ alignment_result: converted_path, bounding_box: bounding };
             let true_position = AlignmentLocation { x: bounding.1.x, y: bounding.1.y };
             aligned_inv = if length >= my_score.min_inversion_length {
-                info!("INVERSION put in buffer: {} with score {} position {} {} truepos = {} {} ",String::from_utf8(aligned_inv_local.alignment_string1.clone()).unwrap(),aligned_inv_local.score, position.x, position.y,true_position.x, true_position.y);
+                //println!("INVERSION put in buffer: {} with score {} position {} {} truepos = {} {} ",String::from_utf8(aligned_inv_local.alignment_string1.clone()).unwrap(),aligned_inv_local.score, position.x, position.y,true_position.x, true_position.y);
                 clean_and_find_next_best_match_3d(&mut inversion_mat, &reference, &rev_comp_read, my_aff_score, &aligned_inv_local);
-                long_enough_hits.insert(true_position, converted_path);
+                long_enough_hits.insert(true_position, bAlignment);
                 Some(perform_3d_global_traceback(&mut inversion_mat, None, &reference, &rev_comp_read,  None))
             } else {
                 None
@@ -956,10 +954,10 @@ pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score:
             aligned_inv = None
         }
     }
-    info!("long enough hits {}", long_enough_hits.len());
+    //println!("long enough hits {}", long_enough_hits.len());
 
     perform_inversion_aware_alignment(&mut alignment_mat, &mut long_enough_hits, &reference, &read, my_score);
-
+    //pretty_print_3d_matrix(&alignment_mat, &reference, &read);
     //pretty_print_3d_matrix(&alignment_mat, &reference, &read);
     let res = perform_3d_global_traceback(&mut alignment_mat, Some(&long_enough_hits), &reference, &read, None);
     res
@@ -1049,7 +1047,7 @@ fn perform_2d_global_traceback(alignment: &mut Alignment<Ix2>, sequence1: &Vec<u
 
 #[allow(dead_code)]
 fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
-                               inversion_mapping: Option<&HashMap<AlignmentLocation, AlignmentResult>>,
+                               inversion_mapping: Option<&HashMap<AlignmentLocation, BoundedAlignment>>,
                                sequence1: &Vec<u8>,
                                sequence2: &Vec<u8>,
                                starting_position: Option<(usize, usize)>,
@@ -1087,6 +1085,7 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         alignment.scores[[_starting_x, _starting_y, 1]] = 0.0;
         alignment.scores[[_starting_x, _starting_y, 2]] = 0.0;
 
+        //println!("Position: {},{},{}",_starting_x,_starting_y,_starting_z);
         path.push(AlignmentLocation { x: _starting_x, y: _starting_y });
 
         let movement_delta = match alignment.traceback[[_starting_x, _starting_y, _starting_z]] {
@@ -1095,29 +1094,30 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
             AlignmentDirection::LEFT(size) => (2, size),
             AlignmentDirection::INV(pos1, pos2, invMove) => {
 
-                info!("INVERSION ADD: positions {}.{}",pos2.x,pos2.y);
+                //println!("INVERSION ADD: positions {}.{} {:?}",pos2.x,pos2.y, invMove);
                 let inversion_alignment= inversion_mapping.unwrap().get(&AlignmentLocation{x: pos2.x, y: pos2.y}).unwrap();
-                for p in &inversion_alignment.path {
+                for p in &inversion_alignment.alignment_result.path {
                     path.push(p.clone());
                 }
 
-                info!("INVERSOIN adding {} and {}", String::from_utf8(inversion_alignment.alignment_string1.clone()).unwrap(),String::from_utf8(inversion_alignment.alignment_string2.clone()).unwrap());
-                let mut a1_rev = inversion_alignment.alignment_string1.clone();
+                //println!("INVERSOIN adding {} and {}", String::from_utf8(inversion_alignment.alignment_result.alignment_string1.clone()).unwrap(),String::from_utf8(inversion_alignment.alignment_result.alignment_string2.clone()).unwrap());
+                let mut a1_rev = inversion_alignment.alignment_result.alignment_string1.clone();
                 a1_rev.reverse();
-                let mut a2_rev = inversion_alignment.alignment_string2.clone();
+                let mut a2_rev = inversion_alignment.alignment_result.alignment_string2.clone();
                 a2_rev.reverse();
 
+                //println!("pushing -----> {} and {} ", String::from_utf8(a1_rev.clone()).unwrap(),String::from_utf8(a2_rev.clone()).unwrap());
                 alignment1.extend(&a1_rev);
                 alignment2.extend(&a2_rev);
                 _starting_x = pos1.x - 1;
                 _starting_y = pos1.y - 1;
                 let matrix_move = match invMove {
-                    InvMove::UP(_) => {0}
-                    InvMove::LEFT(_) => {1}
-                    InvMove::DIAG(_) => {2}
+                    InvMove::DIAG(_) => {0}
+                    InvMove::UP(_) => {1}
+                    InvMove::LEFT(_) => {2}
                 };
                 cigars.push(AlignmentTag::InversionClose); // it'll get reversed at the end
-                cigars.extend(&inversion_alignment.cigar_string);
+                cigars.extend(&inversion_alignment.alignment_result.cigar_string);
                 cigars.push(AlignmentTag::InversionOpen);
                 (matrix_move, 0)
             }
@@ -1126,7 +1126,7 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         match _starting_z {
             0 => {
                 if movement_delta.1 > 0 {cigars.push(AlignmentTag::MatchMismatch(1))};
-                //info!("PUSH MM");
+                println!("PUSH MM");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(*sequence1.get(_starting_x - 1).unwrap());
                     alignment2.push(*sequence2.get(_starting_y - 1).unwrap());
@@ -1136,7 +1136,7 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
             }
             1 => {
                 if movement_delta.1 > 0 {cigars.push(AlignmentTag::Del(1))};
-                //info!("PUSH INS");
+                println!("PUSH INS");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(*sequence1.get(_starting_x - 1).unwrap());
                     alignment2.push(b'-');
@@ -1145,7 +1145,7 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
             }
             2 => {
                 if movement_delta.1 > 0 {cigars.push(AlignmentTag::Ins(1))};
-                //info!("PUSH DEL");
+                println!("PUSH DEL");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(b'-');
                     alignment2.push(*sequence2.get(_starting_y - 1).unwrap());
@@ -1154,6 +1154,7 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
             }
             _ => panic!("Unknown matrix")
         }
+        println!("looping");
         _starting_z = movement_delta.0;
     }
     //info!("OUT: {},{},{}", starting_x, starting_y, starting_z);
@@ -1514,9 +1515,11 @@ mod tests {
         let my_score = InversionScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 9.0,
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
+            min_inversion_length: 4,
         };
 
 
@@ -1549,9 +1552,11 @@ mod tests {
         let my_score = InversionScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 10.0,
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
+            min_inversion_length: 2
         };
 
 
@@ -1564,6 +1569,7 @@ mod tests {
         };
 
         let results = inversion_alignment(&reference,&test_read,&my_score,&my_aff_score,false);
+
 
         println!("Aligned {} and {} from {} and {}",
                  str::from_utf8(&results.alignment_string1).unwrap(),
@@ -1583,9 +1589,11 @@ mod tests {
         let my_score = InversionScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 9.0,
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
+            min_inversion_length: 4
         };
 
 

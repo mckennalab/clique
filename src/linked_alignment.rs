@@ -376,9 +376,11 @@ mod tests {
         let my_score = InversionScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 9.0,
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
+            min_inversion_length: 20
         };
 
 
@@ -407,9 +409,11 @@ mod tests {
         let my_score = InversionScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
+            special_character_score: 9.0,
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
+            min_inversion_length: 20
         };
 
 
