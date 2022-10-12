@@ -703,6 +703,9 @@ impl ClusteredReads {
     pub fn from_disk(reader: &mut BufReader<GzDecoder<File>>) -> Option<ClusteredReads> {
         let mut line = String::new();
         let len = reader.read_line(&mut line).unwrap();
+        if len == 0 {
+            return None
+        }
         println!("line ---aaaa--{}--aaaa--", &line);
         line.pop();
         let pt_read = ReadPattern::from_str(line.as_str());
@@ -732,7 +735,7 @@ impl ClusteredReads {
                     }
                     let ln = return_vec.len();
                     let last_read = return_vec.get(0).unwrap();
-                    println!("Last read: {}",&last_read.read_one.id());
+                    //println!("Last read: {}",&last_read.read_one.id());
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 } else {
                     let mut cnn = 0;
@@ -953,3 +956,22 @@ impl SuperClusterOnDiskIterator {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str;
+// find_max_value_2d_array(matrix: Array::<f64, Ix2>) -> Option<(AlignmentLocation,f64)>
+
+    #[test]
+    fn open_clustered_read_bin_and_cycle_through_contents() {
+        let mut input = BufReader::new(GzDecoder::new(File::open("test_data/failing_bin.gz").unwrap()));
+        let sizes = vec![1940,634,1,1,1,1,19,358,933,1,2,545,1,1,1,1,1,2,1,32,1,2,11,1,2,2,1,1,1,1,1,1,717,1,61,1,1,2,1,1,51,1,1,1,1,2,6,1,2,2,1,1,1,1,1,1,40,10,2,1,1,2,1,2,1,1,4,1,1,165,1,2,6,2,2,1,2,1];
+        for i in 0..78 {
+            let nc = ClusteredReads::from_disk(&mut input);
+            assert_eq!(sizes[i],nc.unwrap().into_iter().map(|r| 1).sum());
+
+        }
+        let nc = ClusteredReads::from_disk(&mut input);
+    }
+}
