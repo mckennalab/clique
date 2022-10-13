@@ -27,6 +27,8 @@ use core::option::Option::{None, Some};
 
 use crate::itertools::Itertools;
 use crate::RunSpecifications;
+use std::sync::Mutex;
+use std::ops::{Deref, DerefMut};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ReadPattern {
@@ -843,7 +845,7 @@ pub struct SuperClusterOnDiskIterator {
     cluster_counts: VecDeque<i64>,
     read_files: VecDeque<PathBuf>,
     current_cluster_count: Option<i64>,
-    current_reader: Option<BufReader<GzDecoder<File>>>,
+    current_reader: Mutex<Option<BufReader<GzDecoder<File>>>>,
     override_clusters: Option<VecDeque<ClusteredReads>>,
     pattern: ReadPattern,
 }
@@ -854,13 +856,16 @@ impl Iterator for SuperClusterOnDiskIterator {
     fn next(&mut self) -> Option<ClusteredReads> {
         match &mut self.override_clusters {
             None => {
-                let ret = if self.current_reader.is_some() &&
+                let ret = if self.current_reader.lock().unwrap().as_mut().is_some() &&
                     self.current_cluster_count.is_some() &&
                     (self.current_cluster_count.unwrap() > 0 ||
                         self.current_cluster_count.unwrap() < 0) {
                     println!("555 : No current cluster, trying to reload");
 
-                    ClusteredReads::from_disk(&mut self.current_reader.as_mut().unwrap())
+                    let mut _reader = self.current_reader.lock();
+                    let mut reader = _reader.unwrap();
+
+                    ClusteredReads::from_disk(& mut reader.as_mut().unwrap())
 
                 } else {
                     println!("111 : No cluster");
@@ -874,12 +879,15 @@ impl Iterator for SuperClusterOnDiskIterator {
                                 // we're done
                                 println!("444 : No cluster");
                                 self.current_cluster_count = None;
-                                self.current_reader = None;
+                                let mut new_reader = self.current_reader.lock().unwrap().deref_mut();
+                                new_reader = &mut None;
                             }
                             Some(x) => {
                                 self.current_cluster_count = self.cluster_counts.pop_front();
                                 println!("opening the file {:?}", &x.as_path());
-                                self.current_reader = Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap())));
+
+                                let mut new_reader = self.current_reader.lock().unwrap().deref_mut();
+                                self.current_reader = Mutex::new(Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap()))));
                             }
                         }
                     }
@@ -913,7 +921,7 @@ impl SuperClusterOnDiskIterator {
             cluster_counts: VecDeque::from(counts),
             read_files: VecDeque::from(files),
             current_cluster_count: Some(total_clusters as i64),
-            current_reader: Some(BufReader::new(GzDecoder::new(File::open(temp_file.as_path()).unwrap()))),
+            current_reader: Mutex::new(Some(BufReader::new(GzDecoder::new(File::open(temp_file.as_path()).unwrap())))),
             override_clusters: None,
             pattern: read_pattern,
         }
@@ -935,7 +943,7 @@ impl SuperClusterOnDiskIterator {
             cluster_counts: VecDeque::new(),
             read_files: VecDeque::new(),
             current_cluster_count: None,
-            current_reader: None,
+            current_reader: Mutex::new(None),
             override_clusters: Some(VecDeque::from(cr)),
             pattern: read_pattern.clone(),
         }
@@ -951,7 +959,7 @@ impl SuperClusterOnDiskIterator {
             read_files: queued_files,
             cluster_counts: VecDeque::from(vec![-1; ln]),
             current_cluster_count: Some(-1),
-            current_reader: Some(BufReader::new(GzDecoder::new(File::open(next.as_path()).unwrap()))),
+            current_reader: Mutex::new(Some(BufReader::new(GzDecoder::new(File::open(next.as_path()).unwrap())))),
             override_clusters: None,
             pattern: read_pattern,
         }
