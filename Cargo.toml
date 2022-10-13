@@ -32,6 +32,8 @@ bincode = "*"
 backtrace = "0.3"
 typetag = "0.2"
 nanoid = "0.4.0"
+pretty_env_logger = "0.4"
+chrono = "0.4"
 
 [profile.release]
 lto = true

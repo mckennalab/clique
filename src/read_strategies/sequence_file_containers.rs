@@ -29,6 +29,7 @@ use crate::itertools::Itertools;
 use crate::RunSpecifications;
 use std::sync::Mutex;
 use std::ops::{Deref, DerefMut};
+use backtrace::trace;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ReadPattern {
@@ -708,7 +709,7 @@ impl ClusteredReads {
         if len == 0 {
             return None
         }
-        println!("line ---aaaa--{}--aaaa--", &line);
+        trace!("line --->{}<---", &line);
         line.pop();
         let pt_read = ReadPattern::from_str(line.as_str());
         match pt_read {
@@ -717,7 +718,7 @@ impl ClusteredReads {
                 let len = reader.read_line(&mut line).unwrap();
                 line.pop();
                 let read_count = i64::from_str(line.as_str()).unwrap();
-                println!("READ count {}",read_count);
+                trace!("READ count {}",read_count);
                 let mut return_vec = Vec::new();
 
                 if read_count >= 0 {
@@ -756,13 +757,13 @@ impl ClusteredReads {
                             Some(x) => { return_vec.push(x); }
                         }
                     }
-                    println!("Yup! {}",cnn);
+                    trace!("Yup! {}",cnn);
                     let ln = return_vec.len();
                     Some(ClusteredReads { reads: Box::new(return_vec.into_iter()), pattern, known_size: Some(ln as i64) })
                 }
             }
             Err(_) => {
-                println!("Errored out reading!");
+                trace!("Errored out reading!");
                 panic!("errrrrr");
                 None
             }
@@ -860,7 +861,7 @@ impl Iterator for SuperClusterOnDiskIterator {
                     self.current_cluster_count.is_some() &&
                     (self.current_cluster_count.unwrap() > 0 ||
                         self.current_cluster_count.unwrap() < 0) {
-                    println!("555 : No current cluster, trying to reload");
+                    trace!("No current cluster, trying to reload");
 
                     let mut _reader = self.current_reader.lock();
                     let mut reader = _reader.unwrap();
@@ -868,7 +869,7 @@ impl Iterator for SuperClusterOnDiskIterator {
                     ClusteredReads::from_disk(& mut reader.as_mut().unwrap())
 
                 } else {
-                    println!("111 : No cluster");
+                    trace!("No cluster");
                     None
                 };
 
@@ -877,14 +878,14 @@ impl Iterator for SuperClusterOnDiskIterator {
                         match self.read_files.pop_front() {
                             None => {
                                 // we're done
-                                println!("444 : No cluster");
+                                trace!("No cluster");
                                 self.current_cluster_count = None;
                                 let mut new_reader = self.current_reader.lock().unwrap().deref_mut();
                                 new_reader = &mut None;
                             }
                             Some(x) => {
                                 self.current_cluster_count = self.cluster_counts.pop_front();
-                                println!("opening the file {:?}", &x.as_path());
+                                trace!("opening the file {:?}", &x.as_path());
 
                                 let mut new_reader = self.current_reader.lock().unwrap().deref_mut();
                                 self.current_reader = Mutex::new(Some(BufReader::new(GzDecoder::new(File::open(&x.as_path()).unwrap()))));
@@ -896,7 +897,7 @@ impl Iterator for SuperClusterOnDiskIterator {
                 ret
             }
             Some(x) => {
-                println!("299 : No cluster");
+                trace!("No cluster");
                 x.pop_front()
             }
         }
@@ -913,7 +914,7 @@ impl SuperClusterOnDiskIterator {
             ClusteredReads::to_disk(&mut temp_file_writer, &read_pattern, sz as i64, cluster.reads);
         }
         drop(temp_file_writer);
-        println!("temp file turned: {:?}",&temp_file.as_path());
+        trace!("temp file turned: {:?}",&temp_file.as_path());
         let input = BufReader::new(GzDecoder::new(File::open(&temp_file.as_path()).unwrap()));
         let files: Vec<PathBuf> = Vec::new();
         let counts: Vec<i64> = Vec::new();
@@ -953,7 +954,7 @@ impl SuperClusterOnDiskIterator {
         let ln = writer_files.len();
         let mut queued_files = VecDeque::from(writer_files);
         let next = queued_files.pop_front().unwrap();
-        println!("First file opening {:?}",&next);
+        trace!("First file opening {:?}",&next);
 
         SuperClusterOnDiskIterator {
             read_files: queued_files,

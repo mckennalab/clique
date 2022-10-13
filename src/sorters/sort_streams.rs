@@ -61,7 +61,7 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
             read_count += 1;
             mem_sort.push(read.clone());
         }
-        println!("Memory sort size : {}",read_count);
+        trace!("Memory sort size : {}",read_count);
         mem_sort
     }
 
@@ -92,7 +92,7 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
         let mut graph = input_list_to_graph(&collection, string_distance, false);
 
         let cc = get_connected_components(&graph);
-        println!("CC SIZE: {}",&cc.len());
+        trace!("CC SIZE: {}",&cc.len());
         let mut final_vec: Vec<(ClusteredReads,usize)> = Vec::new();
 
         for group in cc {

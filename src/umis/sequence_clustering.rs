@@ -110,7 +110,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     let mut current_index = 0;
 
     let bar2: Option<ProgressBar> = if (progress) {
-        println!("Processing input list into nodes (progress bar may end early due to duplicate IDs)");
+        trace!("Processing input list into nodes (progress bar may end early due to duplicate IDs)");
         Some(ProgressBar::new((input_list.strings.len() as u64)))
     } else {
         None
@@ -129,7 +129,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     });
 
     let bar: Option<ProgressBar> = if progress {
-        println!("processing barcode-barcode distances (this can take a long time)...");
+        trace!("processing barcode-barcode distances (this can take a long time)...");
         Some(ProgressBar::new((string_to_node.len() as u64 * string_to_node.len() as u64) / (2 as u64)))
     } else {
         None
@@ -156,7 +156,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
 pub fn process_cliques(string_graph: &StringGraph) -> BronKerbosch<u32, u32> {
     let mut bronker = BronKerbosch::new(string_graph.graph.clone());
     bronker.compute();
-    println!("Discovered {} cliques in the data", bronker.max_cliques.len());
+    trace!("Discovered {} cliques in the data", bronker.max_cliques.len());
     bronker
 }
 

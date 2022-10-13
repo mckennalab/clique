@@ -44,7 +44,7 @@ impl KnownListDiskStream {
 
             sorted.push((field, transformed_reads.original_reads().unwrap()));
         }
-        println!("sorted size {}", sorted.len());
+        trace!("sorted size {}", sorted.len());
         sorted.sort_by(|a, b| b.0.cmp(&a.0));
 
         let mut output_container = OutputReadSetWriter::from_read_file_container(&bin);
@@ -207,7 +207,7 @@ impl KnownListConsensus {
                 container_number += 1;
             }
         });
-        println!("Dropped read count: {}", dropped_read);
+        trace!("Dropped read count: {}", dropped_read);
 
         KnownListBinSplit { best_match_to_original, original_to_best_match, hit_to_container_number: list_to_container, bins: container_number + 1 }
     }
@@ -243,12 +243,13 @@ impl KnownList {
         let mut existing_mapping = HashMap::new();
         let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
 
+        info!("Setting up known list reader for {}",&knownlist_tag_and_file_vec[1]);
         let mut raw_reader = get_reader(knownlist_tag_and_file_vec[1]).unwrap();
 
         let mut cnt = 0;
 
         let mut btree = BTreeSet::new();
-        println!("Adding known barcodes...");
+
         for line in raw_reader.lines() {
             let bytes = line.unwrap().as_bytes().to_vec();
             if validate_barcode(&bytes) {

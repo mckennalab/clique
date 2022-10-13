@@ -37,7 +37,7 @@ impl RoundRobinDiskWriter {
 
         for i in 0..run_specs.sorting_file_count {
             let temp_file = run_specs.create_temp_file();
-            println!("setting up input file: {:?}",temp_file);
+            trace!("setting up input file: {:?}",temp_file);
             underlying_files.push(temp_file.clone());
             let mut writer: GzEncoder<File> = OutputReadSetWriter::create_writer(&temp_file);
             ClusteredReads::write_header(&mut writer, read_pattern, -1);
@@ -68,7 +68,6 @@ impl RoundRobinDiskWriter {
         match self.assigned_sequences.get(sort_string) {
             Some(x) => {
                 let mut writer = self.writers.get_mut(*x).unwrap();
-                //println!("1opening the file {:?}", &self.underlying_files.get(*x));
                 self.assigned_sequences_count.insert(
                     sort_string.clone(),
                     self.assigned_sequences_count.get(sort_string).unwrap_or(&(0 as usize)) + 1
@@ -97,11 +96,11 @@ impl RoundRobinDiskWriter {
         };
 
         for i in 0..self.underlying_files.len() {
-            println!("bin = {} size = {}, file {:?}", i, self.output_counts.get(&i).unwrap(), self.underlying_files.get(i).unwrap());
+            trace!("bin = {} size = {}, file {:?}", i, self.output_counts.get(&i).unwrap(), self.underlying_files.get(i).unwrap());
         }
-        println!("lookup set size = {}",self.assigned_sequences.len());
+        trace!("lookup set size = {}",self.assigned_sequences.len());
         for (s,i) in self.assigned_sequences.iter() {
-            println!("seq = {}, {} count {}", String::from_utf8(s.clone()).unwrap(), i, self.assigned_sequences_count.get(s).unwrap_or(&0));
+            trace!("seq = {}, {} count {}", String::from_utf8(s.clone()).unwrap(), i, self.assigned_sequences_count.get(s).unwrap_or(&0));
 
         }
         SuperClusterOnDiskIterator::new_from_read_file_container(

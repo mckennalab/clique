@@ -28,6 +28,7 @@ use crate::sorters::known_list::KnownListBinSplit;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::known_list::KnownListDiskStream;
 use crate::sorters::sort_streams::*;
+use std::ops::DerefMut;
 
 #[derive(Clone)]
 pub enum SortStructure {
@@ -151,36 +152,44 @@ impl Sorter {
 
         let mut current_iterators = Vec::new();
 
-        println!("making first iter");
+        trace!("making first iter");
         let current_sc = SuperClusterOnDiskIterator::new_from_flat_iterator(read_iterator, read_pattern.clone(), run_specs);
-        println!("done");
-        current_iterators.push(current_sc);
+        trace!("done");
 
-        for sort in sort_list {
-            println!("Sort level {}", sort.to_string());
-            let mut next_level_iterators = Vec::new();
+        let sort_pool = rayon::ThreadPoolBuilder::new().num_threads(run_specs.sorting_threads).build().unwrap();
 
-            for mut iter in current_iterators {
-                //println!("outer cluster");
-                for mut cluster in iter {
-                    //println!("inner cluster");
-                    let it = Sorter::sort_level(&sort, Box::new(cluster.into_iter()), read_pattern, layout, run_specs);
-                    match it {
-                        None => {println!("Warning: empty iterator result");}
-                        Some(x) => {
-                            next_level_iterators.push(x);
+        sort_pool.install(|| {
+            current_iterators.push(current_sc);
+
+            for sort in sort_list {
+                info!("Sort level {}", sort.to_string());
+                let mut next_level_iterators = Mutex::new(Vec::new());
+
+                for mut iter in current_iterators {
+                    trace!("outer cluster");
+                    iter.into_iter().par_bridge().for_each(|cluster| { //.par_bridge()
+                        trace!("inner cluster");
+                        let it = Sorter::sort_level(&sort, Box::new(cluster.into_iter()), read_pattern, layout, &mut run_specs.clone());
+                        match it {
+                            None => { trace!("Warning: empty iterator result"); }
+                            Some(x) => {
+                                //let nli = Arc::clone(&next_level_iterators);
+                                let mut nli_struct = next_level_iterators.lock().unwrap();
+                                nli_struct.push(x);
+                            }
                         }
-                    }
+                    });
                 }
+                current_iterators = next_level_iterators.into_inner().unwrap();
+                trace!("Current iter len: {}", &current_iterators.len());
             }
-            current_iterators = next_level_iterators;
-            println!("Current iter len: {}",&current_iterators.len());
-        }
-        current_iterators
+
+            current_iterators
+        })
     }
 
     pub fn sort_level(sort_structure: &SortStructure, iterator: Box<dyn Iterator<Item=ReadSetContainer>>, read_pattern: &ReadPattern, layout: &LayoutType, run_specs: &mut RunSpecifications) -> Option<SuperClusterOnDiskIterator> {
-        println!("Sort structure {}",sort_structure);
+        trace!("Sort structure {}",sort_structure);
         match sort_structure {
             SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 assert_eq!(*on_disk, true);

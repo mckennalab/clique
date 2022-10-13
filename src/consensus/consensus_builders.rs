@@ -31,7 +31,7 @@ pub struct ConsensusResult {
     pub global_umi: Vec<u8>,
 }
 
-pub fn null_cap(strs: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+pub fn null_cap(strs: &[Vec<u8>]) -> Vec<Vec<u8>> {
     strs.iter().map(|r| {
         let mut ret = r.clone();
         ret.push(b'\0');
@@ -81,6 +81,27 @@ pub fn output_poa_consensus(reads: Box<dyn Iterator<Item=ReadSetContainer>>, out
         n.index_two.as_ref().map(|r| read4_agg.push(r.seq().clone().to_vec()));
         read_count += 1;
     });
+
+    let mut read1_agg= if read1_agg.len() > 100 {
+        &read1_agg[read1_agg.len()-100..read1_agg.len()]
+    } else {
+        &read1_agg
+    };
+    let mut read2_agg= if read2_agg.len() > 100 {
+        &read2_agg[read2_agg.len()-100..read2_agg.len()]
+    } else {
+        &read2_agg
+    };
+    let mut read3_agg= if read3_agg.len() > 100 {
+        &read3_agg[read3_agg.len()-100..read3_agg.len()]
+    } else {
+        &read3_agg
+    };
+    let mut read4_agg= if read4_agg.len() > 100 {
+        &read4_agg[read4_agg.len()-100..read4_agg.len()]
+    } else {
+        &read4_agg
+    };
 
     let read_one_conc: Record = to_read(read_name.as_ref().unwrap(),
                                         &create_poa_consensus(&null_cap(read1_agg)).into_iter().collect::<Vec<u8>>(),

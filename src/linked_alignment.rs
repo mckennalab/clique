@@ -131,7 +131,6 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, o
     for overlap in &overlaps.alignment_segments {
         assert!(read_alignment_last_position <= overlap.search_start,"READ START FAILURE: {} and {}",read_alignment_last_position,overlap.search_start);
         assert!(ref_alignment_last_position <= overlap.ref_start,"REF START FAILURE: {} and {} from {}",ref_alignment_last_position,overlap.ref_start,overlap.length);
-        //println!("Segment {} {} ", overlap.ref_start, overlap.length);
 
         // look back to see what segment we haven't aligned in the read
         let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, overlap.search_start);
@@ -182,7 +181,6 @@ pub fn read_ref_alignment_lengths(alignment_tags: &Vec<AlignmentTag>) -> (usize,
     let mut read_len = 0;
     let mut ref_len = 0;
     for tag in alignment_tags {
-        //println!("TAG {}",tag);
         match tag {
             AlignmentTag::MatchMismatch(s) => {
                 read_len += s;
@@ -363,7 +361,7 @@ mod tests {
         let hits = find_greedy_non_overlapping_segments(&read, &refseq, &reference);
 
         for hit in hits.alignment_segments {
-            println!("SEEEEEDS ref: {} search: {}, length: {}, endref: {}, endsearch: {}\n", hit.ref_start, hit.search_start, hit.length, hit.ref_start + hit.length, hit.search_start + hit.length);
+            trace!("Overlapping seeds ref: {} search: {}, length: {}, endref: {}, endsearch: {}\n", hit.ref_start, hit.search_start, hit.length, hit.ref_start + hit.length, hit.search_start + hit.length);
         }
     }
 
@@ -395,7 +393,7 @@ mod tests {
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
         let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score);
 
-        println!("CIGAR: {:?}",results.2);
+        trace!("CIGAR: {:?}",results.2);
     }
 
     #[test]
@@ -428,7 +426,7 @@ mod tests {
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
         let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score);
 
-        println!("CIGAR: {:?}",results.2);
+        trace!("CIGAR: {:?}",results.2);
     }
 }
 

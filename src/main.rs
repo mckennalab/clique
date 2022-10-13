@@ -7,7 +7,10 @@ extern crate indicatif;
 extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
+
+#[macro_use]
 extern crate log;
+
 extern crate ndarray;
 extern crate needletail;
 extern crate noodles_fastq;
@@ -21,6 +24,7 @@ extern crate seq_io;
 extern crate suffix;
 extern crate tempfile;
 extern crate serde;
+extern crate chrono;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -34,7 +38,8 @@ use ::std::io::Result;
 
 use backtrace::Backtrace;
 use bio::alignment::Alignment;
-use log::{LevelFilter, SetLoggerError};
+use log::{debug, error, log_enabled, info, Level, LevelFilter};
+
 use noodles_fastq as Fastq;
 use petgraph::algo::connected_components;
 use rand::Rng;
@@ -61,6 +66,7 @@ use crate::umis::sequence_clustering::*;
 use std::rc::Rc;
 use std::borrow::Borrow;
 use nanoid::nanoid;
+use chrono::Local;
 
 mod linked_alignment;
 pub mod extractor;
@@ -104,6 +110,7 @@ mod sorters {
 mod reference {
     pub mod fasta_reference;
 }
+extern crate pretty_env_logger;
 
 #[derive(Debug, StructOpt)]
 enum Cmd {
@@ -164,8 +171,15 @@ struct Args {
 }
 
 fn main() {
+    if let Err(_) = std::env::var("RUST_LOG") {
+        std::env::set_var("RUST_LOG", "info");
+    }
+
+    pretty_env_logger::init();
+
+
     let parameters = Args::parse();
-    println!("{:?}",&parameters.cmd);
+    trace!("{:?}",&parameters.cmd);
     match &parameters.cmd {
         Cmd::Collapse => {
             let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
@@ -174,7 +188,7 @@ fn main() {
 
             let est_read_count = estimate_read_count(&parameters.read1).unwrap_or(0);
 
-            println!("estimated read set/pair count = {}", est_read_count);
+            info!("estimated read set/pair count = {}", est_read_count);
 
             let no_temp_file: String = String::from("NONE");
             let temp_dir: Option<PathBuf> = match &parameters.temp_dir {
@@ -199,7 +213,7 @@ fn main() {
             let mut known_list_hash = HashMap::new();
             known_list_hash.insert(read_layout.clone(), Arc::new(Mutex::new(known_list)));
 
-            println!("Sorting");
+            info!("------------------------- Sorting ------------------------- ");
             let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
             let read_piles = Sorter::sort(sort_structure,
                                           &read_bundle,
@@ -209,7 +223,7 @@ fn main() {
                                           &ReadPattern::from_read_file_container(&read_bundle),
                                           &mut run_specs);
 
-            println!("Consensus");
+            info!("------------------------- Building Consensus ------------------------- ");
             threaded_write_consensus_reads(read_piles,
                                            &parameters.output_base,
                                            &ReadPattern::from_read_file_container(&read_bundle),

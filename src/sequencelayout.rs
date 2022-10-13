@@ -44,7 +44,7 @@ pub fn read_configuration_file(filename: &String) -> Configuration {
                 let split = ip.split("\t");
                 let vec: Vec<&str> = split.collect();
                 if vec.len() != 5 {
-                    println!("line: {:?} not in five parts (name,symbol,type,mismatches,file)", vec);
+                    trace!("line: {:?} not in five parts (name,symbol,type,mismatches,file)", vec);
                 }
 
                 symbol_to_name.insert(vec[1].to_owned(),vec[0].to_owned());
