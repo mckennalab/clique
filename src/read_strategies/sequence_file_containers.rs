@@ -791,8 +791,10 @@ impl ClusteredReads {
     pub fn to_disk(output: &mut GzEncoder<File>, pattern: &ReadPattern, length: i64, reads: impl Iterator<Item=ReadSetContainer>) {
         ClusteredReads::write_header(output, pattern, length);
 
+        let mut read_count = 0;
         for rl in reads {
             write!(output, "{}", rl.read_one);
+            read_count += 1;
             if let Some(rd) = &rl.read_two {
                 write!(output, "{}", rd);
             };
@@ -803,6 +805,7 @@ impl ClusteredReads {
                 write!(output, "{}", rd);
             };
         }
+        assert_eq!(length,read_count);
         output.flush();
     }
 
