@@ -3,10 +3,12 @@ use crate::read_strategies::sequence_file_containers::ReadSetContainer;
 use crate::sorters::sorter::SortStructure;
 use std::path::{Path, PathBuf};
 use bio::io::fastq::Record;
+use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
 
 pub struct TenXLayout {
     name: Vec<u8>,
-    myumi: Vec<u8>,
+    myumi: HashMap<UMIType,Vec<u8>>,
     cellid: Vec<u8>,
     read_one: Vec<u8>,
     original_reads: Option<ReadSetContainer>,
@@ -20,12 +22,13 @@ impl TenXLayout {
 
         let read2 = read.read_two.as_ref().unwrap().clone();
         let cell_id_sliced = read2.seq()[0..16].to_vec();
-        let umi_sliced = read2.seq()[16..28].to_vec();
+        let umi_sliced = HashMap::from([
+            (UMIType::TENXRT{size: 16}, cell_id_sliced.clone()), (UMIType::DEGENERATESEQ{size: 12}, read2.seq()[16..28].to_vec())]);
 
         TenXLayout {
             name: read.read_one.id().as_bytes().to_vec(),
-            myumi: umi_sliced,
-            cellid: cell_id_sliced,
+            myumi: umi_sliced.clone(),
+            cellid: cell_id_sliced.clone(),
             read_one: read.read_one.seq().to_vec(),
             original_reads: Some(read.clone()),
         }
@@ -37,12 +40,8 @@ impl SequenceLayout for TenXLayout {
         &self.name
     }
 
-    fn umi(&self) -> Option<&Vec<u8>> {
+    fn umis(&self) -> Option<&HashMap<UMIType, Vec<u8>>> {
         Some(&self.myumi)
-    }
-
-    fn static_id(&self) -> Option<&Vec<u8>> {
-        None
     }
 
     fn read_one(&self) -> &Vec<u8> {
@@ -51,10 +50,6 @@ impl SequenceLayout for TenXLayout {
 
     fn read_two(&self) -> Option<&Vec<u8>> {
         None
-    }
-
-    fn cell_id(&self) -> Option<&Vec<u8>> {
-        Some(&self.cellid)
     }
 
     fn layout_type(&self) -> LayoutType {
@@ -69,10 +64,13 @@ impl SequenceLayout for TenXLayout {
         self.original_reads.is_some()
     }
 
-    fn correct_known_sequence(&mut self, new: &Vec<u8>) {
-        assert_eq!(self.cellid.len(),new.len());
-        self.cellid = new.clone();
-        let mut new_read2_seq = new.clone();
+    fn correct_known_sequence(&mut self, new_type: UMIType, new_seq: &Vec<u8>) {
+        // we only correct the known cell ID
+        matches!(new_type,UMIType::TENXRT{size});
+        assert_eq!(self.cellid.len(),new_seq.len());
+
+        self.cellid = new_seq.clone();
+        let mut new_read2_seq = new_seq.clone();
         let old_read_2 = self.original_reads.as_ref().unwrap().read_two.as_ref().unwrap();
         new_read2_seq.append(&mut old_read_2.seq().clone()[16..28].to_vec());
         let mut new_read2 = Record::with_attrs(old_read_2.id().clone(), None, new_read2_seq.as_slice(), old_read_2.qual().clone());

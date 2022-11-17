@@ -24,6 +24,9 @@ use crate::utils::file_utils::get_reader;
 use crate::RunSpecifications;
 use indicatif::ProgressBar;
 use crate::sorters::balanced_split_output::RoundRobinDiskWriter;
+use std::str::FromStr;
+
+
 
 pub struct KnownListDiskStream {
     sorted_bins: SuperClusterOnDiskIterator,
@@ -31,7 +34,7 @@ pub struct KnownListDiskStream {
 }
 
 impl KnownListDiskStream {
-    pub fn sort_disk_in_place(bin: &ReadFileContainer, sort_structure: &SortStructure, layout: &LayoutType) {
+    pub fn sort_disk_in_place(umi_type: UMIType, bin: &ReadFileContainer, sort_structure: &SortStructure, layout: &LayoutType) {
         let read_iterator = ReadIterator::new_from_bundle(bin);
 
         let mut sorted = Vec::new();
@@ -40,7 +43,7 @@ impl KnownListDiskStream {
             let transformed_reads = transform(rd, layout);
             assert!(transformed_reads.has_original_reads());
 
-            let field = sort_structure.get_field(&transformed_reads).unwrap();
+            let field = transformed_reads.umis().unwrap().get(&umi_type).unwrap().clone();
 
             sorted.push((field, transformed_reads.original_reads().unwrap()));
         }
@@ -56,10 +59,13 @@ impl KnownListDiskStream {
 
 
 impl<'z> SortStream<'z> for KnownListDiskStream {
-    fn from_read_iterator(read_iter: Box<dyn Iterator<Item=ReadSetContainer>>, read_pattern: &ReadPattern, sort_structure: &SortStructure, layout: &LayoutType, run_specs: &'z mut RunSpecifications) -> Self {
+    fn from_read_iterator(read_iter: Box<dyn Iterator<Item=ReadSetContainer>>,
+                          read_pattern: &ReadPattern,
+                          sort_structure: &SortStructure,
+                          layout: &LayoutType,
+                          run_specs: &'z mut RunSpecifications) -> Self {
         match sort_structure {
-            SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => {
-
+            SortStructure::KNOWN_LIST { umi_type, layout_type, max_distance, on_disk, known_list } => {
 
                 let mut consensus_manager = KnownListConsensus::new();
 
@@ -70,12 +76,12 @@ impl<'z> SortStream<'z> for KnownListDiskStream {
                 for rd in read_iter {
 
                     let mut transformed_reads = transform(rd.clone(), &layout);
-                    let sequence = sort_structure.get_field(&transformed_reads).unwrap();
+                    let sequence = transformed_reads.umis().unwrap().get(umi_type).unwrap().clone();
 
                     let corrected_hits = correct_to_known_list(&sequence, &mut known_list.lock().as_mut().unwrap(), 1);
                     consensus_manager.add_hit(&sequence, corrected_hits.clone());
                     if corrected_hits.hits.len() == 1 {
-                        transformed_reads.correct_known_sequence(corrected_hits.hits.get(0).unwrap());
+                        transformed_reads.correct_known_sequence(umi_type.clone(), corrected_hits.hits.get(0).unwrap());
                         rrs.write(&sequence, &rd);
                     }
 
@@ -93,7 +99,7 @@ impl<'z> SortStream<'z> for KnownListDiskStream {
     }
 
     fn from_read_collection(read_collection: ClusteredReads, sort_structure: &SortStructure, layout: &LayoutType, pattern: ReadPattern, run_specs: &'z mut RunSpecifications) -> Self {
-        KnownListDiskStream::from_read_iterator(read_collection.reads, &pattern, sort_structure, layout, run_specs)
+        KnownListDiskStream::from_read_iterator( read_collection.reads, &pattern, sort_structure, layout, run_specs)
     }
 
     fn sorted_read_set(self) -> Option<SuperClusterOnDiskIterator> {
@@ -221,7 +227,7 @@ pub struct KnownListBinSplit {
 }
 
 pub struct KnownList {
-    pub name: String,
+    pub name: UMIType,
     pub known_list_map: HashMap<Vec<u8>, BestHits>,
     pub known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>>,
     pub known_list_subset_key_size: usize,
@@ -233,52 +239,62 @@ fn validate_barcode(barcode: &Vec<u8>) -> bool {
 
 impl KnownList {
     const KNOWN_LIST_SEPARATOR: &'static str = ":";
+    const KNOWN_TAG_SEPARATOR: &'static str = ":";
 
-    pub fn new(knownlist_tag_and_file: &String, starting_nmer_size: usize) -> KnownList {
+    pub fn new(umi_type:UMIType,  knownlist_tag_and_file: &String, starting_nmer_size: usize) -> HashMap<UMIType,KnownList> {
+        let knownlist_tag_and_files = knownlist_tag_and_file.split(KnownList::KNOWN_TAG_SEPARATOR).collect::<Vec<&str>>();
 
-        // TODO: fix the sep here
-        let knownlist_tag_and_file_vec = knownlist_tag_and_file.split(":").collect::<Vec<&str>>();
-        assert_eq!(knownlist_tag_and_file_vec.len(), 2);
+        let mut known_lists : HashMap<UMIType,KnownList> = HashMap::new();
 
-        let mut existing_mapping = HashMap::new();
-        let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
+        for known_list_pair in knownlist_tag_and_files {
+            let knownlist_tag_and_file_vec = known_list_pair.split(KnownList::KNOWN_TAG_SEPARATOR).collect::<Vec<&str>>();
+            assert_eq!(knownlist_tag_and_file_vec.len(), 2);
+            let tag = match UMIType::from_str(knownlist_tag_and_file_vec[0]) {
+                Ok(x) => {x}
+                Err(_) => {panic!("Unable to parse your known list with tag: {}",knownlist_tag_and_file_vec[0])}
+            };
 
-        info!("Setting up known list reader for {}",&knownlist_tag_and_file_vec[1]);
-        let mut raw_reader = get_reader(knownlist_tag_and_file_vec[1]).unwrap();
+            let mut existing_mapping = HashMap::new();
+            let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
 
-        let mut cnt = 0;
+            info!("Setting up known list reader for {}", &knownlist_tag_and_file_vec[1]);
+            let mut raw_reader = get_reader(knownlist_tag_and_file_vec[1]).unwrap();
 
-        let mut btree = BTreeSet::new();
+            let mut cnt = 0;
 
-        for line in raw_reader.lines() {
-            let bytes = line.unwrap().as_bytes().to_vec();
-            if validate_barcode(&bytes) {
-                btree.insert(bytes);
+            let mut btree = BTreeSet::new();
+
+            for line in raw_reader.lines() {
+                let bytes = line.unwrap().as_bytes().to_vec();
+                if validate_barcode(&bytes) {
+                    btree.insert(bytes);
+                }
             }
-        }
 
-        // now the barcodes are in order, use this to generate grouped keys
-        let mut prefix: Option<Vec<u8>> = None;
-        let mut container: Vec<Vec<u8>> = Vec::new();
-        for bytes in &btree {
-            if !prefix.is_some() { prefix = Some(bytes[0..starting_nmer_size].to_vec()); }
+            // now the barcodes are in order, use this to generate grouped keys
+            let mut prefix: Option<Vec<u8>> = None;
+            let mut container: Vec<Vec<u8>> = Vec::new();
+            for bytes in &btree {
+                if !prefix.is_some() { prefix = Some(bytes[0..starting_nmer_size].to_vec()); }
 
-            existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
+                existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
 
-            let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
-            if edit_distance(&first_x, prefix.as_ref().unwrap()) > 0 {
-                known_list_subset.insert(prefix.unwrap(), container.clone());
-                container.clear();
-                prefix = Some(first_x);
+                let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
+                if edit_distance(&first_x, prefix.as_ref().unwrap()) > 0 {
+                    known_list_subset.insert(prefix.unwrap(), container.clone());
+                    container.clear();
+                    prefix = Some(first_x);
+                }
+                container.push(bytes.clone());
             }
-            container.push(bytes.clone());
+            known_list_subset.insert(prefix.unwrap(), container.clone());
+            known_lists.insert(tag, KnownList {
+                name: umi_type.clone(),
+                known_list_map: existing_mapping,
+                known_list_subset,
+                known_list_subset_key_size: starting_nmer_size,
+            });
         }
-        known_list_subset.insert(prefix.unwrap(), container.clone());
-        KnownList {
-            name: knownlist_tag_and_file_vec[0].to_string(),
-            known_list_map: existing_mapping,
-            known_list_subset,
-            known_list_subset_key_size: starting_nmer_size,
-        }
+        known_lists
     }
 }

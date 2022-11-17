@@ -20,6 +20,7 @@ use crate::read_strategies::sequence_file_containers::{ReadFileContainer, Output
 use std::cell::RefCell;
 use std::io::Read;
 use std::sync::Mutex;
+use crate::read_strategies::sequence_layout::UMIType;
 
 
 pub trait SortStream<'z> {
@@ -39,9 +40,15 @@ pub struct ClusteredDiskSortStream<'z> {
 impl<'z> ClusteredDiskSortStream<'z> {
     fn push(&mut self, read: ReadSetContainer) {
         let seq_struct = transform(read, &self.layout);
-        let sequence = self.sort_structure.get_field(&seq_struct).unwrap();
+        let umi_t = match &self.sort_structure {
+            SortStructure::KNOWN_LIST { umi_type, layout_type, max_distance, on_disk, known_list } => {umi_type.clone()},
+            SortStructure::HD_UMI { umi_type, layout_type, max_distance, on_disk } => {umi_type.clone()},
+            SortStructure::LD_UMI { umi_type, layout_type, max_distance, on_disk } => {umi_type.clone()},
+        };
 
-        let elements = self.reads.entry(sequence).or_insert(vec![]);
+        let sequence = seq_struct.umis().unwrap().get(&umi_t).unwrap();
+
+        let elements = self.reads.entry(sequence.clone()).or_insert(vec![]);
         elements.push(seq_struct.original_reads().unwrap());
     }
 }
@@ -83,9 +90,9 @@ impl<'z> SortStream<'z> for ClusteredDiskSortStream<'z> {
     fn sorted_read_set(self) -> Option<SuperClusterOnDiskIterator> {
 
         let max_dist = match &self.sort_structure {
-            SortStructure::KNOWN_LIST { layout_type, max_distance: maximum_distance, on_disk, known_list } => { maximum_distance }
-            SortStructure::HD_UMI { layout_type, max_distance, on_disk } => { max_distance }
-            SortStructure::LD_UMI { layout_type, max_distance, on_disk } => { max_distance }
+            SortStructure::KNOWN_LIST { umi_type, layout_type, max_distance, on_disk, known_list } => { max_distance },
+            SortStructure::HD_UMI     { umi_type, layout_type, max_distance, on_disk } => { max_distance },
+            SortStructure::LD_UMI     { umi_type, layout_type, max_distance, on_disk } => { max_distance },
         };
 
         let collection = InputList { strings: self.reads.keys().map(|x| x.clone()).collect::<Vec<Vec<u8>>>(), max_dist: *max_dist as u64 };

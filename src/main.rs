@@ -1,57 +1,59 @@
 extern crate backtrace;
 extern crate bgzip;
 extern crate bio;
+extern crate chrono;
 extern crate fastq;
 extern crate flate2;
 extern crate indicatif;
 extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
-
 #[macro_use]
 extern crate log;
-
 extern crate ndarray;
 extern crate needletail;
 extern crate noodles_fastq;
 extern crate num_traits;
 extern crate petgraph;
+extern crate pretty_env_logger;
 extern crate rand;
 extern crate rayon;
 extern crate rust_htslib;
 extern crate rust_spoa;
 extern crate seq_io;
+extern crate serde;
 extern crate suffix;
 extern crate tempfile;
-extern crate serde;
-extern crate chrono;
 
+use ::std::io::Result;
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Error, Write};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use ::std::io::Result;
 
 use backtrace::Backtrace;
 use bio::alignment::Alignment;
-use log::{debug, error, log_enabled, info, Level, LevelFilter};
-
+use chrono::Local;
+use log::{debug, error, info, Level, LevelFilter, log_enabled};
 use noodles_fastq as Fastq;
 use petgraph::algo::connected_components;
 use rand::Rng;
 use rayon::prelude::*;
 use seq_io::fasta::{OwnedRecord, Reader, Record};
-use tempfile::{NamedTempFile, Builder};
+use tempfile::{Builder, NamedTempFile};
 use tempfile::TempDir as ActualTempDir;
 
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
 use clap::Parser;
 use clap::StructOpt;
+use nanoid::nanoid;
 
 use crate::consensus::consensus_builders::threaded_write_consensus_reads;
 use crate::extractor::extract_tagged_sequences;
@@ -63,10 +65,6 @@ use crate::sorters::known_list::KnownList;
 use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::sorter::{Sorter, SortStructure};
 use crate::umis::sequence_clustering::*;
-use std::rc::Rc;
-use std::borrow::Borrow;
-use nanoid::nanoid;
-use chrono::Local;
 
 mod linked_alignment;
 pub mod extractor;
@@ -93,6 +91,7 @@ mod read_strategies {
     pub mod sequence_layout;
     pub mod sequence_file_containers;
     pub mod ten_x;
+    pub mod sci;
 }
 
 mod utils {
@@ -110,7 +109,6 @@ mod sorters {
 mod reference {
     pub mod fasta_reference;
 }
-extern crate pretty_env_logger;
 
 #[derive(Debug, StructOpt)]
 enum Cmd {
@@ -177,9 +175,8 @@ fn main() {
 
     pretty_env_logger::init();
 
-
     let parameters = Args::parse();
-    trace!("{:?}",&parameters.cmd);
+    trace!("{:?}", &parameters.cmd);
     match &parameters.cmd {
         Cmd::Collapse => {
             let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
@@ -209,19 +206,21 @@ fn main() {
             // setup our thread pool
             rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
 
-            let mut known_list = KnownList::new(&parameters.known_list, 7);
+            let mut known_list = KnownList::new(UMIType::TENXRT { size: 16 }, &parameters.known_list, 7);
             let mut known_list_hash = HashMap::new();
-            known_list_hash.insert(read_layout.clone(), Arc::new(Mutex::new(known_list)));
+            known_list_hash.insert(read_layout.clone(), Arc::new(Mutex::new(known_list.remove(&UMIType::TENXRT { size: 16 }).unwrap())));
 
             info!("------------------------- Sorting ------------------------- ");
-            let sort_structure = SortStructure::from_layout(&read_layout, known_list_hash);
-            let read_piles = Sorter::sort(sort_structure,
-                                          &read_bundle,
-                                          &"./tmp/".to_string(),
-                                          &"test_sorted.txt.gz".to_string(),
-                                          &read_layout,
-                                          &ReadPattern::from_read_file_container(&read_bundle),
-                                          &mut run_specs);
+            let sort_structure = SortStructure::from_layout(&read_layout, &known_list_hash);
+            let read_piles = Sorter::sort(
+                UMIType::TENXRT { size: 16 },
+                sort_structure,
+                &read_bundle,
+                &"./tmp/".to_string(),
+                &"test_sorted.txt.gz".to_string(),
+                &read_layout,
+                &ReadPattern::from_read_file_container(&read_bundle),
+                &mut run_specs);
 
             info!("------------------------- Building Consensus ------------------------- ");
             threaded_write_consensus_reads(read_piles,
@@ -282,7 +281,7 @@ fn main() {
                            str::replace(name, " ", "_"),
                            str::from_utf8(&results.1).unwrap(),
                            str::from_utf8(&x.seq().to_vec()).unwrap(),
-                            results.2.iter().map(|tag| format!("{}",tag)).collect::<Vec<String>>().join(",")).
+                           results.2.iter().map(|tag| format!("{}", tag)).collect::<Vec<String>>().join(",")).
                         expect("Unable to write to output file");
 
                     output.flush().expect("Unable to flush output");
@@ -298,7 +297,7 @@ fn main() {
                            str::replace(name, " ", "_"),
                            str::from_utf8(&results.1).unwrap(),
                            str::from_utf8(&reverse_complement(&x.seq().to_vec())).unwrap(),
-                           results.2.iter().map(|tag| format!("{}",tag)).collect::<Vec<String>>().join(",")).
+                           results.2.iter().map(|tag| format!("{}", tag)).collect::<Vec<String>>().join(",")).
                         expect("Unable to write to output file");
 
                     output.flush().expect("Unable to flush output");
@@ -340,7 +339,6 @@ impl Drop for TempDir {
 
 impl RunSpecifications {
     pub fn create_temp_file(&mut self) -> PathBuf {
-
         let file_path = PathBuf::from(&self.tmp_location.clone().path()).join(nanoid!());
         file_path
     }
@@ -357,30 +355,3 @@ impl Clone for RunSpecifications {
         }
     }
 }
-
-
-#[allow(dead_code)]
-struct AlignedWithFeatures {
-    alignment: Alignment,
-    read_id: String,
-    read: Vec<u8>,
-    reference: Vec<u8>,
-    features: BTreeMap<String, String>,
-}
-
-fn to_two_line_fasta(align_features: AlignedWithFeatures, output_upper: bool) -> String {
-    if output_upper {
-        format!(">@{}_{}\n{}\n>ref\n{}\n", align_features.read_id,
-                align_features.features.iter().filter(|(s, _t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),
-                align_features.features.get(&"r".to_string()).unwrap(),
-                align_features.features.get(&"e".to_string()).unwrap())
-    } else {
-        format!(">@{}_{}\n{}\n>ref\n{}\n",
-                align_features.read_id,
-                align_features.features.iter().filter(|(s, _t)| **s != "r".to_string() && **s != "e".to_string()).map(|(s, t)| format!("{}{}", &**s, &**t)).collect::<Vec<_>>().join(","),
-                &format!("{}", String::from_utf8_lossy(align_features.read.as_slice())),
-                &format!("{}", String::from_utf8_lossy(align_features.reference.as_slice())))
-    }
-}
-
-
