@@ -274,7 +274,7 @@ fn align_reads(parameters: &Args) {
             ).expect("Unable to write to output file");
         }
     });
-    warn!("Dropped {} reads that were greater than {}x the reference length",*too_long.clone().lock().unwrap(),parameters.max_reference_multiplier);
+    //warn!("Dropped {} reads that were greater than {}x the reference length",*too_long.clone().lock().unwrap(),parameters.max_reference_multiplier);
 }
 
 fn merger(parameters: &Args) {
