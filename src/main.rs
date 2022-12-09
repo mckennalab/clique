@@ -67,6 +67,8 @@ use crate::sorters::known_list::KnownListConsensus;
 use crate::sorters::sorter::{Sorter, SortStructure};
 use crate::umis::sequence_clustering::*;
 
+use pretty_trace::*;
+
 mod linked_alignment;
 pub mod extractor;
 mod simple_umi_clustering;
@@ -173,6 +175,8 @@ struct Args {
 }
 
 fn main() {
+    PrettyTrace::new().ctrlc().on();
+
     if let Err(_) = std::env::var("RUST_LOG") {
         std::env::set_var("RUST_LOG", "warn");
     }
