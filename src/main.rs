@@ -28,7 +28,7 @@ extern crate tempfile;
 use ::std::io::Result;
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
+use std::fs::{File, read};
 use std::io::{BufRead, BufReader, Error, Write};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -159,6 +159,9 @@ struct Args {
     #[structopt(long, default_value = "250")]
     max_bins: usize,
 
+    #[structopt(long, default_value = "2")]
+    max_reference_multiplier: usize,
+
     #[structopt(long, default_value = "1")]
     sorting_threads: usize,
 
@@ -225,39 +228,49 @@ fn align_reads(parameters: &Args) {
         gap_extend: -5.0,
     };
 
+    let mut too_long : Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+
     read_iterator.par_bridge().for_each(|xx| {
         let x = xx.read_one;
         let name = &String::from(x.id()).to_string();
 
-        let forward_oriented_seq = if orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0 {
-            x.seq().to_vec().clone()
+        let read_length = x.seq().to_vec().len();
+        if read_length > reference.sequence.len() * parameters.max_reference_multiplier {
+            warn!("Dropping read of length {}",read_length);
+            let mut cnt = *too_long.clone().lock().unwrap();
+            cnt += 1;
         } else {
-            reverse_complement(&x.seq().to_vec())
-        };
+            let forward_oriented_seq = if orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0 {
+                x.seq().to_vec().clone()
+            } else {
+                reverse_complement(&x.seq().to_vec())
+            };
 
-        let fwd_score_mp = find_greedy_non_overlapping_segments(&forward_oriented_seq, &reference.sequence, &reference_lookup);
-        let results = align_string_with_anchors(&forward_oriented_seq, &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
+            let fwd_score_mp = find_greedy_non_overlapping_segments(&forward_oriented_seq, &reference.sequence, &reference_lookup);
+            let results = align_string_with_anchors(&forward_oriented_seq, &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
 
 
-        let extracted_seqs = if parameters.use_capture_sequences {
-            Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref).iter().map(|k| format!("{}:{}", &k.0, &k.1)).join(","))
-        } else {
-            None
-        };
+            let extracted_seqs = if parameters.use_capture_sequences {
+                Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref).iter().map(|k| format!("{}:{}", &k.0, &k.1)).join(","))
+            } else {
+                None
+            };
 
-        let cigar_string = results.cigar_tags.iter().map(|tag| format!("{}", tag)).collect::<Vec<String>>().join(",");
+            let cigar_string = results.cigar_tags.iter().map(|tag| format!("{}", tag)).collect::<Vec<String>>().join(",");
 
-        let output = Arc::clone(&output);
-        let mut output = output.lock().unwrap();
+            let output = Arc::clone(&output);
+            let mut output = output.lock().unwrap();
 
-        write!(output, ">ref\n{}\n>{}__{}__{}\n{}\n",
-               str::from_utf8(&results.aligned_ref).unwrap(),
-               str::replace(name, " ", "_"),
-               extracted_seqs.unwrap_or(String::from("NONE")),
-               cigar_string,
-               str::from_utf8(&results.aligned_read).unwrap(),
-        ).expect("Unable to write to output file");
+            write!(output, ">ref\n{}\n>{}__{}__{}\n{}\n",
+                   str::from_utf8(&results.aligned_ref).unwrap(),
+                   str::replace(name, " ", "_"),
+                   extracted_seqs.unwrap_or(String::from("NONE")),
+                   cigar_string,
+                   str::from_utf8(&results.aligned_read).unwrap(),
+            ).expect("Unable to write to output file");
+        }
     });
+    warn!("Dropped {} reads that were greater than {}x the reference length",*too_long.clone().lock().unwrap(),parameters.max_reference_multiplier);
 }
 
 fn merger(parameters: &Args) {
