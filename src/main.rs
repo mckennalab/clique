@@ -232,7 +232,7 @@ fn align_reads(parameters: &Args) {
         gap_extend: -5.0,
     };
 
-    let mut too_long : Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    //let mut too_long : Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
 
     read_iterator.par_bridge().for_each(|xx| {
         let x = xx.read_one;
@@ -241,8 +241,8 @@ fn align_reads(parameters: &Args) {
         let read_length = x.seq().to_vec().len();
         if read_length > reference.sequence.len() * parameters.max_reference_multiplier {
             warn!("Dropping read of length {}",read_length);
-            let mut cnt = *too_long.clone().lock().unwrap();
-            cnt += 1;
+            //let mut cnt = *too_long.clone().lock().unwrap();
+            //cnt += 1;
         } else {
             let forward_oriented_seq = if orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0 {
                 x.seq().to_vec().clone()
