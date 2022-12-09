@@ -264,7 +264,7 @@ fn align_reads(parameters: &Args) {
 
             let output = Arc::clone(&output);
             let mut output = output.lock().unwrap();
-
+            println!("Writing read!");
             write!(output, ">ref\n{}\n>{}__{}__{}\n{}\n",
                    str::from_utf8(&results.aligned_ref).unwrap(),
                    str::replace(name, " ", "_"),
