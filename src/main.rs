@@ -238,8 +238,6 @@ fn align_reads(parameters: &Args) {
         let fwd_score_mp = find_greedy_non_overlapping_segments(&forward_oriented_seq, &reference.sequence, &reference_lookup);
         let results = align_string_with_anchors(&forward_oriented_seq, &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
 
-        let output = Arc::clone(&output);
-        let mut output = output.lock().unwrap();
 
         let extracted_seqs = if parameters.use_capture_sequences {
             Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref).iter().map(|k| format!("{}:{}", &k.0, &k.1)).join(","))
@@ -248,6 +246,9 @@ fn align_reads(parameters: &Args) {
         };
 
         let cigar_string = results.cigar_tags.iter().map(|tag| format!("{}", tag)).collect::<Vec<String>>().join(",");
+
+        let output = Arc::clone(&output);
+        let mut output = output.lock().unwrap();
 
         write!(output, ">ref\n{}\n>{}__{}__{}\n{}\n",
                str::from_utf8(&results.aligned_ref).unwrap(),
