@@ -171,7 +171,7 @@ struct Args {
 
 fn main() {
     if let Err(_) = std::env::var("RUST_LOG") {
-        std::env::set_var("RUST_LOG", "info");
+        std::env::set_var("RUST_LOG", "warn");
     }
 
     pretty_env_logger::init();
