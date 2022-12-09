@@ -30,6 +30,7 @@ use crate::sorters::known_list::KnownListDiskStream;
 use crate::sorters::sort_streams::*;
 use std::ops::DerefMut;
 use crate::read_strategies::sequence_layout::UMIType;
+use crate::read_strategies::sequence_layout::UMIInstance;
 
 #[derive(Clone)]
 pub enum SortStructure {
@@ -59,18 +60,19 @@ impl std::fmt::Display for SortStructure {
 
 
 impl SortStructure {
-    pub fn from_layout(layout: &LayoutType, known_lists: &HashMap<LayoutType, Arc<Mutex<KnownList>>>) -> Vec<SortStructure> {
+    pub fn from_umi_type(layout: &LayoutType, known_lists: &HashMap<UMIType, UMIInstance>) -> Vec<SortStructure> {
         match layout {
             LayoutType::TENXV3 => {
                 let mut ret = Vec::new();
                 ret.push(SortStructure::KNOWN_LIST {
-                    umi_type: UMIType::TENXRT{size: 18},
+                    umi_type: UMIType::TENXRT,
                     layout_type: LayoutType::TENXV3,
                     max_distance: 1,
                     on_disk: true,
-                    known_list: known_lists.get(&LayoutType::TENXV3).unwrap().clone() });
+                    known_list: known_lists.get(&UMIType::TENXRT).unwrap().known_list.as_ref().unwrap().clone() });
+
                 ret.push(SortStructure::LD_UMI {
-                    umi_type: UMIType::DEGENERATESEQ{size: 12},
+                    umi_type: UMIType::DEGENERATESEQ,
                     layout_type: LayoutType::TENXV3,
                     max_distance: 3,
                     on_disk: false });
@@ -79,13 +81,14 @@ impl SortStructure {
             LayoutType::TENXV2 => {
                 let mut ret = Vec::new();
                 ret.push(SortStructure::KNOWN_LIST {
-                    umi_type: UMIType::TENXRT{size: 18},
+                    umi_type: UMIType::TENXRT,
                     layout_type: LayoutType::TENXV2,
                     max_distance: 1,
                     on_disk: true,
-                    known_list: known_lists.get(&LayoutType::TENXV3).unwrap().clone() });
+                    known_list: known_lists.get(&UMIType::TENXRT).unwrap().known_list.as_ref().unwrap().clone() });
+
                 ret.push(SortStructure::LD_UMI {
-                    umi_type: UMIType::DEGENERATESEQ{size: 10},
+                    umi_type: UMIType::DEGENERATESEQ,
                     layout_type: LayoutType::TENXV2,
                     max_distance: 3,
                     on_disk: false });
@@ -93,7 +96,52 @@ impl SortStructure {
             }
             LayoutType::PAIREDUMI => { unimplemented!() }
             LayoutType::PAIRED => { unimplemented!() }
-            LayoutType::SCI => { unimplemented!() }
+            LayoutType::SCI => {
+                let mut ret = Vec::new();
+
+                let sci_rt_list = match known_lists.get(&UMIType::SCIRT ) {
+                    None => {panic!("Unable to extract SCI RT from your parsed known-list input")}
+                    Some(x) => {x.known_list.as_ref().unwrap().clone()}
+                };
+
+                let sci_lig_list = match known_lists.get(&UMIType::SCILIG ) {
+                    None => {panic!("Unable to extract SCI LIG from your parsed known-list input")}
+                    Some(x) => {x.known_list.as_ref().unwrap().clone()}
+                };
+
+                let sci_pcr_list = match known_lists.get(&UMIType::SCIPCR ) {
+                    None => {panic!("Unable to extract SCI PCR  file from your parsed known-list input")}
+                    Some(x) => {x.known_list.as_ref().unwrap().clone()}
+                };
+
+                ret.push(SortStructure::KNOWN_LIST {
+                    umi_type: UMIType::SCIRT,
+                    layout_type: LayoutType::SCI,
+                    max_distance: 1,
+                    on_disk: true,
+                    known_list: sci_rt_list });
+
+                ret.push(SortStructure::KNOWN_LIST {
+                    umi_type: UMIType::SCILIG,
+                    layout_type: LayoutType::SCI,
+                    max_distance: 1,
+                    on_disk: true,
+                    known_list: sci_lig_list });
+
+                ret.push(SortStructure::KNOWN_LIST {
+                    umi_type: UMIType::SCIPCR,
+                    layout_type: LayoutType::SCI,
+                    max_distance: 1,
+                    on_disk: true,
+                    known_list: sci_pcr_list });
+
+                ret.push(SortStructure::LD_UMI {
+                    umi_type: UMIType::DEGENERATESEQ,
+                    layout_type: LayoutType::SCI,
+                    max_distance: 3,
+                    on_disk: false });
+                ret
+            }
             _ => { unimplemented!() }
         }
     }
@@ -169,7 +217,7 @@ impl Sorter {
                     });
                 }
                 current_iterators = next_level_iterators.into_inner().unwrap();
-                trace!("Current iter len: {}", &current_iterators.len());
+                info!("Current iter len: {}", &current_iterators.len());
             }
 
             current_iterators
@@ -181,6 +229,7 @@ impl Sorter {
         match sort_structure {
             SortStructure::KNOWN_LIST { umi_type, layout_type, max_distance: maximum_distance, on_disk, known_list } => {
                 assert_eq!(*on_disk, true);
+                trace!("Style requested is: {}",read_pattern);
                 let mut sorter = KnownListDiskStream::from_read_iterator(iterator, read_pattern, sort_structure, layout, run_specs);
                 sorter.sorted_read_set()
             }

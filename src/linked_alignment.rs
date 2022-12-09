@@ -111,7 +111,11 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
     SharedSegments { start_position: least_ref_pos as usize, alignment_segments: return_hits}
 }
 
-
+pub struct AlignmentResults {
+    pub aligned_read: Vec<u8>,
+    pub aligned_ref: Vec<u8>,
+    pub cigar_tags: Vec<AlignmentTag>,
+}
 
 /// find a series of exact matches between the search string and the reference, and then align the
 /// sequences between those exact matches using an inversion aware aligner
@@ -121,7 +125,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
 /// * `search_string` - a u8 Vec representing the search string
 /// * `reference` - a u8 Vec representing the reference string
 /// * `seeds` - a suffix array lookup object
-pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, overlaps: &SharedSegments, my_score: &InversionScoring, my_aff_score: &AffineScoring) -> (Vec<u8>,Vec<u8>,Vec<AlignmentTag>) {
+pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, overlaps: &SharedSegments, my_score: &InversionScoring, my_aff_score: &AffineScoring) -> AlignmentResults {
     let mut alignment_ref: Vec<u8> = Vec::new();
     let mut alignment_read: Vec<u8> = Vec::new();
     let mut alignment_cigar = Vec::new();
@@ -174,7 +178,11 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, o
         alignment_read.extend(alignment.alignment_string2);
         alignment_cigar.extend(alignment.cigar_string);
     }
-    (alignment_ref,alignment_read,alignment_cigar)
+    AlignmentResults {
+        aligned_read: alignment_read,
+        aligned_ref: alignment_ref,
+        cigar_tags: alignment_cigar,
+    }
 }
 
 pub fn read_ref_alignment_lengths(alignment_tags: &Vec<AlignmentTag>) -> (usize, usize) {

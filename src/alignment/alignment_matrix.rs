@@ -954,8 +954,6 @@ pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score:
             aligned_inv = None
         }
     }
-    //println!("long enough hits {}", long_enough_hits.len());
-
     perform_inversion_aware_alignment(&mut alignment_mat, &mut long_enough_hits, &reference, &read, my_score);
     //pretty_print_3d_matrix(&alignment_mat, &reference, &read);
     //pretty_print_3d_matrix(&alignment_mat, &reference, &read);

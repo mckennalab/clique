@@ -6,11 +6,11 @@ use bio::io::fastq::Record;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 
-pub struct TenXLayout {
+pub struct YAMLStrategy {
     name: Vec<u8>,
-    myumi: HashMap<UMIType,Vec<u8>>,
-    cellid: Vec<u8>,
+    umi_sequence_map: HashMap<UMIType,Vec<u8>>,
     read_one: Vec<u8>,
+    read_two: Option<Vec<u8>>,
     original_reads: Option<ReadSetContainer>,
 }
 

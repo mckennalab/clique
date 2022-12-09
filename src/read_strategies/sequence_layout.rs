@@ -17,6 +17,8 @@ use crate::sorters::sorter::SortStructure;
 
 use crate::read_strategies::sequence_layout::LayoutType::SCI;
 use crate::read_strategies::sci::SciLayout;
+use crate::sorters::known_list::KnownList;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LayoutType {
@@ -104,27 +106,32 @@ pub fn transform(read: ReadSetContainer, layout: &LayoutType) -> Box<dyn Sequenc
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum UMIType {
-    TENXRT{size: usize},
-    SCIRT{size: usize},
-    SCILIG{size: usize},
-    SCIPCR{size: usize},
-    DEGENERATESEQ{size: usize}
+    TENXRT,
+    SCIRT,
+    SCILIG,
+    SCIPCR,
+    DEGENERATESEQ
 }
+
+pub struct UMIInstance {
+    pub umi_type: UMIType,
+    pub umi_length: usize,
+    pub umi_file: Option<String>,
+    pub known_list: Option<Arc<Mutex<KnownList>>>,
+}
+
 
 
 impl FromStr for UMIType {
     type Err = ();
 
     fn from_str(input: &str) -> Result<UMIType, Self::Err> {
-        let tokens: Vec<&str> = input.split(' ').collect();
-        if tokens.len() != 2 {
-            return Err(())
-        }
-        match (tokens.get(0).unwrap().to_uppercase().as_str(),usize::from_str(&tokens.get(1).unwrap().to_uppercase()).unwrap()) {
-            ("TENXRT",x) => Ok(UMIType::TENXRT{size: x}),
-            ("SCIRT",x) => Ok(UMIType::SCIRT{size: x}),
-            ("SCILIG",x) => Ok(UMIType::SCILIG{size: x}),
-            ("SCIPCR",x) => Ok(UMIType::SCIPCR{size: x}),
+
+        match input {
+            "TENXRT" => Ok(UMIType::TENXRT),
+            "SCILIG" => Ok(UMIType::SCILIG),
+            "SCIPCR" => Ok(UMIType::SCIPCR),
+            "SCIRT" => Ok(UMIType::SCIRT),
             _ => Err(()),
         }
     }
@@ -133,11 +140,27 @@ impl FromStr for UMIType {
 impl std::fmt::Display for UMIType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            UMIType::TENXRT{size} => {let res = write!(f, "TENXRT:{}",size);res}
-            UMIType::SCIRT{size} => {let res = write!(f, "SCIRT:{}",size);res}
-            UMIType::SCILIG{size} => {let res = write!(f, "SCILIG:{}",size);res}
-            UMIType::SCIPCR{size} => {let res = write!(f, "SCIPCR:{}",size);res}
-            UMIType::DEGENERATESEQ { size } => {let res = write!(f, "DEGENERATESEQ:{}",size);res}
+            UMIType::TENXRT => {let res = write!(f, "TENXRT");res}
+            UMIType::SCIRT => {let res = write!(f, "SCIRT");res}
+            UMIType::SCILIG => {let res = write!(f, "SCILIG");res}
+            UMIType::SCIPCR => {let res = write!(f, "SCIPCR");res}
+            UMIType::DEGENERATESEQ => {let res = write!(f, "DEGENERATESEQ");res}
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn umi_type_from_string() {
+        let umi_string = String::from("SCIRT").as_bytes().to_owned();
+
+        let type_of = UMIType::from_str(std::str::from_utf8(&umi_string).unwrap());
+
+        assert!(type_of.is_ok(),"Unable to convert SCIRT into a UMIType");
+
+    }
+
 }

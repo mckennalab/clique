@@ -25,7 +25,8 @@ use crate::RunSpecifications;
 use indicatif::ProgressBar;
 use crate::sorters::balanced_split_output::RoundRobinDiskWriter;
 use std::str::FromStr;
-
+use crate::sorters::sorter::SortStructure::KNOWN_LIST;
+use std::num::ParseIntError;
 
 
 pub struct KnownListDiskStream {
@@ -64,16 +65,18 @@ impl<'z> SortStream<'z> for KnownListDiskStream {
                           sort_structure: &SortStructure,
                           layout: &LayoutType,
                           run_specs: &'z mut RunSpecifications) -> Self {
-        match sort_structure {
-            SortStructure::KNOWN_LIST { umi_type, layout_type, max_distance, on_disk, known_list } => {
 
+        match sort_structure {
+
+            SortStructure::KNOWN_LIST { umi_type, layout_type, max_distance, on_disk, known_list } => {
                 let mut consensus_manager = KnownListConsensus::new();
 
-                let mut rrs = RoundRobinDiskWriter::from(run_specs, &read_pattern);
+                let mut rrs = RoundRobinDiskWriter::from(run_specs, &read_pattern, 100);
 
                 let bar2 = ProgressBar::new((run_specs.estimated_reads as u64));
-                let mut true_reads: usize = 0;
+
                 for rd in read_iter {
+                    //trace!("Read in a read patterned {} with reads true,{},{},{}",read_pattern, rd.read_two.is_some(),rd.index_one.is_some(),rd.index_two.is_some());
 
                     let mut transformed_reads = transform(rd.clone(), &layout);
                     let sequence = transformed_reads.umis().unwrap().get(umi_type).unwrap().clone();
@@ -86,9 +89,8 @@ impl<'z> SortStream<'z> for KnownListDiskStream {
                     }
 
                     bar2.inc(1);
-                    true_reads += 1;
                 }
-                let bins = rrs.get_writers();
+                let bins = rrs.close_and_recover_iterator();
 
                 KnownListDiskStream { sorted_bins:  bins, pattern: read_pattern.clone() }
             }
@@ -238,63 +240,95 @@ fn validate_barcode(barcode: &Vec<u8>) -> bool {
 }
 
 impl KnownList {
-    const KNOWN_LIST_SEPARATOR: &'static str = ":";
+    const KNOWN_LIST_SEPARATOR: &'static str = ",";
     const KNOWN_TAG_SEPARATOR: &'static str = ":";
 
-    pub fn new(umi_type:UMIType,  knownlist_tag_and_file: &String, starting_nmer_size: usize) -> HashMap<UMIType,KnownList> {
-        let knownlist_tag_and_files = knownlist_tag_and_file.split(KnownList::KNOWN_TAG_SEPARATOR).collect::<Vec<&str>>();
+    pub fn new(knownlist_tag_and_file: &String) -> HashMap<UMIType,UMIInstance> {
+        let knownlist_tag_and_files = knownlist_tag_and_file.split(KnownList::KNOWN_LIST_SEPARATOR).collect::<Vec<&str>>();
 
-        let mut known_lists : HashMap<UMIType,KnownList> = HashMap::new();
+        let mut known_lists : HashMap<UMIType,UMIInstance> = HashMap::new();
 
         for known_list_pair in knownlist_tag_and_files {
+
             let knownlist_tag_and_file_vec = known_list_pair.split(KnownList::KNOWN_TAG_SEPARATOR).collect::<Vec<&str>>();
-            assert_eq!(knownlist_tag_and_file_vec.len(), 2);
+
+            assert_eq!(knownlist_tag_and_file_vec.len(), 3, "Unable to separate {} from {} into two tokens using divider {}", &known_list_pair, knownlist_tag_and_file, KnownList::KNOWN_TAG_SEPARATOR);
+
             let tag = match UMIType::from_str(knownlist_tag_and_file_vec[0]) {
                 Ok(x) => {x}
-                Err(_) => {panic!("Unable to parse your known list with tag: {}",knownlist_tag_and_file_vec[0])}
+                Err(_) => {panic!("Unable to parse your known list with tag: {}",&known_list_pair)}
             };
 
-            let mut existing_mapping = HashMap::new();
-            let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
+            let length = match usize::from_str(knownlist_tag_and_file_vec[1]) {
+                Ok(x) => {x}
+                Err(_) => {panic!("Unable to parse out UMI length from string: {}", knownlist_tag_and_file_vec[1])}
+            };
 
-            info!("Setting up known list reader for {}", &knownlist_tag_and_file_vec[1]);
-            let mut raw_reader = get_reader(knownlist_tag_and_file_vec[1]).unwrap();
+            let known_list = KnownList::read_known_list_file(&tag, &knownlist_tag_and_file_vec[2], &length);
 
-            let mut cnt = 0;
+            known_lists.insert(tag.clone(),
+                               UMIInstance{
+                                   umi_type: tag.clone(),
+                                   umi_length: length,
+                                   umi_file: Some(knownlist_tag_and_file_vec[2].to_string()),
+                                   known_list: Some(Arc::new(Mutex::new(known_list))),
+                               });
 
-            let mut btree = BTreeSet::new();
-
-            for line in raw_reader.lines() {
-                let bytes = line.unwrap().as_bytes().to_vec();
-                if validate_barcode(&bytes) {
-                    btree.insert(bytes);
-                }
-            }
-
-            // now the barcodes are in order, use this to generate grouped keys
-            let mut prefix: Option<Vec<u8>> = None;
-            let mut container: Vec<Vec<u8>> = Vec::new();
-            for bytes in &btree {
-                if !prefix.is_some() { prefix = Some(bytes[0..starting_nmer_size].to_vec()); }
-
-                existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
-
-                let first_x = bytes.clone()[0..starting_nmer_size].to_vec();
-                if edit_distance(&first_x, prefix.as_ref().unwrap()) > 0 {
-                    known_list_subset.insert(prefix.unwrap(), container.clone());
-                    container.clear();
-                    prefix = Some(first_x);
-                }
-                container.push(bytes.clone());
-            }
-            known_list_subset.insert(prefix.unwrap(), container.clone());
-            known_lists.insert(tag, KnownList {
-                name: umi_type.clone(),
-                known_list_map: existing_mapping,
-                known_list_subset,
-                known_list_subset_key_size: starting_nmer_size,
-            });
         }
         known_lists
     }
+
+    pub fn read_known_list_file(umi_type: &UMIType, filename: &str, starting_nmer_size: &usize) -> KnownList {
+
+        info!("Setting up known list reader for {}", &filename);
+        let btree = KnownList::create_b_tree(filename);
+
+        // now that the barcodes are read in and in-order, we make a quick lookup prefix lookup to speed up matching later on
+        let mut prefix: Option<Vec<u8>> = None;
+        let mut container: Vec<Vec<u8>> = Vec::new();
+
+        let mut existing_mapping = HashMap::new();
+        let mut known_list_subset: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
+
+        for bytes in &btree {
+            if !prefix.is_some() { prefix = Some(bytes[0..*starting_nmer_size].to_vec()); }
+
+            existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
+
+            let first_x = bytes.clone()[0..*starting_nmer_size].to_vec();
+            if edit_distance(&first_x, prefix.as_ref().unwrap()) > 0 {
+                known_list_subset.insert(prefix.unwrap(), container.clone());
+                container.clear();
+                prefix = Some(first_x);
+            }
+            container.push(bytes.clone());
+        }
+        known_list_subset.insert(prefix.unwrap(), container.clone());
+
+        KnownList {
+            name: umi_type.clone(),
+            known_list_map: existing_mapping,
+            known_list_subset,
+            known_list_subset_key_size: starting_nmer_size.clone(),
+        }
+    }
+
+    pub fn create_b_tree(filename: &str) -> BTreeSet<Vec<u8>> {
+
+        let mut raw_reader = get_reader(filename).unwrap();
+
+        let mut cnt = 0;
+
+        // sort the barcodes as we go with a btree
+        let mut btree = BTreeSet::new();
+
+        for line in raw_reader.lines() {
+            let bytes = line.unwrap().as_bytes().to_vec();
+            if validate_barcode(&bytes) {
+                btree.insert(bytes);
+            }
+        }
+        btree
+    }
+
 }

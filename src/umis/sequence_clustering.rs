@@ -73,13 +73,15 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
                 let subset = kl.known_list_subset.get(candidate_key).unwrap();
 
                 for full_candidate in subset {
-                    let dist = simple_edit_distance(&full_candidate, barcode);
-                    if dist < min_distance {
-                        hits.clear();
-                        min_distance = dist;
-                    }
-                    if dist == min_distance {
-                        hits.push(full_candidate.clone());
+                    if full_candidate.len() == barcode.len() {
+                        let dist = simple_edit_distance(&full_candidate, barcode);
+                        if dist < min_distance {
+                            hits.clear();
+                            min_distance = dist;
+                        }
+                        if dist == min_distance {
+                            hits.push(full_candidate.clone());
+                        }
                     }
                 }
             }

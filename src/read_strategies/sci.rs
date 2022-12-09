@@ -13,13 +13,14 @@ pub struct SciLayout {
     myumis: Box<HashMap<UMIType, Vec<u8>>>,
     read_one: Vec<u8>,
     read_two: Vec<u8>,
+    index_one: Vec<u8>,
     original_reads: Option<ReadSetContainer>,
 }
 
 impl SciLayout {
     pub fn new(read: ReadSetContainer) -> SciLayout {
-        assert!(read.read_two.is_some(), "Read two (read ID and UMI) must be defined for 10X");
-        assert!(read.index_one.is_some(), "Index one (read ID and UMI) must be defined for 10X");
+        assert!(read.read_two.is_some(), "Read two (read ID and UMI) must be defined for SCI");
+        assert!(read.index_one.is_some(), "Index one (read ID and UMI) must be defined for SCI");
         assert!(!read.index_two.is_some(), "Index 2 is invalid for SCI data");
 
 
@@ -40,21 +41,22 @@ impl SciLayout {
             }
         };
 
-        let pcr_index = read.index_two.clone().unwrap().clone();
+        let pcr_index = read.index_one.clone().unwrap().clone();
 
         let remaining_read1 = read.read_one.seq()[68..read.read_one.seq().len()].to_vec();
         let read2 = read.read_two.as_ref().unwrap().clone().seq().to_vec();
 
-        let umis: Box<HashMap<UMIType, Vec<u8>>> = Box::new(HashMap::from([(UMIType::SCILIG{size:ligation.len()}, ligation),
-                                                                              (UMIType::SCIPCR{size:pcr_index.seq().len()}, pcr_index.seq().to_vec()),
-                                                                              (UMIType::SCIRT{size:rt_index.len()}, rt_index),
-            (UMIType::DEGENERATESEQ{size:static_id.len()}, static_id)]));
+        let umis: Box<HashMap<UMIType, Vec<u8>>> = Box::new(HashMap::from([(UMIType::SCILIG, ligation),
+                                                                              (UMIType::SCIPCR, pcr_index.clone().seq().to_vec()),
+                                                                              (UMIType::SCIRT, rt_index),
+            (UMIType::DEGENERATESEQ, static_id)]));
 
         SciLayout {
             name: read.read_one.id().as_bytes().to_vec(),
             myumis: umis,
             read_one: remaining_read1,
             read_two: read2,
+            index_one: pcr_index.seq().to_vec(),
             original_reads: Some(read.clone()),
         }
     }
@@ -90,14 +92,14 @@ impl SequenceLayout for SciLayout {
 
     fn correct_known_sequence(&mut self, new_type: UMIType, new_seq: &Vec<u8>) {
         match new_type {
-            UMIType::SCIRT{size} => {
-                self.myumis.insert(UMIType::SCIRT{size},new_seq.clone());
+            UMIType::SCIRT => {
+                self.myumis.insert(UMIType::SCIRT,new_seq.clone());
             },
-            UMIType::SCILIG{size} => {
-                self.myumis.insert(UMIType::SCILIG{size},new_seq.clone());
+            UMIType::SCILIG => {
+                self.myumis.insert(UMIType::SCILIG,new_seq.clone());
             },
-            UMIType::SCIPCR{size} => {
-                self.myumis.insert(UMIType::SCIPCR{size},new_seq.clone());
+            UMIType::SCIPCR => {
+                self.myumis.insert(UMIType::SCIPCR,new_seq.clone());
             },
             _ => panic!("Unsupported correction type {}",new_type),
         }
