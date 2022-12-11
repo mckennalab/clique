@@ -309,13 +309,13 @@ pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &V
             }
         }
        // assert!(DEGENERATEBASES.contains_key(&search_string[search_loc]));
-        ///assert!(DEGENERATEBASES.contains_key(&reference[ref_loc]));
+        // assert!(DEGENERATEBASES.contains_key(&reference[ref_loc]));
         //if DEGENERATEBASES.get(&search_string[search_loc]).unwrap().contains_key(&reference[ref_loc]) ||
         //    DEGENERATEBASES.get(&reference[ref_loc]).unwrap().contains_key(&search_string[search_loc]) {
         //    current_length += 1;
         //} else {
         //    return current_length;
-        ///}
+        //}
     }
     current_length
 }
