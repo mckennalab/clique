@@ -294,7 +294,7 @@ pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &V
     while current_length + search_location < search_string.len() && current_length + reference_location < reference.len() {
         let search_loc = current_length + search_location;
         let ref_loc = current_length + reference_location;
-
+/*
         match (DEGENERATEBASES.get(&search_string[search_loc]),
             DEGENERATEBASES.get(&reference[ref_loc])) {
             (None, None) => {return current_length},
@@ -306,15 +306,15 @@ pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &V
                     (_, _) => { return current_length },
                 }
             }
-        }
-        /*} else {
-            ;
-        }
-
+        }*/
+        assert!(DEGENERATEBASES.contains_key(&search_string[search_loc]));
+        assert!(DEGENERATEBASES.contains_key(&reference[ref_loc]));
+        if DEGENERATEBASES.get(&search_string[search_loc]).unwrap().contains_key(&reference[ref_loc]) ||
+            DEGENERATEBASES.get(&reference[ref_loc]).unwrap().contains_key(&search_string[search_loc]) {
             current_length += 1;
-
-
-         */
+        } else {
+            return current_length;
+        }
     }
     current_length
 }
