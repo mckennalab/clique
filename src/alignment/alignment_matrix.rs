@@ -875,6 +875,7 @@ pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentL
     let mut _g_max_z = 0;
     let mut _g_max_val = MAX_NEG_SCORE;
 
+    println("{},{},{}",matrix.shape()[0],matrix.shape()[1],matrix.shape()[2]);
     for x in 0..matrix.shape()[0] {
         for y in 0..matrix.shape()[1] {
             for z in 0..matrix.shape()[2] {
@@ -903,6 +904,8 @@ pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentL
             }
         }
     }
+    println("out {},{},{}",matrix.shape()[0],matrix.shape()[1],matrix.shape()[2]);
+
     if _g_max_val > MAX_NEG_SCORE {
         //info!("3d max is {},{},{}={}", g_max_row, g_max_col, g_max_z, g_max_val);
         Some((AlignmentLocation { x: _g_max_row, y: _g_max_col }, _g_max_val))
@@ -1063,9 +1066,9 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         _starting_x = starting_position.unwrap().0;
         _starting_y = starting_position.unwrap().1;
     } else if alignment.is_local {
-        println!("trying to find max for seq {}",String::from_utf8(sequence2.clone()).unwrap());
+        //println!("trying to find max for seq {}",String::from_utf8(sequence2.clone()).unwrap());
         let max_value_tuple = find_max_value_3d_array(&alignment.scores).unwrap();
-        println!("done! {}",String::from_utf8(sequence2.clone()).unwrap());
+        //println!("done! {}",String::from_utf8(sequence2.clone()).unwrap());
         _starting_x = max_value_tuple.0.x;
         _starting_y = max_value_tuple.0.y;
     }
