@@ -875,7 +875,7 @@ pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentL
     let mut _g_max_z = 0;
     let mut _g_max_val = MAX_NEG_SCORE;
 
-    println("{},{},{}",matrix.shape()[0],matrix.shape()[1],matrix.shape()[2]);
+    println!("{},{},{}",matrix.shape()[0],matrix.shape()[1],matrix.shape()[2]);
     for x in 0..matrix.shape()[0] {
         for y in 0..matrix.shape()[1] {
             for z in 0..matrix.shape()[2] {
@@ -904,7 +904,7 @@ pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentL
             }
         }
     }
-    println("out {},{},{}",matrix.shape()[0],matrix.shape()[1],matrix.shape()[2]);
+    println!("out {},{},{}",matrix.shape()[0],matrix.shape()[1],matrix.shape()[2]);
 
     if _g_max_val > MAX_NEG_SCORE {
         //info!("3d max is {},{},{}={}", g_max_row, g_max_col, g_max_z, g_max_val);
