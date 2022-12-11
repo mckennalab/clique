@@ -1063,9 +1063,9 @@ fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         _starting_x = starting_position.unwrap().0;
         _starting_y = starting_position.unwrap().1;
     } else if alignment.is_local {
-        println!("trying to find max for seq {}",String::from_utf8(sequence1.clone()).unwrap());
+        println!("trying to find max for seq {}",String::from_utf8(sequence2.clone()).unwrap());
         let max_value_tuple = find_max_value_3d_array(&alignment.scores).unwrap();
-        println!("done! {}",String::from_utf8(sequence1.clone()).unwrap());
+        println!("done! {}",String::from_utf8(sequence2.clone()).unwrap());
         _starting_x = max_value_tuple.0.x;
         _starting_y = max_value_tuple.0.y;
     }
