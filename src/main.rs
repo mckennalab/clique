@@ -244,7 +244,8 @@ fn align_reads(parameters: &Args) {
             //let mut cnt = *too_long.clone().lock().unwrap();
             //cnt += 1;
         } else {
-            let forward_oriented_seq = if orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0 {
+            let orientation = orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0;
+            let forward_oriented_seq = if orientation {
                 x.seq().to_vec().clone()
             } else {
                 reverse_complement(&x.seq().to_vec())
@@ -266,7 +267,7 @@ fn align_reads(parameters: &Args) {
             println!("waiting on lock {}",String::from_utf8(x.seq().to_vec()).unwrap());
             let mut output = output.lock().unwrap();
             println!("Writing read!");
-            write!(output, ">ref{}\n{}\n>{}__{}__{}\n{}\n",orient_by_longest_segment.0,
+            write!(output, ">ref{}\n{}\n>{}__{}__{}\n{}\n",orientation,
                    str::from_utf8(&results.aligned_ref).unwrap(),
                    str::replace(name, " ", "_"),
                    extracted_seqs.unwrap_or(String::from("NONE")),
