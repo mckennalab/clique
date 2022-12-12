@@ -172,7 +172,7 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, o
             alignment_cigar.extend(alignment.cigar_string);
         }
     } else {
-        let alignment = inversion_alignment(&search_string, &reference, my_score, my_aff_score,true);
+        let alignment = inversion_alignment(&reference, &search_string, my_score, my_aff_score,true);
 
         alignment_ref.extend(alignment.alignment_string1);
         alignment_read.extend(alignment.alignment_string2);
