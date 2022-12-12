@@ -254,11 +254,11 @@ fn align_reads(parameters: &Args) {
             let results = align_string_with_anchors(&forward_oriented_seq, &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
 
 
-            let extracted_seqs = None; /* if parameters.use_capture_sequences {
+            let extracted_seqs = if parameters.use_capture_sequences {
                 Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref).iter().map(|k| format!("{}:{}", &k.0, &k.1)).join(","))
             } else {
                 None
-            };*/
+            };
 
             let cigar_string = results.cigar_tags.iter().map(|tag| format!("{}", tag)).collect::<Vec<String>>().join(",");
 
