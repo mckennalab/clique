@@ -272,12 +272,8 @@ fn align_reads(parameters: &Args) {
             println!("waiting on lock {}",String::from_utf8(x.seq().to_vec()).unwrap());
             let mut output = output.lock().unwrap();
             println!("Writing read!");
-            write!(output, ">ref{}\n{}\n{}\n  {} {} -- {}\n>{}__{}__{}\n{}\n",
-                   orientation,
-                   &String::from_utf8(reference.sequence.clone()).unwrap(),
-                &String::from_utf8(forward_oriented_seq.clone()).unwrap(),
-                    first_hit.search_start,first_hit.ref_start,
-                   str::from_utf8(&results.aligned_ref).unwrap(),
+            write!(output, ">ref\n{}\n>{}__{}__{}\n{}\n",
+                    str::from_utf8(&results.aligned_ref).unwrap(),
                    str::replace(name, " ", "_"),
                    extracted_seqs.unwrap_or(String::from("NONE")),
                    cigar_string,
