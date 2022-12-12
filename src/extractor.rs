@@ -23,6 +23,7 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
         } else if reference_base.is_ascii_uppercase() {
             if !in_extractor {
                 current_extractor += 1;
+                in_extractor = true;
             }
 
             let mut current_code = match special_values.get(&(format!("r{}",current_extractor))) {
