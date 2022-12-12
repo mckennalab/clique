@@ -246,12 +246,17 @@ fn align_reads(parameters: &Args) {
         } else {
             let orientation = orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0;
             let forward_oriented_seq = if orientation {
-                x.seq().to_vec().clone()
+                x.seq().to_vec()
             } else {
                 reverse_complement(&x.seq().to_vec())
             };
 
             let fwd_score_mp = find_greedy_non_overlapping_segments(&forward_oriented_seq, &reference.sequence, &reference_lookup);
+            let first_hit = fwd_score_mp.alignment_segments.get(0).unwrap_or(&MatchedPosition{
+                search_start: 0,
+                ref_start: 0,
+                length: 0,
+            });
             let results = align_string_with_anchors(&forward_oriented_seq, &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
 
 
@@ -267,10 +272,11 @@ fn align_reads(parameters: &Args) {
             println!("waiting on lock {}",String::from_utf8(x.seq().to_vec()).unwrap());
             let mut output = output.lock().unwrap();
             println!("Writing read!");
-            write!(output, ">ref{}\n{}\n{}\n{}\n>{}__{}__{}\n{}\n",
+            write!(output, ">ref{}\n{}\n{}\n  {} {} -- {}\n>{}__{}__{}\n{}\n",
                    orientation,
                    &String::from_utf8(reference.sequence.clone()).unwrap(),
                 &String::from_utf8(forward_oriented_seq.clone()).unwrap(),
+                    first_hit.search_start,first_hit.ref_start,
                    str::from_utf8(&results.aligned_ref).unwrap(),
                    str::replace(name, " ", "_"),
                    extracted_seqs.unwrap_or(String::from("NONE")),
