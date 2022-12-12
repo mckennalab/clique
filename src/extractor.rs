@@ -20,7 +20,7 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
             current_code.push(read_base.clone());
 
             special_values.insert(format!("{}",reference_base), current_code.clone());
-        } else if reference_base.is_ascii_uppercase() {
+        } else if reference_base.is_ascii_uppercase() || (in_extractor && reference_base == '-') {
             if !in_extractor {
                 current_extractor += 1;
                 in_extractor = true;
