@@ -1270,10 +1270,14 @@ pub(crate) fn reverse_complement(bases: &Vec<u8>) -> Vec<u8> {
 
 fn reverse_base(base: u8) -> u8 {
     match base {
-        b'A' | b'a' => b'T',
-        b'C' | b'c' => b'G',
-        b'G' | b'g' => b'C',
-        b'T' | b't' => b'A',
+        b'A' => b'T',
+        b'a' => b't',
+        b'C' => b'G',
+        b'c' => b'g',
+        b'G' => b'C',
+        b'g' => b'c',
+        b'T' => b'A',
+        b't' => b'a',
         _ => b'N',
     }
 }
