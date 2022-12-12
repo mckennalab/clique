@@ -242,7 +242,7 @@ fn align_reads(parameters: &Args) {
 
         let read_length = x.seq().to_vec().len();
         if read_length > reference.sequence.len() * parameters.max_reference_multiplier {
-            warn!("Dropping read of length {}",read_length);
+            info!("Dropping read of length {}",read_length);
             //let mut cnt = *too_long.clone().lock().unwrap();
             //cnt += 1;
         } else {
@@ -282,7 +282,6 @@ fn align_reads(parameters: &Args) {
             ).expect("Unable to write to output file");
         }
     });
-    //warn!("Dropped {} reads that were greater than {}x the reference length",*too_long.clone().lock().unwrap(),parameters.max_reference_multiplier);
 }
 
 fn merger(parameters: &Args) {
