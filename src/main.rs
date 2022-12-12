@@ -269,9 +269,8 @@ fn align_reads(parameters: &Args) {
             let cigar_string = results.cigar_tags.iter().map(|tag| format!("{}", tag)).collect::<Vec<String>>().join(",");
 
             let output = Arc::clone(&output);
-            println!("waiting on lock {}",String::from_utf8(x.seq().to_vec()).unwrap());
             let mut output = output.lock().unwrap();
-            println!("Writing read!");
+
             write!(output, ">ref\n{}\n>{}__{}__{}\n{}\n",
                     str::from_utf8(&results.aligned_ref).unwrap(),
                    str::replace(name, " ", "_"),

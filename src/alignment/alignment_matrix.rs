@@ -523,8 +523,6 @@ fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
                                      sequence2: &Vec<u8>,
                                      scoring_function: &dyn InversionScoringFunction) {
 
-    println!("Considering sequence: {},{}", sequence2.len(),String::from_utf8(sequence2.clone()).unwrap());
-
     assert_eq!(alignment.scores.shape()[2], 3);
     assert_eq!(alignment.scores.shape()[0], sequence1.len() + 1);
     assert_eq!(alignment.scores.shape()[1], sequence2.len() + 1);
