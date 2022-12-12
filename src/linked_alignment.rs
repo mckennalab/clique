@@ -413,7 +413,7 @@ mod tests {
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
         let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score);
 
-        trace!("CIGAR: {:?}",results.2);
+        trace!("CIGAR: {:?}",results.aligned_read);
     }
 
     #[test]
@@ -446,7 +446,7 @@ mod tests {
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
         let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score);
 
-        trace!("CIGAR: {:?}",results.2);
+        trace!("CIGAR: {:?}",results.aligned_read);
     }
 }
 

@@ -82,6 +82,8 @@ mod umis {
 mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
+    pub mod fasta_bit_encoding;
+
 }
 
 mod consensus {
@@ -261,7 +263,7 @@ fn align_reads(parameters: &Args) {
 
 
             let extracted_seqs = if parameters.use_capture_sequences {
-                Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref).iter().map(|k| format!("{}:{}", &k.0, &k.1)).join(","))
+                Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref).iter().map(|k| format!("key={}:{}", &k.0, &k.1)).join(";"))
             } else {
                 None
             };
@@ -271,7 +273,7 @@ fn align_reads(parameters: &Args) {
             let output = Arc::clone(&output);
             let mut output = output.lock().unwrap();
 
-            write!(output, ">ref\n{}\n>{}__{}__{}\n{}\n",
+            write!(output, ">ref\n{}\n>{};{};{}\n{}\n",
                     str::from_utf8(&results.aligned_ref).unwrap(),
                    str::replace(name, " ", "_"),
                    extracted_seqs.unwrap_or(String::from("NONE")),
