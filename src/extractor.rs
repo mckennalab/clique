@@ -30,7 +30,7 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
                     let new_vec: Vec<u8> = Vec::new();
                     new_vec
                 }
-                Some(x) => { x }
+                Some(x) => { x.clone() }
             };
 
             current_code.push(read_base.clone());
@@ -42,7 +42,7 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
                     let new_vec: Vec<u8> = Vec::new();
                     new_vec
                 }
-                Some(x) => { x }
+                Some(x) => { x.clone() }
             };
 
             current_code.push(reference_base.clone());
