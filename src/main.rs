@@ -83,7 +83,6 @@ mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
     pub mod fasta_bit_encoding;
-
 }
 
 mod consensus {
@@ -153,6 +152,9 @@ struct Args {
 
     #[clap(long)]
     use_capture_sequences: bool,
+
+    #[clap(long)]
+    only_output_captured_ref: bool,
 
     #[clap(long)]
     read_template: String,
@@ -254,7 +256,7 @@ fn align_reads(parameters: &Args) {
             };
 
             let fwd_score_mp = find_greedy_non_overlapping_segments(&forward_oriented_seq, &reference.sequence, &reference_lookup);
-            let first_hit = fwd_score_mp.alignment_segments.get(0).unwrap_or(&MatchedPosition{
+            let first_hit = fwd_score_mp.alignment_segments.get(0).unwrap_or(&MatchedPosition {
                 search_start: 0,
                 ref_start: 0,
                 length: 0,
@@ -263,7 +265,7 @@ fn align_reads(parameters: &Args) {
 
 
             let extracted_seqs = if parameters.use_capture_sequences {
-                Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref).iter().map(|k| format!("key={}:{}", &k.0, &k.1)).join(";"))
+                Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref))
             } else {
                 None
             };
@@ -273,13 +275,47 @@ fn align_reads(parameters: &Args) {
             let output = Arc::clone(&output);
             let mut output = output.lock().unwrap();
 
-            write!(output, ">ref\n{}\n>{};{};{}\n{}\n",
-                    str::from_utf8(&results.aligned_ref).unwrap(),
-                   str::replace(name, " ", "_"),
-                   extracted_seqs.unwrap_or(String::from("NONE")),
-                   cigar_string,
-                   str::from_utf8(&results.aligned_read).unwrap(),
-            ).expect("Unable to write to output file");
+            if parameters.only_output_captured_ref {
+                match extracted_seqs {
+                    None => {
+                        warn!("unable to extract sequences from read {}",x.id())
+                    }
+                    Some(btree) => {
+                        let read_seq = btree.iter().map(|kv| {
+                            if kv.0.starts_with('r') {
+                                kv.1.clone()
+                            } else {
+                                String::from("")
+                            }
+                        }).join("");
+                        let ref_seq = btree.iter().map(|kv| {
+                            if kv.0.starts_with('e') {
+                                kv.1.clone()
+                            } else {
+                                String::from("")
+                            }
+                        }).join("");
+
+                        write!(output, ">ref\n{}\n>{}{}\n",
+                               ref_seq,
+                               str::replace(name, " ", "_"),
+                               read_seq,
+                        ).expect("Unable to write to output file");
+                    }
+                };
+            } else {
+                let collapsed_tags = match extracted_seqs {
+                    None => { String::from("NONE") }
+                    Some(x) => { x.iter().map(|k| format!("key={}:{}", &k.0, &k.1)).join(";") }
+                };
+                write!(output, ">ref\n{}\n>{};{};{}\n{}\n",
+                       str::from_utf8(&results.aligned_ref).unwrap(),
+                       str::replace(name, " ", "_"),
+                       collapsed_tags,
+                       cigar_string,
+                       str::from_utf8(&results.aligned_read).unwrap(),
+                ).expect("Unable to write to output file");
+            }
         }
     });
 }
