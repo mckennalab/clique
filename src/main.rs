@@ -296,7 +296,7 @@ fn align_reads(parameters: &Args) {
                             }
                         }).join("");
 
-                        write!(output, ">ref\n{}\n>{}{}\n",
+                        write!(output, ">ref\n{}\n>{}\n{}\n",
                                ref_seq,
                                str::replace(name, " ", "_"),
                                read_seq,
