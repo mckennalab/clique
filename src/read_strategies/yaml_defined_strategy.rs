@@ -6,7 +6,9 @@ use bio::io::fastq::Record;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 
-pub struct YAMLStrategy {
+pub struct ReadLayout {
+    /// A flexible sequencing layout defined by a YAML file. We simply require a name, and a parsed out
+    /// mapping of UMI types to
     name: Vec<u8>,
     umi_sequence_map: HashMap<UMIType,Vec<u8>>,
     read_one: Vec<u8>,
@@ -14,8 +16,10 @@ pub struct YAMLStrategy {
     original_reads: Option<ReadSetContainer>,
 }
 
-impl TenXLayout {
-    pub fn new(read: ReadSetContainer) -> TenXLayout {
+impl ReadLayout {
+    ///
+
+    pub fn new(read: ReadSetContainer) -> ReadLayout {
         assert!(read.read_two.is_some(), "Read two (read ID and UMI) must be defined for 10X");
         assert!(!read.index_one.is_some(), "Index 1 is invalid for 10X data");
         assert!(!read.index_two.is_some(), "Index 2 is invalid for 10X data");
@@ -25,7 +29,7 @@ impl TenXLayout {
         let umi_sliced = HashMap::from([
             (UMIType::TENXRT, cell_id_sliced.clone()), (UMIType::DEGENERATESEQ, read2.seq()[16..28].to_vec())]);
 
-        TenXLayout {
+        ReadLayout {
             name: read.read_one.id().as_bytes().to_vec(),
             myumi: umi_sliced.clone(),
             cellid: cell_id_sliced.clone(),
@@ -35,7 +39,7 @@ impl TenXLayout {
     }
 }
 
-impl SequenceLayout for TenXLayout {
+impl SequenceLayout for ReadLayout {
     fn name(&self) -> &Vec<u8> {
         &self.name
     }

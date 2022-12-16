@@ -96,6 +96,7 @@ mod read_strategies {
     pub mod sequence_file_containers;
     pub mod ten_x;
     pub mod sci;
+    pub mod yaml_defined_strategy;
 }
 
 mod utils {
