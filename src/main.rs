@@ -24,6 +24,7 @@ extern crate seq_io;
 extern crate serde;
 extern crate suffix;
 extern crate tempfile;
+extern crate yaml_rust;
 
 use ::std::io::Result;
 use std::borrow::Borrow;
@@ -52,132 +53,112 @@ use tempfile::TempDir as ActualTempDir;
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
 use clap::Parser;
-use clap::StructOpt;
+use clap::Subcommand;
 use itertools::Itertools;
 use nanoid::nanoid;
 
-use crate::consensus::consensus_builders::threaded_write_consensus_reads;
 use crate::extractor::extract_tagged_sequences;
 use crate::linked_alignment::*;
-use crate::read_strategies::sequence_file_containers::*;
-use crate::read_strategies::sequence_layout::*;
 use crate::reference::fasta_reference::reference_file_to_struct;
-use crate::sorters::known_list::KnownList;
-use crate::sorters::known_list::KnownListConsensus;
-use crate::sorters::sorter::{Sorter, SortStructure};
-use crate::umis::sequence_clustering::*;
 
 use pretty_trace::*;
 
 mod linked_alignment;
 pub mod extractor;
-mod simple_umi_clustering;
 
-
-mod umis {
-    pub mod bronkerbosch;
-    pub mod sequence_clustering;
+mod read_strategies {
+    pub mod read_set;
+    pub mod sequence_layout;
 }
-
 mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
     pub mod fasta_bit_encoding;
 }
 
-mod consensus {
-    pub mod consensus_builders;
-}
-
 pub mod fasta_comparisons;
-
-mod read_strategies {
-    pub mod sequence_layout;
-    pub mod sequence_file_containers;
-    pub mod ten_x;
-    pub mod sci;
-    pub mod yaml_defined_strategy;
-}
 
 mod utils {
     pub mod file_utils;
     pub mod base_utils;
+    pub mod read_utils;
 }
 
-mod sorters {
-    pub mod known_list;
-    pub mod sorter;
-    pub mod sort_streams;
-    pub mod balanced_split_output;
-}
 
 mod reference {
     pub mod fasta_reference;
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Subcommand, Debug)]
 enum Cmd {
-    Collapse,
-    Align,
+    Collapse{
+        #[clap(long)]
+        /// Name of the package to search
+        package_name: String,
+
+        #[clap(long)]
+        output_base: String,
+
+        #[clap(long)]
+        output: String,
+
+        #[clap(long)]
+        read_template: String,
+
+        #[clap(long, default_value = "NONE")]
+        known_list: String,
+
+        #[clap(long, default_value = "250")]
+        max_bins: usize,
+
+        #[clap(long, default_value = "1")]
+        sorting_threads: usize,
+
+        #[clap(long, default_value = "NONE")]
+        temp_dir: String,
+    },
+    Align{
+        #[clap(long)]
+        use_capture_sequences: bool,
+
+        #[clap(long)]
+        only_output_captured_ref: bool,
+
+        #[clap(long)]
+        reference: String,
+
+        #[clap(long, default_value = "2")]
+        max_reference_multiplier: usize,
+
+    },
 }
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[structopt(subcommand)]
+    #[clap(subcommand)]
     cmd: Cmd,
-
-    #[clap(long)]
-    reference: String,
-
-    #[clap(long)]
-    output_base: String,
-
-    #[clap(long)]
-    output: String,
 
     #[clap(long)]
     read1: String,
 
-    #[structopt(long, default_value = "NONE")]
+    #[clap(long, default_value = "NONE")]
     read2: String,
 
-    #[structopt(long, default_value = "NONE")]
+    #[clap(long, default_value = "NONE")]
     index1: String,
 
-    #[structopt(long, default_value = "NONE")]
+    #[clap(long, default_value = "NONE")]
     index2: String,
 
     #[clap(long, default_value_t = 1)]
     threads: usize,
 
-    #[clap(long)]
-    use_capture_sequences: bool,
-
-    #[clap(long)]
-    only_output_captured_ref: bool,
-
-    #[clap(long)]
-    read_template: String,
-
-    #[structopt(long, default_value = "NONE")]
-    known_list: String,
-
-    #[structopt(long, default_value = "250")]
-    max_bins: usize,
-
-    #[structopt(long, default_value = "2")]
-    max_reference_multiplier: usize,
-
-    #[structopt(long, default_value = "1")]
-    sorting_threads: usize,
-
-    #[structopt(long, default_value = "1")]
+    #[clap(long, default_value = "1")]
     processing_threads: usize,
 
-    #[structopt(long, default_value = "NONE")]
-    temp_dir: String,
 }
+
 
 fn main() {
     PrettyTrace::new().ctrlc().on();
@@ -192,17 +173,18 @@ fn main() {
     trace!("{:?}", &parameters.cmd);
 
     match &parameters.cmd {
-        Cmd::Collapse => {
-            merger(&parameters);
+        Cmd::Collapse{ .. } => {
+            //merger(&parameters);
         }
 
-        Cmd::Align => {
+        Cmd::Align{ .. } => {
             align_reads(&parameters);
         }
     }
 }
 
 fn align_reads(parameters: &Args) {
+    /*
     let reference = reference_file_to_struct(&parameters.reference);
 
     let output_file = File::create(&parameters.output).unwrap();
@@ -319,8 +301,10 @@ fn align_reads(parameters: &Args) {
             }
         }
     });
-}
+*/
 
+}
+/*
 fn merger(parameters: &Args) {
     let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
 
@@ -373,7 +357,7 @@ fn merger(parameters: &Args) {
                                    &ReadPattern::from_read_file_container(&read_bundle),
                                    &run_specs);
 }
-
+*/
 
 pub struct RunSpecifications {
     pub estimated_reads: usize,

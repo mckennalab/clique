@@ -7,160 +7,154 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::collections::HashMap;
-
+use serde::{Serialize,Deserialize};
 use bio::io::fastq;
 use bio::io::fastq::{Reader, Record, Records};
+use std::collections::BTreeMap;
 
-use crate::read_strategies::ten_x::TenXLayout;
-use crate::read_strategies::sequence_file_containers::ReadSetContainer;
-use crate::sorters::sorter::SortStructure;
-
-use crate::read_strategies::sequence_layout::LayoutType::SCI;
-use crate::read_strategies::sci::SciLayout;
-use crate::sorters::known_list::KnownList;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum LayoutType {
-    TENXV3,
-    TENXV2,
-    PAIREDUMI,
-    PAIRED,
-    SCI,
+
+/// holds a set of reads for reading and writing to disk
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ReadSetContainer {
+    pub read_one: Record,
+    pub read_two: Option<Record>,
+    pub index_one: Option<Record>,
+    pub index_two: Option<Record>,
 }
 
-impl std::fmt::Display for LayoutType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            LayoutType::TENXV3 => {let res = write!(f,"TENXV3");res}
-            LayoutType::TENXV2 => {let res = write!(f,"TENXV2");res}
-            LayoutType::PAIREDUMI => {let res = write!(f,"PAIREDUMI");res}
-            LayoutType::PAIRED => {let res = write!(f,"PAIRED");res}
-            LayoutType::SCI => {let res = write!(f,"SCI");res}
+impl Clone for ReadSetContainer {
+    fn clone(&self) -> ReadSetContainer {
+        ReadSetContainer {
+            read_one: self.read_one.clone(),
+            read_two: if self.read_two.as_ref().is_some() { Some(self.read_two.as_ref().unwrap().clone()) } else { None },
+            index_one: if self.index_one.as_ref().is_some() { Some(self.index_one.as_ref().unwrap().clone()) } else { None },
+            index_two: if self.index_two.as_ref().is_some() { Some(self.index_two.as_ref().unwrap().clone()) } else { None },
         }
     }
 }
 
-impl LayoutType {
-    pub fn has_tags(&self) -> bool {
-        match *self {
-            LayoutType::TENXV3 => true,
-            LayoutType::TENXV2 => true,
-            LayoutType::PAIREDUMI => true,
-            LayoutType::PAIRED => true,
-            LayoutType::SCI => true,
+impl ReadSetContainer {
+    pub fn new_from_read1(rec: Record) -> ReadSetContainer {
+        ReadSetContainer {
+            read_one: rec,
+            read_two: None,
+            index_one: None,
+            index_two: None,
+        }
+    }
+    pub fn new_from_read2(rec: Record, old: &ReadSetContainer) -> ReadSetContainer {
+        ReadSetContainer {
+            read_one: old.read_one.clone(),
+            read_two: Some(rec),
+            index_one: old.index_one.clone(),
+            index_two: old.index_two.clone(),
         }
     }
 }
 
-impl FromStr for LayoutType {
-    type Err = ();
 
-    fn from_str(input: &str) -> Result<LayoutType, Self::Err> {
-        match input.to_uppercase().as_str() {
-            "TENXV3" => Ok(LayoutType::TENXV3),
-            "TENXV2" => Ok(LayoutType::TENXV2),
-            "PAIREDUMI" => Ok(LayoutType::PAIREDUMI),
-            "PAIRED" => Ok(LayoutType::PAIRED),
-            "SCI" => Ok(LayoutType::SCI),
-            _ => Err(()),
-        }
-    }
+#[derive(Clone)]
+pub enum UMISortType {
+    /// This enum represents how we should extract molecular identifiers and known sequences from the
+    /// stream of reads. It specifies the location (as aligned to the reference), the maximum distance
+    /// you allow before not considering two sequences to be from the same source.
+    KNOWNTAG{name: String, ref_start: i32, ref_stop:i32, max_distance: usize},
+    DEGENERATETAG{name: String, ref_start: i32, ref_stop:i32, max_distance: usize},
+}
+
+
+pub struct SequenceLayout {
+    /// extracts read layout / sequences using known patterns taken from the YAML description file.
+    name: Vec<u8>,
+    umis: HashMap<UMISortType,Vec<u8>>,
+    forward_seq: Vec<u8>,
+    reverse_seq : Option<Vec<u8>>,
+    original_reads: Option<ReadSetContainer>,
 }
 
 pub struct SequenceLayoutFactory {
-    pub known_list_file: HashMap<LayoutType,PathBuf>
+    //sort_structure: Vec<SortStructure>,
+
 }
 
 
-pub trait SequenceLayout {
-    fn name(&self) -> &Vec<u8>;
-    fn umis(&self) -> Option<&HashMap<UMIType,Vec<u8>>>;
-    fn read_one(&self) -> &Vec<u8>;
-    fn read_two(&self) -> Option<&Vec<u8>>;
-    fn layout_type(&self) -> LayoutType;
-    fn original_reads(&self) -> Option<ReadSetContainer>;
-    fn has_original_reads(&self) -> bool;
-    fn correct_known_sequence(&mut self, umi_type: UMIType, new_seq: &Vec<u8>);
-}
 
-pub fn transform(read: ReadSetContainer, layout: &LayoutType) -> Box<dyn SequenceLayout> {
-    match layout {
-        LayoutType::TENXV3 => {
-            Box::new(TenXLayout::new(read))
+impl SequenceLayoutFactory {
+    pub fn from_yaml(yaml_file: String) {
+        /// Load up a YAML document describing the layout of specific sequences within the reads. This configuration is specific
+        /// to each sequencing platform and sequencing type (10X, sci, etc). The layout is described below.
+        ///
+        /// # Supported base tags
+        ///
+        /// *align*: (optional) * - contains one optional member, which can be _true_ or _false_
+        /// *reads* - contains which read positions are required for this setup. The values, on individual lines, are _read1_, _read2_, _index1_, _index2_
+        /// *umi* - contains one section per UMI, each with:
+        /// - *name* - the base of each UMI section
+        ///   - *read* - which read we can extract this from
+        ///   - *start* - the starting position, if align = true is set this this is in relation to the reference, otherwise the offset into the read
+        ///   - *length* - how long this sequence is
+        ///   - *file* - (optional) which file contains known sequences that we should match to. One sequence per line, no header
+        ///
+        let mut file = File::open(&yaml_file).expect(&format!("Unable to open YAML configuration file: {}",&yaml_file));
+
+        let mut yaml_contents = String::new();
+
+        file.read_to_string(&mut yaml_contents)
+            .expect(&format!("Unable to read contents of YAML configuration file: {}",&yaml_file));
+
+        let docs = YamlLoader::load_from_str(&yaml_contents).unwrap();
+
+        assert_eq!(docs.len(),1);
+
+        let align: bool = match &docs[0]["align"].as_bool() {
+            Some(x) => x.clone(),
+            None => false
+        };
+
+        for doc_item in docs {
+
         }
-        LayoutType::PAIREDUMI => {
-            unimplemented!()
-        }
-        LayoutType::PAIRED=> {
-            unimplemented!()
-        }
-        LayoutType::SCI => {
-            Box::new(SciLayout::new(read))
-        }
-        LayoutType::TENXV2 => {
-            unimplemented!()
-        }
+
     }
 }
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum UMIType {
-    TENXRT,
-    SCIRT,
-    SCILIG,
-    SCIPCR,
-    DEGENERATESEQ
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+enum ReadPosition {
+    READ1,
+    READ2,
+    INDEX1,
+    INDEX2
 }
 
-pub struct UMIInstance {
-    pub umi_type: UMIType,
-    pub umi_length: usize,
-    pub umi_file: Option<String>,
-    pub known_list: Option<Arc<Mutex<KnownList>>>,
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct UMIConfiguration {
+    name: String,
+    start: usize,
+    length: usize,
+    file: Option<String>,
 }
 
-
-
-impl FromStr for UMIType {
-    type Err = ();
-
-    fn from_str(input: &str) -> Result<UMIType, Self::Err> {
-
-        match input {
-            "TENXRT" => Ok(UMIType::TENXRT),
-            "SCILIG" => Ok(UMIType::SCILIG),
-            "SCIPCR" => Ok(UMIType::SCIPCR),
-            "SCIRT" => Ok(UMIType::SCIRT),
-            _ => Err(()),
-        }
-    }
+impl UMIConfiguration {
+    // pub fn from()
 }
 
-impl std::fmt::Display for UMIType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            UMIType::TENXRT => {let res = write!(f, "TENXRT");res}
-            UMIType::SCIRT => {let res = write!(f, "SCIRT");res}
-            UMIType::SCILIG => {let res = write!(f, "SCILIG");res}
-            UMIType::SCIPCR => {let res = write!(f, "SCIPCR");res}
-            UMIType::DEGENERATESEQ => {let res = write!(f, "DEGENERATESEQ");res}
-        }
-    }
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct SequenceLayoutDesign {
+    align: bool,
+    reads: Vec<ReadPosition>,
+    umi_configurations: Vec<UMIConfiguration>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str;
+    use crate::utils::read_utils::fake_reads;
+
 
     #[test]
-    fn umi_type_from_string() {
-        let umi_string = String::from("SCIRT").as_bytes().to_owned();
-
-        let type_of = UMIType::from_str(std::str::from_utf8(&umi_string).unwrap());
-
-        assert!(type_of.is_ok(),"Unable to convert SCIRT into a UMIType");
-
+    fn test_basic_yaml_readback() {
+        SequenceLayoutFactory::from_yaml(String::from("test_data/test_layout.yaml"))
     }
-
 }

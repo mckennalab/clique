@@ -90,10 +90,11 @@ mod tests {
     fn tagged_sequence_test_space() {
         for _n in 1..100 {
             let reference = String::from("AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--CAGTTCGATCTA").as_bytes().to_owned();
-            let test_read = String::from("                               CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC           ").as_bytes().to_owned();
+            let test_read = String::from("-------------------------------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC-----------").as_bytes().to_owned();
 
             let keyvalues = extract_tagged_sequences(&test_read, &reference);
-            assert_eq!(keyvalues.get("*").unwrap(), "CACCGTAAG");
+
+            assert_eq!(keyvalues.get("42").unwrap(), "CACCGTAAG");
         }
     }
 }
