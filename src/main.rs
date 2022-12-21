@@ -24,7 +24,7 @@ extern crate seq_io;
 extern crate serde;
 extern crate suffix;
 extern crate tempfile;
-extern crate yaml_rust;
+extern crate serde_yaml;
 
 use ::std::io::Result;
 use std::borrow::Borrow;

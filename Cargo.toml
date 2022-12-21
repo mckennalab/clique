@@ -26,7 +26,7 @@ tempfile = "3"
 bgzip = "0.2.1"
 rust-htslib = { git = "https://github.com/rust-bio/rust-htslib" }
 log = "*"
-serde = "*"
+serde = { version = "*", features = ["derive"] }
 itertools = "*"
 bincode = "*"
 backtrace = "0.3"
@@ -35,6 +35,7 @@ nanoid = "0.4.0"
 pretty_env_logger = "0.4"
 chrono = "0.4"
 pretty_trace = {git = "https://github.com/10XGenomics/rust-toolbox.git"}
+serde_yaml = "0.9"
 
 [profile.release]
 lto = true

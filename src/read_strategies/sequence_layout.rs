@@ -74,28 +74,25 @@ pub struct SequenceLayout {
     original_reads: Option<ReadSetContainer>,
 }
 
-pub struct SequenceLayoutFactory {
-    //sort_structure: Vec<SortStructure>,
-
-}
-
-
+pub struct SequenceLayoutFactory {}
 
 impl SequenceLayoutFactory {
-    pub fn from_yaml(yaml_file: String) {
+    pub fn from_yaml(yaml_file: String) -> Option<SequenceLayoutDesign> {
         /// Load up a YAML document describing the layout of specific sequences within the reads. This configuration is specific
         /// to each sequencing platform and sequencing type (10X, sci, etc). The layout is described below.
         ///
         /// # Supported base tags
         ///
         /// *align*: (optional) * - contains one optional member, which can be _true_ or _false_
-        /// *reads* - contains which read positions are required for this setup. The values, on individual lines, are _read1_, _read2_, _index1_, _index2_
-        /// *umi* - contains one section per UMI, each with:
+        /// *reads* - contains the read positions that are required for this configuration. The values, on individual lines, are _READ1, _READ2_, _INDEX1_, _INDEX2_
+        /// *umi_configurations* - contains one section per UMI, each with:
         /// - *name* - the base of each UMI section
         ///   - *read* - which read we can extract this from
         ///   - *start* - the starting position, if align = true is set this this is in relation to the reference, otherwise the offset into the read
         ///   - *length* - how long this sequence is
         ///   - *file* - (optional) which file contains known sequences that we should match to. One sequence per line, no header
+        ///
+        /// an example of this format is the *test_layout.yaml* file in the test_data directory
         ///
         let mut file = File::open(&yaml_file).expect(&format!("Unable to open YAML configuration file: {}",&yaml_file));
 
@@ -104,19 +101,9 @@ impl SequenceLayoutFactory {
         file.read_to_string(&mut yaml_contents)
             .expect(&format!("Unable to read contents of YAML configuration file: {}",&yaml_file));
 
-        let docs = YamlLoader::load_from_str(&yaml_contents).unwrap();
+        let deserialized_map: SequenceLayoutDesign = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
-        assert_eq!(docs.len(),1);
-
-        let align: bool = match &docs[0]["align"].as_bool() {
-            Some(x) => x.clone(),
-            None => false
-        };
-
-        for doc_item in docs {
-
-        }
-
+        Some(deserialized_map)
     }
 }
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -129,21 +116,17 @@ enum ReadPosition {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct UMIConfiguration {
-    name: String,
     start: usize,
     length: usize,
     file: Option<String>,
-}
-
-impl UMIConfiguration {
-    // pub fn from()
+    prefix: Option<String>
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct SequenceLayoutDesign {
+pub struct SequenceLayoutDesign {
     align: bool,
     reads: Vec<ReadPosition>,
-    umi_configurations: Vec<UMIConfiguration>,
+    umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 
 #[cfg(test)]
@@ -152,9 +135,11 @@ mod tests {
     use std::str;
     use crate::utils::read_utils::fake_reads;
 
-
     #[test]
     fn test_basic_yaml_readback() {
-        SequenceLayoutFactory::from_yaml(String::from("test_data/test_layout.yaml"))
+        let configuration = SequenceLayoutFactory::from_yaml(String::from("test_data/test_layout.yaml")).unwrap();
+        assert_eq!(configuration.align,true);
+        assert!(configuration.umi_configurations.contains_key("pcr"));
+        assert_eq!(configuration.umi_configurations.get("pcr").unwrap().start,0);
     }
 }

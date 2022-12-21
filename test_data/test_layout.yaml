@@ -1,0 +1,16 @@
+---
+align: true
+reads:
+  - READ1
+  - READ2
+  - INDEX1
+  - INDEX2
+umi_configurations:
+  pcr:
+    start: 0
+    read: "read1"
+    length: 10
+  static:
+    start: 40
+    read: "read2"
+    length: 10
