@@ -4,7 +4,9 @@ use bio::io::fastq::Reader as FqReader;
 use serde::{Serialize, Deserialize};
 use std::fs;
 use bincode::*;
-use std::io::Write;
+use std::io::{BufReader, Write};
+use std::path::PathBuf;
+use rust_htslib::bgzf::{Reader, Writer};
 
 /// holds a set of reads for reading and writing to disk
 #[derive(Serialize, Deserialize, Debug)]
@@ -61,6 +63,108 @@ impl std::fmt::Display for ReadSetContainer {
     }
 }
 
+unsafe impl Send for ReadIterator {}
+
+unsafe impl Sync for ReadIterator {}
+
+pub struct ReadIterator {
+    read_one: Option<Records<BufReader<Reader>>>,
+    read_two: Option<Records<BufReader<Reader>>>,
+    index_one: Option<Records<BufReader<Reader>>>,
+    index_two: Option<Records<BufReader<Reader>>>,
+
+    pub reads_processed: usize,
+    pub broken_reads: usize,
+}
+
+
+impl ReadIterator
+{
+    pub fn new(read_1: PathBuf,
+               read_2: Option<PathBuf>,
+               index_1: Option<PathBuf>,
+               index_2: Option<PathBuf>
+               ,
+    ) -> ReadIterator {
+        let r_one = ReadIterator::open_reader(&Some(&read_1));
+        if !r_one.is_some() { panic!("Unable to open input file"); }
+
+        let read2 = if read_2.is_some() { ReadIterator::open_reader(&Some(&read_2.clone().unwrap())) } else { None };
+        let index1 = if index_1.is_some() { ReadIterator::open_reader(&Some(&index_1.clone().unwrap())) } else { None };
+        let index2 = if index_2.is_some() { ReadIterator::open_reader(&Some(&index_2.clone().unwrap())) } else { None };
+
+        let read2_active = read2.is_some();
+        let index1_active = index1.is_some();
+        let index2_active = index2.is_some();
+
+        ReadIterator {
+            read_one: r_one,
+            read_two: read2,
+            index_one: index1,
+            index_two: index2,
+            reads_processed: 0,
+            broken_reads: 0,
+        }
+    }
+
+    fn open_reader(check_path: &Option<&PathBuf>) -> Option<Records<BufReader<Reader>>> {
+        if check_path.is_some() && check_path.as_ref().unwrap().exists() {
+            let mut bgr = FqReader::new(Reader::from_path(&check_path.unwrap()).unwrap());
+            let records = bgr.records();
+            Some(records)
+        } else {
+            None
+        }
+    }
+
+}
+/// A helper function to manage unwrapping reads, which has a lot of layers
+pub fn unwrap_reader(read: &mut Option<Records<BufReader<Reader>>>) -> Option<Record> {
+    match read
+    {
+        Some(ref mut read_pointer) => {
+            let next = read_pointer.next();
+            match next {
+                Some(rp) => {
+                    match rp {
+                        Ok(x) => Some(x),
+                        Err(x) => None,
+                    }
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
+}
+
+impl Iterator for ReadIterator {
+    type Item = ReadSetContainer;
+
+    fn next(&mut self) -> Option<ReadSetContainer> {
+        let next_read_one = self.read_one.as_mut().unwrap().next();
+        if next_read_one.is_some() {
+            match next_read_one.unwrap() {
+                Ok(v) => {
+                    Some(ReadSetContainer {
+                        read_one: v,
+                        read_two: unwrap_reader(&mut self.read_two),
+                        index_one: unwrap_reader(&mut self.index_one),
+                        index_two: unwrap_reader(&mut self.index_two),
+                    })
+                }
+                Err(e) => {
+                    println!("error parsing header: {:?}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ReadSetNestingContainer {
@@ -77,11 +181,6 @@ impl ReadSetNestingContainer {
             fs::read(&input_file).
                 expect(&format!("Unable to open encoded ReadSetNestingContainer binary file: {}", &input_file));
 
-
-        // here's where we get a little trickier -- we want to test if the file is, in order:
-        // 1) a serialized ReadSetNestingContainer written
-        // 2) a flat iterator of serialized ReadSetContainer
-        // 3) error out
         let decoded_try: Result<Option<ReadSetNestingContainer>> = bincode::deserialize(&file_contents);
         match decoded_try {
             Ok(x) => { return (x); }

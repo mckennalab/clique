@@ -25,6 +25,7 @@ extern crate serde;
 extern crate suffix;
 extern crate tempfile;
 extern crate serde_yaml;
+extern crate symspell;
 
 use ::std::io::Result;
 use std::borrow::Borrow;
@@ -62,9 +63,11 @@ use crate::linked_alignment::*;
 use crate::reference::fasta_reference::reference_file_to_struct;
 
 use pretty_trace::*;
+use crate::read_strategies::read_set::ReadIterator;
 
 mod linked_alignment;
 pub mod extractor;
+pub mod sequence_lookup;
 
 mod read_strategies {
     pub mod read_set;
@@ -116,6 +119,24 @@ enum Cmd {
 
         #[clap(long, default_value = "NONE")]
         temp_dir: String,
+
+        #[clap(long)]
+        read1: String,
+
+        #[clap(long, default_value = "NONE")]
+        read2: String,
+
+        #[clap(long, default_value = "NONE")]
+        index1: String,
+
+        #[clap(long, default_value = "NONE")]
+        index2: String,
+
+        #[clap(long, default_value_t = 1)]
+        threads: usize,
+
+        #[clap(long, default_value = "1")]
+        processing_threads: usize,
     },
     Align{
         #[clap(long)]
@@ -127,9 +148,29 @@ enum Cmd {
         #[clap(long)]
         reference: String,
 
+        #[clap(long)]
+        output: String,
+
         #[clap(long, default_value = "2")]
         max_reference_multiplier: usize,
 
+        #[clap(long)]
+        read1: String,
+
+        #[clap(long, default_value = "NONE")]
+        read2: String,
+
+        #[clap(long, default_value = "NONE")]
+        index1: String,
+
+        #[clap(long, default_value = "NONE")]
+        index2: String,
+
+        #[clap(long, default_value_t = 1)]
+        threads: usize,
+
+        #[clap(long, default_value = "1")]
+        processing_threads: usize,
     },
 }
 
@@ -139,23 +180,7 @@ struct Args {
     #[clap(subcommand)]
     cmd: Cmd,
 
-    #[clap(long)]
-    read1: String,
 
-    #[clap(long, default_value = "NONE")]
-    read2: String,
-
-    #[clap(long, default_value = "NONE")]
-    index1: String,
-
-    #[clap(long, default_value = "NONE")]
-    index2: String,
-
-    #[clap(long, default_value_t = 1)]
-    threads: usize,
-
-    #[clap(long, default_value = "1")]
-    processing_threads: usize,
 
 }
 
@@ -177,29 +202,58 @@ fn main() {
             //merger(&parameters);
         }
 
-        Cmd::Align{ .. } => {
-            align_reads(&parameters);
+        Cmd::Align{ use_capture_sequences,
+            only_output_captured_ref,
+            reference,
+            output, max_reference_multiplier,
+            read1,
+            read2,
+            index1,
+            index2,
+            threads,
+            processing_threads
+        } => {
+            align_reads(use_capture_sequences,
+                        only_output_captured_ref,
+                        reference,
+                        output, max_reference_multiplier,
+                        read1,
+                        read2,
+                        index1,
+                        index2,
+                        threads,
+                        processing_threads);
         }
     }
 }
 
-fn align_reads(parameters: &Args) {
-    /*
-    let reference = reference_file_to_struct(&parameters.reference);
+fn align_reads(use_capture_sequences : &bool,
+               only_output_captured_ref: &bool,
+               reference: &String,
+               output :&String,
+               max_reference_multiplier: &usize,
+               read1: &String,
+               read2: &String,
+               index1: &String,
+               index2: &String,
+               threads: &usize,
+               processing_threads: &usize) {
 
-    let output_file = File::create(&parameters.output).unwrap();
+    let reference = reference_file_to_struct(reference);
 
-    let read_iterator = ReadIterator::new(PathBuf::from(&parameters.read1),
-                                          Some(PathBuf::from(&parameters.read2)),
-                                          Some(PathBuf::from(&parameters.index1)),
-                                          Some(PathBuf::from(&parameters.index2)));
+    let output_file = File::create(&output).unwrap();
+
+    let read_iterator = ReadIterator::new(PathBuf::from(&read1),
+                                          Some(PathBuf::from(&read2)),
+                                          Some(PathBuf::from(&index1)),
+                                          Some(PathBuf::from(&index2)));
     ;
 
     let reference_lookup = find_seeds(&reference.sequence, 20);
     let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
 
     // setup our thread pool
-    rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
+    rayon::ThreadPoolBuilder::new().num_threads(*threads).build_global().unwrap();
 
     let my_score = InversionScoring {
         match_score: 9.0,
@@ -226,7 +280,7 @@ fn align_reads(parameters: &Args) {
         let name = &String::from(x.id()).to_string();
 
         let read_length = x.seq().to_vec().len();
-        if read_length > reference.sequence.len() * parameters.max_reference_multiplier {
+        if read_length > reference.sequence.len() * max_reference_multiplier {
             info!("Dropping read of length {}",read_length);
             //let mut cnt = *too_long.clone().lock().unwrap();
             //cnt += 1;
@@ -247,7 +301,7 @@ fn align_reads(parameters: &Args) {
             let results = align_string_with_anchors(&forward_oriented_seq, &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
 
 
-            let extracted_seqs = if parameters.use_capture_sequences {
+            let extracted_seqs = if *use_capture_sequences {
                 Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref))
             } else {
                 None
@@ -258,7 +312,7 @@ fn align_reads(parameters: &Args) {
             let output = Arc::clone(&output);
             let mut output = output.lock().unwrap();
 
-            if parameters.only_output_captured_ref {
+            if *only_output_captured_ref {
                 match extracted_seqs {
                     None => {
                         warn!("unable to extract sequences from read {}",x.id())
@@ -301,7 +355,6 @@ fn align_reads(parameters: &Args) {
             }
         }
     });
-*/
 
 }
 /*

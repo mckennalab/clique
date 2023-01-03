@@ -69,14 +69,17 @@ pub struct SequenceLayout {
     /// extracts read layout / sequences using known patterns taken from the YAML description file.
     name: Vec<u8>,
     umis: HashMap<UMISortType,Vec<u8>>,
-    forward_seq: Vec<u8>,
-    reverse_seq : Option<Vec<u8>>,
     original_reads: Option<ReadSetContainer>,
 }
 
-pub struct SequenceLayoutFactory {}
+impl SequenceLayout {
+    pub fn from(rsc: ReadSetContainer, layout: &SequenceLayoutDesign) -> SequenceLayout {
+        ReadPosition::assert_has_all_reads(&layout.reads, &rsc);
+        todo!();
+    }
+}
 
-impl SequenceLayoutFactory {
+impl SequenceLayoutDesign {
     pub fn from_yaml(yaml_file: String) -> Option<SequenceLayoutDesign> {
         /// Load up a YAML document describing the layout of specific sequences within the reads. This configuration is specific
         /// to each sequencing platform and sequencing type (10X, sci, etc). The layout is described below.
@@ -114,12 +117,27 @@ enum ReadPosition {
     INDEX2
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+impl ReadPosition {
+    pub fn assert_has_all_reads(positions: &Vec<ReadPosition>, rsc: &ReadSetContainer) {
+        positions.iter().for_each(|p| ReadPosition::assert_contains_read(p,rsc));
+    }
+
+    pub fn assert_contains_read(pos: &ReadPosition, rsc: &ReadSetContainer) {
+        match pos {
+            ReadPosition::READ1 => {assert!(!rsc.read_one.is_empty())}
+            ReadPosition::READ2 => {assert!(rsc.read_two.is_some())}
+            ReadPosition::INDEX1 => {assert!(rsc.index_one.is_some())}
+            ReadPosition::INDEX2 => {assert!(rsc.index_two.is_some())}
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct UMIConfiguration {
-    start: usize,
-    length: usize,
-    file: Option<String>,
-    prefix: Option<String>
+    pub start: usize,
+    pub length: usize,
+    pub file: Option<String>,
+    pub prefix: Option<String>
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -129,6 +147,7 @@ pub struct SequenceLayoutDesign {
     umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_basic_yaml_readback() {
-        let configuration = SequenceLayoutFactory::from_yaml(String::from("test_data/test_layout.yaml")).unwrap();
+        let configuration = SequenceLayoutDesign::from_yaml(String::from("test_data/test_layout.yaml")).unwrap();
         assert_eq!(configuration.align,true);
         assert!(configuration.umi_configurations.contains_key("pcr"));
         assert_eq!(configuration.umi_configurations.get("pcr").unwrap().start,0);
