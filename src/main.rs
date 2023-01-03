@@ -336,9 +336,9 @@ fn align_reads(use_capture_sequences: &bool,
                                 String::from("")
                             }
                         }).join("");
-                        let others = btree.iter().map(|k| if k.0 != 'e' && k.0 != 'r' { format!("key={}:{}", &k.0, &k.1) } else { "" }).join(";");
+                        let others = btree.iter().map(|k| if !k.0.starts_with('e') && !k.0.starts_with('r') { format!("key={}:{}", &k.0, &k.1) } else { format!("") }).join(";");
 
-                        if to_fake_fastq {
+                        if *to_fake_fastq {
                             read_seq.replace("-","");
                             let fake_qual = (0..read_seq.len()).map(|_| "H").collect::<String>();
                             write!(output, "@{}---{}\n{}\n+\n{}\n",
