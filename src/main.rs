@@ -312,7 +312,7 @@ fn align_reads(use_capture_sequences : &bool,
             if *only_output_captured_ref {
                 match extracted_seqs {
                     None => {
-                        error!("unable to extract sequences from read {}",x.id())
+                        warn!("unable to extract sequences from read {}",x.id())
                     }
                     Some(btree) => {
                         let read_seq = btree.iter().map(|kv| {
@@ -338,6 +338,7 @@ fn align_reads(use_capture_sequences : &bool,
                     }
                 };
             } else {
+                println!("collapsed tags?");
                 let collapsed_tags = match extracted_seqs {
                     None => { String::from("NONE") }
                     Some(x) => { x.iter().map(|k| format!("key={}:{}", &k.0, &k.1)).join(";") }
