@@ -341,14 +341,14 @@ fn align_reads(use_capture_sequences: &bool,
                         if *to_fake_fastq {
                             read_seq.replace("-","");
                             let fake_qual = (0..read_seq.len()).map(|_| "H").collect::<String>();
-                            write!(output, "@{}---{}\n{}\n+\n{}\n",
+                            write!(output, "@{}_{}\n{}\n+\n{}\n",
                                    str::replace(name, " ", "_"),
                                 others,
                                    read_seq,
                                    fake_qual,
                             ).expect("Unable to write to output file");
                         } else {
-                            write!(output, ">ref\n{}\n>{}---{}\n{}\n",
+                            write!(output, ">ref\n{}\n>{}_{}\n{}\n",
                                    ref_seq,
                                    str::replace(name, " ", "_"),
                                    others,
