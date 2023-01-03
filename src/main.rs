@@ -277,8 +277,6 @@ fn align_reads(use_capture_sequences: &bool,
         gap_extend: -5.0,
     };
 
-    //let mut too_long : Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
-
     read_iterator.par_bridge().for_each(|xx| {
         let x = xx.read_one;
         let name = &String::from(x.id()).to_string();
@@ -286,8 +284,6 @@ fn align_reads(use_capture_sequences: &bool,
         let read_length = x.seq().to_vec().len();
         if read_length > reference.sequence.len() * max_reference_multiplier {
             info!("Dropping read of length {}",read_length);
-            //let mut cnt = *too_long.clone().lock().unwrap();
-            //cnt += 1;
         } else {
             let orientation = orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0;
             let forward_oriented_seq = if orientation {
@@ -305,73 +301,16 @@ fn align_reads(use_capture_sequences: &bool,
             let results = align_string_with_anchors(&forward_oriented_seq, &reference.sequence, &fwd_score_mp, &my_score, &my_aff_score);
 
 
-            let extracted_seqs = if *use_capture_sequences {
-                Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref))
-            } else {
-                None
-            };
-
             let cigar_string = results.cigar_tags.iter().map(|tag| format!("{}", tag)).collect::<Vec<String>>().join(",");
 
             let output = Arc::clone(&output);
-            let mut output = output.lock().unwrap();
 
-            if *only_output_captured_ref {
-                match extracted_seqs {
-                    None => {
-                        warn!("unable to extract sequences from read {}",x.id())
-                    }
-                    Some(btree) => {
-                        let read_seq = btree.iter().map(|kv| {
-                            if kv.0.starts_with('r') {
-                                kv.1.clone()
-                            } else {
-                                String::from("")
-                            }
-                        }).join("");
-                        let ref_seq = btree.iter().map(|kv| {
-                            if kv.0.starts_with('e') {
-                                kv.1.clone()
-                            } else {
-                                String::from("")
-                            }
-                        }).join("");
-                        let others = btree.iter().
-                            filter(|k| !k.0.starts_with('e') && !k.0.starts_with('r')).
-                            map(|k| format!("key={}:{}", &k.0, &k.1)).join(";");
-
-                        if *to_fake_fastq {
-                            let replaced = read_seq.replace("-", "");
-                            let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
-                            write!(output, "@{}_{}\n{}\n+\n{}\n",
-                                   str::replace(name, " ", "_"),
-                                   others,
-                                   replaced,
-                                   fake_qual,
-                            ).expect("Unable to write to output file");
-                        } else {
-                            write!(output, ">ref\n{}\n>{}_{}\n{}\n",
-                                   ref_seq,
-                                   str::replace(name, " ", "_"),
-                                   others,
-                                   read_seq,
-                            ).expect("Unable to write to output file");
-                        }
-                    }
-                };
-            } else {
-                let collapsed_tags = match extracted_seqs {
-                    None => { String::from("NONE") }
-                    Some(x) => { x.iter().map(|k| format!("key={}:{}", &k.0, &k.1)).join(";") }
-                };
-                write!(output, ">ref\n{}\n>{};{};{}\n{}\n",
-                       str::from_utf8(&results.aligned_ref).unwrap(),
-                       str::replace(name, " ", "_"),
-                       collapsed_tags,
-                       cigar_string,
-                       str::from_utf8(&results.aligned_read).unwrap(),
-                ).expect("Unable to write to output file");
-            }
+            output_management(&results.aligned_read,
+                              &results.aligned_ref,
+                              use_capture_sequences,
+                              only_output_captured_ref,
+                              to_fake_fastq,
+                              output);
         }
     });
 }
@@ -438,7 +377,6 @@ pub struct RunSpecifications {
     pub tmp_location: Arc<TempDir>,
 }
 
-
 #[derive(Debug)]
 pub struct TempDir(Option<ActualTempDir>);
 
@@ -477,4 +415,79 @@ impl Clone for RunSpecifications {
             tmp_location: Arc::clone(&self.tmp_location),
         }
     }
+}
+
+/// Handle output of the alignment results based on the requested output formats
+///
+pub fn output_management(aligned_read: &Vec<u8>,
+                         aligned_ref: &Vec<u8>,
+                         use_capture_sequences: &bool,
+                         only_output_captured_ref: &bool,
+                         to_fake_fastq: &bool,
+                         output: Arc<Mutex<File>>) {
+    let mut output = output.lock().unwrap();
+
+    let extracted_seqs = if *use_capture_sequences {
+        Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref))
+    } else {
+        None
+    };
+
+    if *only_output_captured_ref {
+        match extracted_seqs {
+            None => {
+                warn!("unable to extract sequences from read {}",x.id())
+            }
+            Some(btree) => {
+                let read_seq = btree.iter().map(|kv| {
+                    if kv.0.starts_with('r') {
+                        kv.1.clone()
+                    } else {
+                        String::from("")
+                    }
+                }).join("");
+                let ref_seq = btree.iter().map(|kv| {
+                    if kv.0.starts_with('e') {
+                        kv.1.clone()
+                    } else {
+                        String::from("")
+                    }
+                }).join("");
+                let others = btree.iter().
+                    filter(|k| !k.0.starts_with('e') && !k.0.starts_with('r')).
+                    map(|k| format!("key={}:{}", &k.0, &k.1)).join(";");
+
+                if *to_fake_fastq {
+                    let replaced = read_seq.replace("-", "");
+                    let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
+                    write!(output, "@{}_{}\n{}\n+\n{}\n",
+                           str::replace(name, " ", "_"),
+                           others,
+                           replaced,
+                           fake_qual,
+                    ).expect("Unable to write to output file");
+                } else {
+                    write!(output, ">ref\n{}\n>{}_{}\n{}\n",
+                           ref_seq,
+                           str::replace(name, " ", "_"),
+                           others,
+                           read_seq,
+                    ).expect("Unable to write to output file");
+                }
+            }
+        };
+    } else {
+        let collapsed_tags = match extracted_seqs {
+            None => { String::from("NONE") }
+            Some(x) => { x.iter().map(|k| format!("key={}:{}", &k.0, &k.1)).join(";") }
+        };
+        write!(output, ">ref\n{}\n>{};{};{}\n{}\n",
+               str::from_utf8(&aligned_ref).unwrap(),
+               str::replace(name, " ", "_"),
+               collapsed_tags,
+               cigar_string,
+               str::from_utf8(&aligned_read).unwrap(),
+        ).expect("Unable to write to output file");
+    }
+}
 }
