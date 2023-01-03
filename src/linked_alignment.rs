@@ -125,7 +125,12 @@ pub struct AlignmentResults {
 /// * `search_string` - a u8 Vec representing the search string
 /// * `reference` - a u8 Vec representing the reference string
 /// * `seeds` - a suffix array lookup object
-pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, overlaps: &SharedSegments, my_score: &InversionScoring, my_aff_score: &AffineScoring) -> AlignmentResults {
+pub fn align_string_with_anchors(search_string: &Vec<u8>,
+                                 reference: &Vec<u8>,
+                                 overlaps: &SharedSegments,
+                                 my_score: &InversionScoring,
+                                 my_aff_score: &AffineScoring,
+                                 use_inversions: &bool) -> AlignmentResults {
     let mut alignment_ref: Vec<u8> = Vec::new();
     let mut alignment_read: Vec<u8> = Vec::new();
     let mut alignment_cigar = Vec::new();
@@ -140,7 +145,16 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, o
         let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, overlap.search_start);
         let ref_slice  = slice_for_alignment(&reference, ref_alignment_last_position, overlap.ref_start);
 
-        let alignment = inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false);
+        let alignment =
+            match use_inversions {
+                true => inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false),
+                false => {
+                    let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
+                    perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
+
+                    perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, None)
+                }
+            };
         read_alignment_last_position += read_slice.len();
         ref_alignment_last_position += ref_slice.len();
 
@@ -165,8 +179,16 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>, reference: &Vec<u8>, o
             // look back to see what segment we haven't aligned in the read
             let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, search_string.len());
             let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, reference.len());
-            let alignment = inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false);
+            let alignment=
+            match use_inversions {
+                true => inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false),
+                false => {
+                    let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
+                    perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
+                    perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, None)
+                }
+            };
             alignment_ref.extend(alignment.alignment_string1);
             alignment_read.extend(alignment.alignment_string2);
             alignment_cigar.extend(alignment.cigar_string);
@@ -411,7 +433,7 @@ mod tests {
         };
         let reference_lookup = find_seeds(&reference, 20);
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
-        let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score);
+        let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score, &true);
 
         trace!("CIGAR: {:?}",results.aligned_read);
     }
@@ -444,7 +466,7 @@ mod tests {
         };
         let reference_lookup = find_seeds(&reference, 20);
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
-        let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score);
+        let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score, &true);
 
         trace!("CIGAR: {:?}",results.aligned_read);
     }

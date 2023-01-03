@@ -11,7 +11,6 @@ use log::{info, trace, warn};
 use crate::alignment::scoring_functions::*;
 use bio::alignment::distance::simd::bounded_levenshtein;
 
-// used by some alignments to quickly match and extend kmer anchors
 pub struct SuffixTableLookup<'s, 't> {
     pub suffix_table: SuffixTable<'s, 't>,
     pub seed_size: usize,
@@ -477,7 +476,7 @@ fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
 
 
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
-fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
+pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
                             sequence1: &Vec<u8>,
                             sequence2: &Vec<u8>,
                             scoring_function: &dyn AffineScoringFunction) {
@@ -910,7 +909,7 @@ pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentL
     }
 }
 
-struct BoundedAlignment {
+pub struct BoundedAlignment {
     alignment_result: AlignmentResult,
     bounding_box: (AlignmentLocation,AlignmentLocation)
 }
@@ -1043,7 +1042,7 @@ fn perform_2d_global_traceback(alignment: &mut Alignment<Ix2>, sequence1: &Vec<u
 }
 
 #[allow(dead_code)]
-fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
+pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                                inversion_mapping: Option<&HashMap<AlignmentLocation, BoundedAlignment>>,
                                sequence1: &Vec<u8>,
                                sequence2: &Vec<u8>,
