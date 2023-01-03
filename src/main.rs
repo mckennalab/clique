@@ -299,6 +299,7 @@ fn align_reads(use_capture_sequences : &bool,
 
 
             let extracted_seqs = if *use_capture_sequences {
+                println!("Extracting");
                 Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref))
             } else {
                 None
@@ -338,7 +339,6 @@ fn align_reads(use_capture_sequences : &bool,
                     }
                 };
             } else {
-                println!("collapsed tags?");
                 let collapsed_tags = match extracted_seqs {
                     None => { String::from("NONE") }
                     Some(x) => { x.iter().map(|k| format!("key={}:{}", &k.0, &k.1)).join(";") }

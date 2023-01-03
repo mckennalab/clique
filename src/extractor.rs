@@ -97,4 +97,17 @@ mod tests {
             assert_eq!(keyvalues.get("42").unwrap(), "CACCGTAAG");
         }
     }
+
+    #[test]
+    fn test_real_example() {
+        for _n in 1..100 {
+            let reference = String::from("tcgtcggcagcgtcagatgtgtataagagacagctagcagATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACACATCAAAAGGATCTTTAATGAGATGGATCGCATACTAGACAGTTGCCANNNNNNNNNNNNgcttgcactgtactctacgcgactc############agatcg").as_bytes().to_owned();
+            let test_read = String::from("-----------------------------------AGCAGATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACA-------AGGATCTTTAATGAGATG--------------------CCACCTAGTCTCCAGGCTTGCACTGTACTCTACGCGACTCTCACCAACCGAAA----").as_bytes().to_owned();
+
+            let keyvalues = extract_tagged_sequences(&test_read, &reference);
+
+            println!("{:?}",&keyvalues);
+            assert_eq!(keyvalues.get("35").unwrap(), "TCACCAACCGAA");
+        }
+    }
 }
