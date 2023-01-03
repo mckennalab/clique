@@ -73,6 +73,7 @@ mod read_strategies {
     pub mod read_set;
     pub mod sequence_layout;
 }
+
 mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
@@ -94,7 +95,7 @@ mod reference {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    Collapse{
+    Collapse {
         #[clap(long)]
         /// Name of the package to search
         package_name: String,
@@ -138,12 +139,15 @@ enum Cmd {
         #[clap(long, default_value = "1")]
         processing_threads: usize,
     },
-    Align{
+    Align {
         #[clap(long)]
         use_capture_sequences: bool,
 
         #[clap(long)]
         only_output_captured_ref: bool,
+
+        #[clap(long)]
+        to_fake_fastq: bool,
 
         #[clap(long)]
         reference: String,
@@ -195,12 +199,14 @@ fn main() {
     trace!("{:?}", &parameters.cmd);
 
     match &parameters.cmd {
-        Cmd::Collapse{ .. } => {
+        Cmd::Collapse { .. } => {
             //merger(&parameters);
         }
 
-        Cmd::Align{ use_capture_sequences,
+        Cmd::Align {
+            use_capture_sequences,
             only_output_captured_ref,
+            to_fake_fastq,
             reference,
             output, max_reference_multiplier,
             read1,
@@ -212,6 +218,7 @@ fn main() {
         } => {
             align_reads(use_capture_sequences,
                         only_output_captured_ref,
+                        to_fake_fastq,
                         reference,
                         output, max_reference_multiplier,
                         read1,
@@ -224,10 +231,11 @@ fn main() {
     }
 }
 
-fn align_reads(use_capture_sequences : &bool,
+fn align_reads(use_capture_sequences: &bool,
                only_output_captured_ref: &bool,
+               to_fake_fastq: &bool,
                reference: &String,
-               output :&String,
+               output: &String,
                max_reference_multiplier: &usize,
                read1: &String,
                read2: &String,
@@ -235,7 +243,6 @@ fn align_reads(use_capture_sequences : &bool,
                index2: &String,
                threads: &usize,
                processing_threads: &usize) {
-
     let reference = reference_file_to_struct(reference);
 
     let output_file = File::create(&output).unwrap();
@@ -299,7 +306,6 @@ fn align_reads(use_capture_sequences : &bool,
 
 
             let extracted_seqs = if *use_capture_sequences {
-                println!("Extracting");
                 Some(extract_tagged_sequences(&results.aligned_read, &results.aligned_ref))
             } else {
                 None
@@ -330,12 +336,25 @@ fn align_reads(use_capture_sequences : &bool,
                                 String::from("")
                             }
                         }).join("");
+                        let others = btree.iter().map(|k| if k.0 != 'e' && k.0 != 'r' { format!("key={}:{}", &k.0, &k.1) } else { "" }).join(";");
 
-                        write!(output, ">ref\n{}\n>{}\n{}\n",
-                               ref_seq,
-                               str::replace(name, " ", "_"),
-                               read_seq,
-                        ).expect("Unable to write to output file");
+                        if to_fake_fastq {
+                            read_seq.replace("-","");
+                            let fake_qual = (0..read_seq.len()).map(|_| "H").collect::<String>();
+                            write!(output, "@{}---{}\n{}\n+\n{}\n",
+                                   str::replace(name, " ", "_"),
+                                others,
+                                   read_seq,
+                                   fake_qual,
+                            ).expect("Unable to write to output file");
+                        } else {
+                            write!(output, ">ref\n{}\n>{}---{}\n{}\n",
+                                   ref_seq,
+                                   str::replace(name, " ", "_"),
+                                   others,
+                                   read_seq,
+                            ).expect("Unable to write to output file");
+                        }
                     }
                 };
             } else {
@@ -353,7 +372,6 @@ fn align_reads(use_capture_sequences : &bool,
             }
         }
     });
-
 }
 /*
 fn merger(parameters: &Args) {
