@@ -339,12 +339,12 @@ fn align_reads(use_capture_sequences: &bool,
                         let others = btree.iter().map(|k| if !k.0.starts_with('e') && !k.0.starts_with('r') { format!("key={}:{}", &k.0, &k.1) } else { format!("") }).join(";");
 
                         if *to_fake_fastq {
-                            read_seq.replace("-","");
-                            let fake_qual = (0..read_seq.len()).map(|_| "H").collect::<String>();
+                            let replaced = read_seq.replace("-","");
+                            let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
                             write!(output, "@{}_{}\n{}\n+\n{}\n",
                                    str::replace(name, " ", "_"),
                                 others,
-                                   read_seq,
+                                   replaced,
                                    fake_qual,
                             ).expect("Unable to write to output file");
                         } else {
