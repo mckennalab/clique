@@ -92,7 +92,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
     let mut greatest_ref_pos = 0;
 
     println!("greedy overlapping {} {} {}",position, search_string.len(), seeds.seed_size);
-    while position < search_string.len() - seeds.seed_size {
+    while (position as i64) < (search_string.len() as i64 - seeds.seed_size as i64) {
         let ref_positions = seeds.suffix_table.positions(str::from_utf8(&search_string[position..(position + seeds.seed_size)]).unwrap());
         let mut longest_hit = 0;
         for ref_position in ref_positions {
