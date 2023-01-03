@@ -312,7 +312,7 @@ fn align_reads(use_capture_sequences : &bool,
             if *only_output_captured_ref {
                 match extracted_seqs {
                     None => {
-                        warn!("unable to extract sequences from read {}",x.id())
+                        error!("unable to extract sequences from read {}",x.id())
                     }
                     Some(btree) => {
                         let read_seq = btree.iter().map(|kv| {
