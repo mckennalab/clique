@@ -71,9 +71,8 @@ pub fn align_reads(use_capture_sequences: &bool,
         let name = &String::from(x.id()).to_string();
 
         let read_length = x.seq().to_vec().len();
-        println!("len {} less than {} or greater than {}",read_length,(read_length > reference.sequence.len() * max_reference_multiplier),(read_length < *min_read_length));
         if read_length > reference.sequence.len() * max_reference_multiplier || read_length < *min_read_length {
-            println!("Dropping read of length {}",read_length);
+            warn!("Dropping read of length {}",read_length);
         } else {
             let orientation = orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0;
             let forward_oriented_seq = if orientation {
