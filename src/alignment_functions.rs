@@ -32,7 +32,6 @@ pub fn align_reads(use_capture_sequences: &bool,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
-
     let reference = reference_file_to_struct(reference);
 
     let output_file = File::create(&output).unwrap();
@@ -96,7 +95,8 @@ pub fn align_reads(use_capture_sequences: &bool,
                              only_output_captured_ref,
                              to_fake_fastq,
                              output,
-                             &cigar_string);
+                             &cigar_string,
+                             min_read_length);
         }
     });
 }
@@ -111,7 +111,9 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
                         only_output_captured_ref: &bool,
                         to_fake_fastq: &bool,
                         output: Arc<Mutex<File>>,
-                        cigar_string: &String) {
+                        cigar_string: &String,
+                        min_read_length: &usize) {
+
     let mut output = output.lock().unwrap();
 
     let extracted_seqs = if *use_capture_sequences {
@@ -146,20 +148,29 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
 
                 if *to_fake_fastq {
                     let replaced = read_seq.replace("-", "");
-                    let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
-                    write!(output, "@{}_{}\n{}\n+\n{}\n",
-                           str::replace(aligned_name, " ", "_"),
-                           others,
-                           replaced,
-                           fake_qual,
-                    ).expect("Unable to write to output file");
+
+                    if replaced.len() < *min_read_length {
+                        let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
+                        write!(output, "@{}_{}\n{}\n+\n{}\n",
+                               str::replace(aligned_name, " ", "_"),
+                               others,
+                               replaced,
+                               fake_qual,
+                        ).expect("Unable to write to output file");
+                    } else {
+                        warn!("Final read product too short after trimming: {}, dropping read", replaced.len());
+                    }
                 } else {
-                    write!(output, ">ref\n{}\n>{}_{}\n{}\n",
-                           ref_seq,
-                           str::replace(aligned_name, " ", "_"),
-                           others,
-                           read_seq,
-                    ).expect("Unable to write to output file");
+                    if read_seq.len() < *min_read_length {
+                        write!(output, ">ref\n{}\n>{}_{}\n{}\n",
+                               ref_seq,
+                               str::replace(aligned_name, " ", "_"),
+                               others,
+                               read_seq,
+                        ).expect("Unable to write to output file");
+                    } else {
+                        warn!("Final read product too short after trimming: {}, dropping read", replaced.len());
+                    }
                 }
             }
         };
