@@ -149,7 +149,7 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
                 if *to_fake_fastq {
                     let replaced = read_seq.replace("-", "");
 
-                    if replaced.len() < *min_read_length {
+                    if replaced.len() >= *min_read_length {
                         let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
                         write!(output, "@{}_{}\n{}\n+\n{}\n",
                                str::replace(aligned_name, " ", "_"),
@@ -161,7 +161,7 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
                         warn!("Final read product too short after trimming: {}, dropping read", replaced.len());
                     }
                 } else {
-                    if read_seq.len() < *min_read_length {
+                    if read_seq.len() >= *min_read_length {
                         write!(output, ">ref\n{}\n>{}_{}\n{}\n",
                                ref_seq,
                                str::replace(aligned_name, " ", "_"),
