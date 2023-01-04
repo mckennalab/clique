@@ -169,7 +169,7 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
                                read_seq,
                         ).expect("Unable to write to output file");
                     } else {
-                        warn!("Final read product too short after trimming: {}, dropping read", replaced.len());
+                        warn!("Final read product too short after trimming: {}, dropping read", read_seq.len());
                     }
                 }
             }
