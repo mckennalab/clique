@@ -160,6 +160,9 @@ enum Cmd {
         #[clap(long, default_value = "2")]
         max_reference_multiplier: usize,
 
+        #[clap(long, default_value = "50")]
+        min_read_length: usize,
+
         #[clap(long)]
         read1: String,
 
@@ -210,7 +213,9 @@ fn main() {
             only_output_captured_ref,
             to_fake_fastq,
             reference,
-            output, max_reference_multiplier,
+            output,
+            max_reference_multiplier,
+            min_read_length,
             read1,
             read2,
             index1,
@@ -222,7 +227,9 @@ fn main() {
                         only_output_captured_ref,
                         to_fake_fastq,
                         reference,
-                        output, max_reference_multiplier,
+                        output,
+                        max_reference_multiplier,
+                        min_read_length,
                         read1,
                         read2,
                         index1,

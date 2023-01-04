@@ -25,6 +25,7 @@ pub fn align_reads(use_capture_sequences: &bool,
                    reference: &String,
                    output: &String,
                    max_reference_multiplier: &usize,
+                   min_read_length: &usize,
                    read1: &String,
                    read2: &String,
                    index1: &String,
@@ -70,7 +71,7 @@ pub fn align_reads(use_capture_sequences: &bool,
         let name = &String::from(x.id()).to_string();
 
         let read_length = x.seq().to_vec().len();
-        if read_length > reference.sequence.len() * max_reference_multiplier {
+        if read_length > reference.sequence.len() * max_reference_multiplier || read_length < *min_read_length {
             info!("Dropping read of length {}",read_length);
         } else {
             let orientation = orient_by_longest_segment(&x.seq().to_vec(), &reference.sequence, &reference_lookup).0;
