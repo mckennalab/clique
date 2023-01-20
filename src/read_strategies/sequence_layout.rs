@@ -1,18 +1,10 @@
-use std::borrow::Borrow;
 use std::fmt::Debug;
 use std::fs::File;
-use std::io;
-use std::io::{BufReader, Read};
-use std::ops::Deref;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::io::Read;
 use std::collections::HashMap;
 use serde::{Serialize,Deserialize};
-use bio::io::fastq;
-use bio::io::fastq::{Reader, Record, Records};
+use bio::io::fastq::Record;
 use std::collections::BTreeMap;
-
-use std::sync::{Arc, Mutex};
 
 
 /// holds a set of reads for reading and writing to disk
@@ -35,26 +27,7 @@ impl Clone for ReadSetContainer {
     }
 }
 
-impl ReadSetContainer {
-    pub fn new_from_read1(rec: Record) -> ReadSetContainer {
-        ReadSetContainer {
-            read_one: rec,
-            read_two: None,
-            index_one: None,
-            index_two: None,
-        }
-    }
-    pub fn new_from_read2(rec: Record, old: &ReadSetContainer) -> ReadSetContainer {
-        ReadSetContainer {
-            read_one: old.read_one.clone(),
-            read_two: Some(rec),
-            index_one: old.index_one.clone(),
-            index_two: old.index_two.clone(),
-        }
-    }
-}
-
-
+#[allow(dead_code)]
 #[derive(Clone)]
 pub enum UMISortType {
     /// This enum represents how we should extract molecular identifiers and known sequences from the
@@ -64,14 +37,14 @@ pub enum UMISortType {
     DEGENERATETAG{name: String, ref_start: i32, ref_stop:i32, max_distance: usize},
 }
 
-
+#[allow(dead_code)]
 pub struct SequenceLayout {
-    /// extracts read layout / sequences using known patterns taken from the YAML description file.
     name: Vec<u8>,
     umis: HashMap<UMISortType,Vec<u8>>,
     original_reads: Option<ReadSetContainer>,
 }
 
+#[allow(dead_code)]
 impl SequenceLayout {
     pub fn from(rsc: ReadSetContainer, layout: &SequenceLayoutDesign) -> SequenceLayout {
         ReadPosition::assert_has_all_reads(&layout.reads, &rsc);
@@ -80,23 +53,24 @@ impl SequenceLayout {
 }
 
 impl SequenceLayoutDesign {
+    /// Load up a YAML document describing the layout of specific sequences within the reads. This configuration is specific
+    /// to each sequencing platform and sequencing type (10X, sci, etc). The layout is described below.
+    ///
+    /// # Supported base tags
+    ///
+    /// *align*: (optional) * - contains one optional member, which can be _true_ or _false_
+    /// *reads* - contains the read positions that are required for this configuration. The values, on individual lines, are _READ1, _READ2_, _INDEX1_, _INDEX2_
+    /// *umi_configurations* - contains one section per UMI, each with:
+    /// - *name* - the base of each UMI section
+    ///   - *read* - which read we can extract this from
+    ///   - *start* - the starting position, if align = true is set this this is in relation to the reference, otherwise the offset into the read
+    ///   - *length* - how long this sequence is
+    ///   - *file* - (optional) which file contains known sequences that we should match to. One sequence per line, no header
+    ///
+    /// an example of this format is the *test_layout.yaml* file in the test_data directory
+    ///
     pub fn from_yaml(yaml_file: String) -> Option<SequenceLayoutDesign> {
-        /// Load up a YAML document describing the layout of specific sequences within the reads. This configuration is specific
-        /// to each sequencing platform and sequencing type (10X, sci, etc). The layout is described below.
-        ///
-        /// # Supported base tags
-        ///
-        /// *align*: (optional) * - contains one optional member, which can be _true_ or _false_
-        /// *reads* - contains the read positions that are required for this configuration. The values, on individual lines, are _READ1, _READ2_, _INDEX1_, _INDEX2_
-        /// *umi_configurations* - contains one section per UMI, each with:
-        /// - *name* - the base of each UMI section
-        ///   - *read* - which read we can extract this from
-        ///   - *start* - the starting position, if align = true is set this this is in relation to the reference, otherwise the offset into the read
-        ///   - *length* - how long this sequence is
-        ///   - *file* - (optional) which file contains known sequences that we should match to. One sequence per line, no header
-        ///
-        /// an example of this format is the *test_layout.yaml* file in the test_data directory
-        ///
+
         let mut file = File::open(&yaml_file).expect(&format!("Unable to open YAML configuration file: {}",&yaml_file));
 
         let mut yaml_contents = String::new();
@@ -151,8 +125,6 @@ pub struct SequenceLayoutDesign {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str;
-    use crate::utils::read_utils::fake_reads;
 
     #[test]
     fn test_basic_yaml_readback() {

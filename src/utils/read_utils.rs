@@ -1,6 +1,4 @@
-use bio::io::fastq::Record;
 use rand::{seq::IteratorRandom, thread_rng};
-use itertools::Itertools;
 use crate::read_strategies::read_set::ReadSetContainer;
 
 pub fn random_sequence(length: usize) -> String {
@@ -11,8 +9,7 @@ pub fn random_sequence(length: usize) -> String {
 }
 
 pub fn all_combinations(n: usize) -> Vec<String> {
-    let characters = vec!["A", "C", "G", "T"];// vec![vec!["A"],vec!["C"],vec!["G"],vec!["T"]];
-    let mut combs: Vec<String> = Vec::new();
+    let characters = vec!["A", "C", "G", "T"];
 
     (2..n).fold(
         characters.iter().map(|c| characters.iter().map(move |&d| d.to_owned() + *c)).flatten().collect(),

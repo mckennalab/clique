@@ -37,6 +37,8 @@ chrono = "0.4"
 pretty_trace = {git = "https://github.com/10XGenomics/rust-toolbox.git"}
 serde_yaml = "0.9"
 symspell = "0.4.3"
+derive_more = "*"
+shrinkwraprs = "*"
 
 [profile.release]
 lto = true

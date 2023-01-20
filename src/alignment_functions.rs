@@ -1,23 +1,17 @@
 use std::sync::{Arc, Mutex};
-use ::std::io::Result;
-use std::borrow::Borrow;
-use std::collections::{BTreeMap, HashMap};
-use std::fs::{File, read};
-use std::io::{BufRead, BufReader, Error, Write};
-use std::io;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::fs::File;
+use std::io::Write;
+use std::path::PathBuf;
 use std::str;
-use std::str::FromStr;
 use crate::itertools::Itertools;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
-use crate::alignment::alignment_matrix::{find_seeds, reverse_complement};
+use crate::alignment::alignment_matrix::{AlignmentTag, reverse_complement};
 use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
 use crate::extractor::extract_tagged_sequences;
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::ReadIterator;
-use crate::reference::fasta_reference::reference_file_to_struct;
+use crate::reference::fasta_reference::{reference_file_to_structs, ReferenceManager};
 
 pub fn align_reads(use_capture_sequences: &bool,
                    only_output_captured_ref: &bool,
@@ -32,8 +26,9 @@ pub fn align_reads(use_capture_sequences: &bool,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
-    let reference = reference_file_to_struct(reference);
 
+    let reference = reference_file_to_structs(reference, 20);
+    let reference = reference.get(0).unwrap().to_owned();
     let output_file = File::create(&output).unwrap();
 
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
@@ -41,7 +36,7 @@ pub fn align_reads(use_capture_sequences: &bool,
                                           Some(PathBuf::from(&index1)),
                                           Some(PathBuf::from(&index2)));
 
-    let reference_lookup = find_seeds(&reference.sequence, 20);
+    let reference_lookup = ReferenceManager::find_seeds(&reference.sequence, 20);
     let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
 
     // setup our thread pool
@@ -187,4 +182,66 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
                str::from_utf8(&aligned_read).unwrap(),
         ).expect("Unable to write to output file");
     }
+}
+
+pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentTag> {
+    let mut new_cigar = Vec::new();
+
+    let mut last_token: Option<AlignmentTag> = None; // zero length, so combining won't affect the final cigar string
+
+    for token in cigar_tokens.into_iter() {
+        last_token = match token {
+            AlignmentTag::MatchMismatch(size) => {
+                match last_token {
+                    Some(AlignmentTag::MatchMismatch(size_old)) => Some(AlignmentTag::MatchMismatch(size + size_old)),
+                    _ => {
+                        if last_token != None { new_cigar.push(last_token.unwrap()); }
+
+                        Some(AlignmentTag::MatchMismatch(*size))
+                    }
+                }
+            }
+            AlignmentTag::Del(size) => {
+                match last_token {
+                    Some(AlignmentTag::Del(size_old)) => Some(AlignmentTag::Del(size + size_old)),
+                    _ => {
+                        if last_token != None { new_cigar.push(last_token.unwrap()); }
+                        Some(AlignmentTag::Del(*size))
+                    }
+                }
+            }
+            AlignmentTag::Ins(size) => {
+                match last_token {
+                    Some(AlignmentTag::Ins(size_old)) => Some(AlignmentTag::Ins(size + size_old)),
+                    _ => {
+                        if last_token != None { new_cigar.push(last_token.unwrap()); }
+                        Some(AlignmentTag::Ins(*size))
+                    }
+                }
+            }
+            AlignmentTag::InversionOpen => {
+                match last_token {
+                    _ => {
+                        // we don't combine inversions
+                        if last_token != None { new_cigar.push(last_token.unwrap()); }
+                        Some(AlignmentTag::InversionOpen)
+                    }
+                }
+            }
+            AlignmentTag::InversionClose => {
+                match last_token {
+                    _ => {
+                        // we don't combine inversions
+                        if last_token != None { new_cigar.push(last_token.unwrap()); }
+                        Some(AlignmentTag::InversionClose)
+                    }
+                }
+            }
+        }
+    }
+    if let Some(x) = last_token {
+        new_cigar.push(x);
+    }
+    new_cigar.reverse();
+    new_cigar
 }

@@ -1,12 +1,11 @@
-use std::fs::{File, OpenOptions};
-use bio::io::fastq::{Error, Record, Records};
+use bio::io::fastq::{Record, Records};
 use bio::io::fastq::Reader as FqReader;
 use serde::{Serialize, Deserialize};
 use std::fs;
 use bincode::*;
-use std::io::{BufReader, Write};
+use std::io::BufReader;
 use std::path::PathBuf;
-use rust_htslib::bgzf::{Reader, Writer};
+use rust_htslib::bgzf::Reader;
 
 /// holds a set of reads for reading and writing to disk
 #[derive(Serialize, Deserialize, Debug)]
@@ -37,27 +36,19 @@ impl ReadSetContainer {
             index_two: None,
         }
     }
-    pub fn new_from_read2(rec: Record, old: &ReadSetContainer) -> ReadSetContainer {
-        ReadSetContainer {
-            read_one: old.read_one.clone(),
-            read_two: Some(rec),
-            index_one: old.index_one.clone(),
-            index_two: old.index_two.clone(),
-        }
-    }
 }
 
 impl std::fmt::Display for ReadSetContainer {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let res = write!(f, "{}", &self.read_one);
         if let Some(x) = &self.read_two {
-            write!(f, "{}", x);
+            write!(f, "{}", x).expect("Unable to write ReadSetContainer for read 2");
         }
         if let Some(x) = &self.index_one {
-            write!(f, "{}", x);
+            write!(f, "{}", x).expect("Unable to write ReadSetContainer for index 1");
         }
         if let Some(x) = &self.index_two {
-            write!(f, "{}", x);
+            write!(f, "{}", x).expect("Unable to write ReadSetContainer for index 2");
         }
         res
     }
@@ -93,10 +84,6 @@ impl ReadIterator
         let index1 = if index_1.is_some() { ReadIterator::open_reader(&Some(&index_1.clone().unwrap())) } else { None };
         let index2 = if index_2.is_some() { ReadIterator::open_reader(&Some(&index_2.clone().unwrap())) } else { None };
 
-        let read2_active = read2.is_some();
-        let index1_active = index1.is_some();
-        let index2_active = index2.is_some();
-
         ReadIterator {
             read_one: r_one,
             read_two: read2,
@@ -109,9 +96,7 @@ impl ReadIterator
 
     fn open_reader(check_path: &Option<&PathBuf>) -> Option<Records<BufReader<Reader>>> {
         if check_path.is_some() && check_path.as_ref().unwrap().exists() {
-            let mut bgr = FqReader::new(Reader::from_path(&check_path.unwrap()).unwrap());
-            let records = bgr.records();
-            Some(records)
+            Some(FqReader::new(Reader::from_path(&check_path.unwrap()).unwrap()).records())
         } else {
             None
         }
@@ -128,7 +113,7 @@ pub fn unwrap_reader(read: &mut Option<Records<BufReader<Reader>>>) -> Option<Re
                 Some(rp) => {
                     match rp {
                         Ok(x) => Some(x),
-                        Err(x) => None,
+                        Err(_) => None,
                     }
                 }
                 None => None,
@@ -177,13 +162,13 @@ pub struct ReadSetNestingContainer {
 
 impl ReadSetNestingContainer {
     pub fn from(input_file: &str) -> Option<ReadSetNestingContainer> {
-        let mut file_contents =
+        let file_contents =
             fs::read(&input_file).
                 expect(&format!("Unable to open encoded ReadSetNestingContainer binary file: {}", &input_file));
 
         let decoded_try: Result<Option<ReadSetNestingContainer>> = bincode::deserialize(&file_contents);
         match decoded_try {
-            Ok(x) => { return (x); }
+            Ok(x) => { return x; }
             Err(_) => {None}
         }
     }
@@ -199,14 +184,12 @@ impl ReadSetNestingContainer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str;
     use crate::utils::read_utils::fake_reads;
-// find_max_value_2d_array(matrix: Array::<f64, Ix2>) -> Option<(AlignmentLocation,f64)>
 
     #[test]
     fn simple_read_set_container() {
         let fake_reads = fake_reads(80, 8);
-        let srsc_reads = ReadSetNestingContainer { nest: None, unsorted: Some(fake_reads) };
+        let _srsc_reads = ReadSetNestingContainer { nest: None, unsorted: Some(fake_reads) };
     }
 
     #[test]
@@ -214,7 +197,7 @@ mod tests {
         let fake_reads = fake_reads(80, 8);
         let srsc_reads1 = ReadSetNestingContainer { nest: None, unsorted: Some(fake_reads) };
 
-        let srsc2 = ReadSetNestingContainer { nest: Some(Box::new(srsc_reads1)), unsorted: None };
+        let _srsc2 = ReadSetNestingContainer { nest: Some(Box::new(srsc_reads1)), unsorted: None };
     }
 
     #[test]

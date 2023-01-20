@@ -26,45 +26,24 @@ extern crate suffix;
 extern crate tempfile;
 extern crate serde_yaml;
 extern crate symspell;
+extern crate derive_more;
+#[macro_use] extern crate shrinkwraprs;
 
 use ::std::io::Result;
-use std::borrow::Borrow;
-use std::collections::{BTreeMap, HashMap};
-use std::fs::{File, read};
-use std::io::{BufRead, BufReader, Error, Write};
-use std::io;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::str;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 
-use backtrace::Backtrace;
-use bio::alignment::Alignment;
-use chrono::Local;
-use log::{debug, error, info, Level, LevelFilter, log_enabled};
-use noodles_fastq as Fastq;
-use petgraph::algo::connected_components;
-use rand::Rng;
-use rayon::prelude::*;
-use seq_io::fasta::{OwnedRecord, Reader, Record};
-use tempfile::{Builder, NamedTempFile};
 use tempfile::TempDir as ActualTempDir;
 
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
 use clap::Parser;
 use clap::Subcommand;
-use itertools::Itertools;
 use nanoid::nanoid;
-
-use crate::extractor::extract_tagged_sequences;
-use crate::linked_alignment::*;
-use crate::reference::fasta_reference::reference_file_to_struct;
 
 use pretty_trace::*;
 use crate::alignment_functions::align_reads;
-use crate::read_strategies::read_set::ReadIterator;
 
 mod linked_alignment;
 pub mod extractor;
@@ -84,16 +63,18 @@ mod alignment {
 pub mod fasta_comparisons;
 
 mod utils {
-    pub mod file_utils;
     pub mod base_utils;
     pub mod read_utils;
 }
+
+mod merger;
 
 mod alignment_functions;
 
 mod reference {
     pub mod fasta_reference;
 }
+
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
@@ -180,6 +161,8 @@ enum Cmd {
 
         #[clap(long)]
         find_inversions: bool,
+
+
     },
 }
 

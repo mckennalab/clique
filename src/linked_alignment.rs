@@ -1,12 +1,10 @@
 use std::{str, cmp};
 
-use bio::alignment::AlignmentOperation;
 use crate::fasta_comparisons::DEGENERATEBASES;
 
-use crate::extractor::*;
 use std::convert::TryFrom;
-use crate::SuffixTableLookup;
 use crate::*;
+use crate::reference::fasta_reference::SuffixTableLookup;
 
 /// find a read's orientation using the greatest total number of matching bases
 ///
@@ -207,108 +205,10 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>,
     }
 }
 
-pub fn read_ref_alignment_lengths(alignment_tags: &Vec<AlignmentTag>) -> (usize, usize) {
-    let mut read_len = 0;
-    let mut ref_len = 0;
-    for tag in alignment_tags {
-        match tag {
-            AlignmentTag::MatchMismatch(s) => {
-                read_len += s;
-                ref_len += s;
-            }
-            AlignmentTag::Del(s) => {
-                ref_len += s;
-            }
-            AlignmentTag::Ins(s) => {
-                read_len += s;
-            }
-            AlignmentTag::InversionOpen => {
-                // do nothing
-            }
-            AlignmentTag::InversionClose => {
-                // do nothing
-            }
-        }
-    }
-    (read_len, ref_len)
-}
-
-
 pub fn slice_for_alignment(read: &Vec<u8>, read_start: usize, read_stop: usize) -> Vec<u8> {
     assert!(read_stop <= read.len(),"Read position requested {} when our length is only {}",read_stop,read.len());
     read[read_start..read_stop].to_vec()
 }
-
-
-pub fn convert_alignments(bio: &Vec<AlignmentOperation>) -> Vec<AlignmentTag> {
-    let mut new_tags = Vec::new();
-    if bio.len() == 0 {
-        return new_tags
-    }
-    let mut last_tag = AlignmentTag::MatchMismatch(0);
-    for tag in bio {
-        match tag {
-            AlignmentOperation::Match | AlignmentOperation::Subst => {
-                match last_tag {
-                    AlignmentTag::MatchMismatch(size) => {
-                        last_tag = AlignmentTag::MatchMismatch(size + 1);
-                    }
-                    _ => {
-                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTag::MatchMismatch(1);
-                    }
-                }
-            }
-            AlignmentOperation::Del => {
-                match last_tag {
-                    AlignmentTag::Del(size) => {
-                        last_tag = AlignmentTag::Del(size + 1);
-                    }
-                    _ => {
-                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTag::Del(1);
-                    }
-                }
-            }
-            AlignmentOperation::Ins => {
-                match last_tag {
-                    AlignmentTag::Ins(size) => {
-                        last_tag = AlignmentTag::Ins(size + 1);
-                    }
-                    _ => {
-                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTag::Ins(1);
-                    }
-                }
-            }
-            AlignmentOperation::Xclip(xclip_size) => {
-                match last_tag {
-                    AlignmentTag::Ins(size) => {
-                        last_tag = AlignmentTag::Ins(size + xclip_size);
-                    }
-                    _ => {
-                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTag::Ins(*xclip_size);
-                    }
-                }
-            }
-            AlignmentOperation::Yclip(yclip_size) => {
-                match last_tag {
-                    AlignmentTag::Del(size) => {
-                        last_tag = AlignmentTag::Del(size + yclip_size);
-                    }
-                    _ => {
-                        if last_tag != AlignmentTag::MatchMismatch(0) {new_tags.push(last_tag);}
-                        last_tag = AlignmentTag::Del(*yclip_size);
-                    }
-                }
-            }
-        }
-    }
-    new_tags.push(last_tag);
-    new_tags
-}
-
 
 /// Extend a seed hit within the reference to its maximum length, using degenerate base matching
 pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &Vec<u8>, reference_location: usize) -> usize {
@@ -344,6 +244,7 @@ pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &V
 
 #[cfg(test)]
 mod tests {
+    use crate::reference::fasta_reference::ReferenceManager;
     use super::*;
 
     #[test]
@@ -389,7 +290,7 @@ mod tests {
     #[test]
     fn suffix_array_test() {
         let refseq = String::from("AATGATACGG").as_bytes().to_owned();
-        let reference = find_seeds(&refseq, 20);
+        let reference = ReferenceManager::find_seeds(&refseq, 20);
         assert!(reference.suffix_table.contains("AAT"));
         assert!(!reference.suffix_table.contains("TAAT"));
     }
@@ -398,7 +299,7 @@ mod tests {
     fn find_greedy_non_overlapping_segments_test() {
         let refseq = String::from("NNNNNNNNCATGGTCCTGCTGGAGTTCGTGACCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGAGCTACAGGAACGATGTTTGATTAGAGTAAGCAGAGGACAAGGGCTCGCGTGCAGCCGAAGTTTGGCCGGTACTCTCCAACCGTTAACAACAACACCTTTCATCGAAATCCGCTTGGTAACAACACTAGGATGTTTCGACGCACTCGATAACCGGGAAACCAAGAGAAGTTTCCGAGCGCCACAGCCCAACTTAACTTCGCCATGTTTGAGACACGCGATCGGGACCACAAGACGTTACTCTTTGGGACCGCCGTAAGCGAGTATAAGCAGATTGTGTTTCGGCGTCCAAGTTGCCGTCAAAAGCTTACTGAGTTTCGCTGCCGGCGGAATGCTATTAATCGCGCCTACTTTCATGGAAGACGTTTCCGCTAAAATGGACTGGTGTTTCATGTCGGGAGCCGCTTTGTAAGATGGAGCTACTTTCCAGTCTGAGTTCATGCGAGAACACCACGAGAGTTTCATGAGTGGCCTCTCGAATCAACAGTCTACAAGTTTGGAGTTATCCGACACATCAAAACCAGCCATTCGTTTCATGAGATGGATCGCATACTAACCTTAACGGAGTTTGTAGTCACGGACGAACGATAAACGAGCATAATCTTTCGAGTCGGAGGCGAGTACTTAACGGATATAACGTTTCGTGCCAATGTTAACCGGTCAACTACCACTCAGTTTCTTGTTCATCATAACACTGAAACTGAGATCGTCTTTGGTGCAATTCCAATACGGCTAACTTACGCATACTTTGATGACGCCGTGATTATATCAAGAACCTACCGCTTTCATGGCGGTAACGGTATCCAAAGAATTGGTGTGTTTCGTGCATGCAGTGTCGGACTAAGACTAGGAATGTTTGCAGTGGCCGCAGTTATTCCAAGAGGATGCTTCTTTCCAGCTAACGGTCGCCTAATAAGATGTAACTGGTTTCTTGAGGAGGCATGTACCCGAAGCTTAGAGTAGTCTCCTCTATGAATACTGAAGGACTTGCGTAGTTATGTACAAGCTCACCAACGGACGGGTGCTTCCACATATAACGTTAGCATCTCGTGTGCTATTCGTAAGAGTTTCTAGTCACGGACGAACGATAAAGTACCAACGCCTTTCATGAGTGGCCTCTCGAATCAAGTGATCGGACCTTTGGACGCACTCGATAACCGGGAAGTTATCCAGACTTTCGTGCCAATGTTAACCGGTCAATAAGAGCTACCTTTGATGACGCCGTGATTATATCAATACGCTTCTGGTTTGGGCGTCCAAGTTGCCGTCAAATAGTAGTGACCTTTGCAGTCTGAGTTCATGCGAGAATCACCGCGAAGTTTGTTGTTCATCATAACACTGAAATCCGCAATTAGTTTCCAGCTAACGGTCGCCTAATAATCGGTAGCACGTTTCCGAGCGCCACAGCCCAACTTATCTTACACACGTTTCATCGAAATCCGCTTGGTAACATGCAAGTGTAGTTTGCAGTGGCCGCAGTTATTCCAATGTGTGTGAGCTTTCGAGTTATCCGACACATCAAACAACCGATTAACTTTCGTGCATGCAGTGTCGGACTACAAGAATAGTGCTTTGATGGCGGTAACGGTATCCAACACACTATTACCTTTCATGTCGGGAGCCGCTTTGTACAGTGTGCTACCTTTGGTGCAATTCCAATACGGCTACATAGCTAACGGTTTCTTGAGGAGGCATGTACCCGACCGCCTTATTCGTTTGATGGAAGACGTTTCCGCTAACCGGTTCTAAGGTTTCGGACCGCCGTAAGCGAGTATCCTAGTACATGGTTTCGCTGCCGGCGGAATGCTATTCCTGCTAACGAGTTTCATGAGATGGATCGCATACTACGAAGCGTCATGTTTGGCCGGTACTCTCCAACCGTTCGAGCTTCTTCCTTTCGAGTCGGAGGCGAGTACTTACGATGATAGAGCTTTCAGACACGCGATCGGGACCACCGCAGCTAACAGTAATAGGACCGACCGACCGTTCGATTCAGGGAGATTGCCCTACACTATGCGGCAGCTGGCATAGACTCCTAAGGAGATGCGTACTTGTTAAATAGGACTCTTTCATCGAAATCCGCTTGGTAACCGCTAGGTTACGTTTGTTGTTCATCATAACACTGAACGTAACTATGTCTTTCGAGTTATCCGACACATCAAACTAAGTATGAGCTTTCCGAGCGCCACAGCCCAACTTCTAGCTAATCTCTTTGGCCGGTACTCTCCAACCGTTCTATTATGCCTGTTTGGCTGCCGGCGGAATGCTATTCTCCTGCTACACTTTGTAGTCACGGACGAACGATAACTGCTTAGAACCTTTGCAGTGGCCGCAGTTATTCCACTTAACGCGGAGTTTGGACGCACTCGATAACCGGGAGAACATTAGCTCTTTCATGAGATGGATCGCATACTAGAAGACATTAGGTTTCATGACGCCGTGATTATATCAGAAGTGTTACGGTTTCGGCGTCCAAGTTGCCGTCAAGAATTGATGAGCTTTCGTGCCAATGTTAACCGGTCAGACATTATAGCCTTTGGTGCAATTCCAATACGGCTAGACTCACACGACTTTGGAGTCGGAGGCGAGTACTTAGAGTTGTTGACGTTTCCAGCTAACGGTCGCCTAATAGATGATAGAACGTTTGCAGTCTGAGTTCATGCGAGAGCAATAAGCTACTTTCGGACCGCCGTAAGCGAGTATGCGATTAAGTAGTTTGATGTCGGGAGCCGCTTTGTAGGATACTCGACGTTTCAGACACGCGATCGGGACCACGGTAATATGACGTTTCTTGAGGAGGCATGTACCCGAGGTGTTGCATGGTTTCATGGAAGACGTTTCCGCTAAGTAACGGTATTCTTTGATGAGTGGCCTCTCGAATCAGTACCAGACTTGTTTCATGGCGGTAACGGTATCCAAGTAGCATAATCGTTTGGTGCATGCAGTGTCGGACTAGTATGCTATCGCAGGAGGATGGGGCAGGACAGGACGCGGCCACCCCAGGCCTTTCCAGAGCAAACCTGGAGAAGATTCACAATAGACAGGCCAAGAAACCCGGTGCTTCCTCCAGAGCCGTTTAAAGCTGATATGAGGAAATAAAGAGTGAACTGGAAGGATCCGATATCGCCACCGTGGCTGAATGAGACTGGTGTCGACCTGTGCCT").as_bytes().to_owned();
         let read = String::from("GTATTGCTCATGGTCCTGCTGGAGTTCGTGACCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCAAATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCATAGAAGAAGCTTAGCTCTTGTGCGAGCTACAGGAACGATGTTTGATTAGAGTAAGCAGAGGACAAGGGCTCGCGTGCAGCCGAAGTTTGGCCGGTACTCTCCATACAGTGTGCTACCTTTGGTGCAATTCCAATACGGCTACATAGCTAACGGTTTCTTGAGGAGGCATGTACCCGACCGCCTTATTCGTTTGATGGAAGACGTTTCCGCTAACCGGTTCTAAGGTTTCGGGACCGCCGTAAGCGATTGATGAGCTTTCGTGCCAATGTTAACCGGTCAGACATTATAGCCTTTGGTGCAATTCCAATACGGTAATATGACGTTTCTTGAGGAGGCATGTACCCGAGGTGTTGCATGGTTTCATGGAAGACGTTTCCGCTAAGTAACGGTATTCTTTGATGAGTGGCCTCTCGAATCAGTACCAGACTTGTTTCATGGCGGTAACGGTATCCAAGTAGCATAATCGTTTGGTGCATGCAGTGTCGGACTAGTATGCTATCGCAGGAGGATGGGGCAGGACAGGACGCGGCCACCCCAGGCCTTTCCAGAGCAAACCTGGAGAAGATTCACAATAGACAGGCCAAGAAACCCGGTGCTTCCTCCAGAGCCGTTTAAAGCTGATATGAGGAAATAAAGAGTGAACTGGAAGGATCCCATATCGACAATACGTAACTGAACGAAGTACACCAGTATT").as_bytes().to_owned();
-        let reference = find_seeds(&refseq, 20);
+        let reference = ReferenceManager::find_seeds(&refseq, 20);
 
         let hits = find_greedy_non_overlapping_segments(&read, &refseq, &reference);
 
@@ -431,7 +332,7 @@ mod tests {
             gap_open: -15.0,
             gap_extend: -5.0,
         };
-        let reference_lookup = find_seeds(&reference, 20);
+        let reference_lookup = ReferenceManager::find_seeds(&reference, 20);
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
         let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score, &true);
 
@@ -464,7 +365,7 @@ mod tests {
             gap_open: -15.0,
             gap_extend: -5.0,
         };
-        let reference_lookup = find_seeds(&reference, 20);
+        let reference_lookup = ReferenceManager::find_seeds(&reference, 20);
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
         let results = align_string_with_anchors(&test_read, &reference, &fwd_score_mp, &my_score, &my_aff_score, &true);
 

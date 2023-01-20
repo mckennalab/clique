@@ -6,7 +6,6 @@ use crate::read_strategies::sequence_layout::UMIConfiguration;
 
 pub struct KnownLookup {
     corrector: SymSpell<AsciiStringStrategy>,
-    configuration: UMIConfiguration,
 }
 
 impl KnownLookup {
@@ -19,7 +18,7 @@ impl KnownLookup {
             Some(x) => {
                 let file = File::open(x).expect("known UMI file not found");
                 let sr = BufReader::new(file);
-                for (i, line) in sr.lines().enumerate() {
+                for (_i, line) in sr.lines().enumerate() {
                     let mut line_str = line.unwrap();
                     line_str.push_str(" 1");
                     symspell.load_dictionary_line(&line_str, 0, 1, " ");
@@ -27,7 +26,7 @@ impl KnownLookup {
             }
         }
 
-        KnownLookup{ corrector: symspell, configuration: input_configuration.clone() }
+        KnownLookup{ corrector: symspell}
     }
 
     pub fn correct(&self, sequence: &String, max_distance: &i64, if_multiple_take_first: bool) -> Option<String> {
@@ -50,9 +49,8 @@ impl KnownLookup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str;
-    use crate::utils::read_utils::fake_reads;
 
+    /*
     #[test]
     fn test_100K_by_100K_lookup() {
         let configuration = UMIConfiguration{
@@ -75,7 +73,6 @@ mod tests {
 
     }
 
-    /*
     #[test]
     fn test_3M_by_100K_lookup() {
         let configuration = UMIConfiguration{
@@ -117,8 +114,8 @@ mod tests {
         let result = kf.correct(&String::from("AAAAACTAGACCCTGGGTGCTCCTTAG"), &2, false);
         assert_eq!(result.is_some(),false);
 
-        for x in 0..5000 {
-            let result = kf.correct(&String::from("AAAAACTAGACCCTGGGTGCTCCTTAG"), &2, false);
+        for _x in 0..5000 {
+            let _result = kf.correct(&String::from("AAAAACTAGACCCTGGGTGCTCCTTAG"), &2, false);
         }
 
 

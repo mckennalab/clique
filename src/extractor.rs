@@ -1,10 +1,8 @@
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap};
 use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::fasta_comparisons::KNOWNBASES;
 use crate::fasta_comparisons::KNOWNBASESPLUSINSERT;
 
-use bio::alignment::{Alignment, AlignmentMode, AlignmentOperation, TextSlice};
-use bio::alignment::pairwise::{Aligner, MIN_SCORE, Scoring};
 
 
 pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -> BTreeMap<String, String> {
