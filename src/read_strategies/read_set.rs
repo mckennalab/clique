@@ -28,6 +28,7 @@ impl Clone for ReadSetContainer {
 }
 
 impl ReadSetContainer {
+    #[allow(dead_code)]
     pub fn new_from_read1(rec: Record) -> ReadSetContainer {
         ReadSetContainer {
             read_one: rec,
@@ -161,6 +162,7 @@ pub struct ReadSetNestingContainer {
 }
 
 impl ReadSetNestingContainer {
+    #[allow(dead_code)]
     pub fn from(input_file: &str) -> Option<ReadSetNestingContainer> {
         let file_contents =
             fs::read(&input_file).

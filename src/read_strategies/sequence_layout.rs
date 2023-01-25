@@ -69,6 +69,7 @@ impl SequenceLayoutDesign {
     ///
     /// an example of this format is the *test_layout.yaml* file in the test_data directory
     ///
+    #[allow(dead_code)]
     pub fn from_yaml(yaml_file: String) -> Option<SequenceLayoutDesign> {
 
         let mut file = File::open(&yaml_file).expect(&format!("Unable to open YAML configuration file: {}",&yaml_file));

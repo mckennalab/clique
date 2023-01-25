@@ -109,11 +109,14 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
     SharedSegments { start_position: least_ref_pos as usize, alignment_segments: return_hits}
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlignmentResults {
     pub aligned_read: Vec<u8>,
     pub aligned_ref: Vec<u8>,
     pub cigar_tags: Vec<AlignmentTag>,
 }
+
+
 
 /// find a series of exact matches between the search string and the reference, and then align the
 /// sequences between those exact matches using an inversion aware aligner
@@ -230,14 +233,6 @@ pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &V
                 }
             }
         }
-       // assert!(DEGENERATEBASES.contains_key(&search_string[search_loc]));
-        // assert!(DEGENERATEBASES.contains_key(&reference[ref_loc]));
-        //if DEGENERATEBASES.get(&search_string[search_loc]).unwrap().contains_key(&reference[ref_loc]) ||
-        //    DEGENERATEBASES.get(&reference[ref_loc]).unwrap().contains_key(&search_string[search_loc]) {
-        //    current_length += 1;
-        //} else {
-        //    return current_length;
-        //}
     }
     current_length
 }

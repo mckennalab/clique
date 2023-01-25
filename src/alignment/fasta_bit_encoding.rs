@@ -59,7 +59,7 @@ const FASTA_D: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_enco
 const FASTA_H: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_T));
 const FASTA_V: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_G));
 
-
+#[allow(dead_code)]
 pub fn char_to_encoding(base: &char) -> Option<FastaBase> {
     match base {
         'A' | 'a' => Some(FASTA_A),
@@ -164,6 +164,7 @@ impl FastaString {
         }).collect()}
     }
 
+    #[allow(dead_code)]
     pub fn reverse_complement(&self) -> FastaString {
         FastaString{packed_bases: self.packed_bases.iter().map(|b|complement(b)).rev().collect()}
     }

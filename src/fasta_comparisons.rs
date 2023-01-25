@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::BuildHasherDefault};
+use nohash_hasher::NoHashHasher;
 
 // sets of known characters: our standard DNA alphabet and a second version with known gaps.
 // These are used to mask known values when looking for extractable UMI/ID/barcode sequences.
 // Also mappings from degenerate FASTA bases to their possible ACGT values.
 lazy_static! {
-    pub static ref KNOWNBASES: HashMap<u8, u8> = {
-        let mut hashedvalues = HashMap::new();
+    pub static ref KNOWNBASES: HashMap::<u8, u8, BuildHasherDefault<NoHashHasher<u8>>> = {
+        let mut hashedvalues: HashMap::<u8, u8, BuildHasherDefault<NoHashHasher<u8>>> = HashMap::with_capacity_and_hasher(8, BuildHasherDefault::default());
         hashedvalues.insert(b'a', b'A');
         hashedvalues.insert(b'A', b'A');
         hashedvalues.insert(b'c', b'C');
@@ -17,9 +18,9 @@ lazy_static! {
         hashedvalues
     };
 
-    pub static ref DEGENERATEBASES: HashMap<u8, HashMap<u8,bool>> = {
-        let mut hashedvalues = HashMap::new();
-        hashedvalues.insert(b'A', HashMap::from([('A' as u8, true), ('a' as u8, true)]));
+    pub static ref DEGENERATEBASES: HashMap::<u8, bool, BuildHasherDefault<NoHashHasher<u8>>> = {
+        let mut hashedvalues = HashMap::with_capacity_and_hasher(15, BuildHasherDefault::default());
+        hashedvalues.insert(b'AA', true);
         hashedvalues.insert(b'a', HashMap::from([('A' as u8, true), ('a' as u8, true)]));
 
         hashedvalues.insert(b'C', HashMap::from([('C' as u8, true), ('c' as u8, true)]));
@@ -66,8 +67,8 @@ lazy_static! {
         hashedvalues
     };
 
-    pub static ref KNOWNBASESPLUSINSERT: HashMap<u8, u8> = {
-        let mut hashedvalues = HashMap::new();
+    pub static ref KNOWNBASESPLUSINSERT: HashMap::<u8, u8, BuildHasherDefault<NoHashHasher<u8>>> = {
+        let mut hashedvalues = HashMap::with_capacity_and_hasher(9, BuildHasherDefault::default());
         hashedvalues.insert(b'a', b'A');
         hashedvalues.insert(b'A', b'A');
         hashedvalues.insert(b'c', b'C');
@@ -80,8 +81,8 @@ lazy_static! {
         hashedvalues
     };
 
-    pub static ref REVERSECOMP: HashMap<u8, u8> = {
-            let mut hashedvalues: HashMap<u8,u8> = HashMap::new();
+    pub static ref REVERSECOMP: HashMap::<u8, u8, BuildHasherDefault<NoHashHasher<u8>>> = {
+            let mut hashedvalues: HashMap<u8,u8> = HashMap::with_capacity_and_hasher(8, BuildHasherDefault::default());
             hashedvalues.insert(b'a', b'T');
             hashedvalues.insert(b'A', b'T');
             hashedvalues.insert(b'c', b'G');

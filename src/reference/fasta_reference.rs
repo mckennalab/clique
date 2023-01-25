@@ -51,9 +51,9 @@ impl Hash for Reference<'_, '_> {
 
 #[allow(dead_code)]
 pub struct ReferenceManager<'a, 's, 't> {
-    references: Vec<Reference<'a, 'a>>,
-    unique_kmers: UniqueKmerLookup<'s, 't>,
-    kmer_size: usize,
+    pub references: Vec<Reference<'a, 'a>>,
+    pub unique_kmers: UniqueKmerLookup<'s, 't>,
+    pub kmer_size: usize,
 }
 
 #[allow(dead_code)]
@@ -121,7 +121,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         UniqueKmerLookup{ kmer_length: 0, kmer_to_reference: unique_kmer_to_reference, reference_to_kmer: reference_to_unique, all_have_unique_mappings: all_unique }
     }
 
-    pub fn best_reference(&self, read: ReadSetContainer) -> Vec<&Reference> {
+    pub fn match_references(&self, read: ReadSetContainer) -> Vec<&Reference> {
         let read_kmers = ReferenceManager::sequence_to_kmers(&read.read_one.seq().to_vec(), self.kmer_size );
 
         // now collect reference that have unique kmers matching this sequence
@@ -160,7 +160,7 @@ mod tests {
         let order_fastas = String::from("test_data/18guide1_pcr_sequence.fasta");
         let rm = ReferenceManager::from(&order_fastas,8 );
 
-        let read_iterator = ReadIterator::new(PathBuf::from("test_data/PAM_TWIST_1_018_S20_R1_001.fastq.gz"),
+        let read_iterator = ReadIterator::new(PathBuf::from("test_data/PAM_TWIST_1_018_S20_merged_001.fastq.gz"),
                                               None,
                                               None,
                                               None);
@@ -172,7 +172,7 @@ mod tests {
         let mut missing = 0;
         for read in read_iterator {
             //println!("Length of hits {} ", rm.best_reference(read).len());
-            let cnt = rm.best_reference(read.clone()).len();
+            let cnt = rm.match_references(read.clone()).len();
             total += 1;
             if cnt > 0 {
                 found += 1;

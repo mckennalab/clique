@@ -21,6 +21,7 @@ pub fn create_fake_quality_scores(length: usize) -> Vec<u8> {
     vec![b'H'; length]
 }
 
+#[allow(dead_code)]
 pub fn fake_reads(full_length: usize, permutation_leader_size: usize) -> Vec<ReadSetContainer> {
     //sort_string: &Vec<u8>, read: &ReadSetContainer
     let mut fake_reads = Vec::new();
