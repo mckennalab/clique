@@ -1,7 +1,8 @@
 extern crate derive_more;
 
+use std::mem::size_of;
 use derive_more::{From, Display, Add};
-
+use std::ops::{BitAnd, BitOr, Shl, Shr};
 
 
 /// our core Fasta base - representing a single fasta character in a u8 data store. We actually pack
@@ -22,21 +23,46 @@ impl PartialEq for FastaBase {
         self.0 & other.0 > (0 as u8)
     }
 }
+
 impl Eq for FastaBase {}
 
-use std::ops::BitAnd;
+impl BitOr for FastaBase {
+    type Output = FastaBase;
+    fn bitor(self, rhs: FastaBase) -> FastaBase {
+        FastaBase(self.0.bitor(rhs.0))
+    }
+}
+
 impl BitAnd for FastaBase {
     type Output = FastaBase;
     fn bitand(self, rhs: FastaBase) -> FastaBase {
         FastaBase(self.0.bitand(rhs.0))
     }
 }
+
 impl BitAnd for &FastaBase {
     type Output = FastaBase;
     fn bitand(self, rhs: &FastaBase) -> FastaBase {
         FastaBase(self.0.bitand(rhs.0))
     }
 }
+
+impl Shl<usize> for FastaBase {
+    type Output = FastaBase;
+
+    fn shl(self, rhs: usize) -> FastaBase {
+        FastaBase(self.0 << rhs)
+    }
+}
+
+impl Shr<usize> for FastaBase {
+    type Output = FastaBase;
+
+    fn shr(self, rhs: usize) -> FastaBase {
+        FastaBase(self.0 >> rhs)
+    }
+}
+
 
 /// TODO: so I couldn't figure out how to create the const version as a standard trait, so I did it here (self note: just look at u8 impl you dummy)
 const fn add_two_string_encodings(a: FastaBase, b: FastaBase) -> FastaBase {
@@ -128,21 +154,16 @@ pub fn complement(base: &FastaBase) -> FastaBase {
         &x if x == FASTA_V => FASTA_B,
         &x if x == FASTA_D => FASTA_H,
         &x if x == FASTA_H => FASTA_D,
-        _ => panic!("Unknown base {}",base),
+        _ => panic!("Unknown base {}", base),
     }
 }
 
-
-
-/// We have a private type of FastaBase packed into a u64, right aligned
-#[derive(Shrinkwrap)]
-pub struct Fasta64(u64);
-
 #[derive(Clone, From, Debug, PartialEq, Eq)]
 pub struct FastaString {
-    packed_bases: Vec<FastaBase>,
+    packed_bases: Vec<u64>,
+    character_length: usize,
 }
-
+/*
 impl<Idx> std::ops::Index<Idx> for FastaString
     where
         Idx: std::slice::SliceIndex<[FastaBase]>,
@@ -150,22 +171,62 @@ impl<Idx> std::ops::Index<Idx> for FastaString
     type Output = Idx::Output;
 
     fn index(&self, index: Idx) -> &Self::Output {
+
+        //let bin = index / FastaString::fasta_base_per_u64;
+        //let offset = index % FastaString::fasta_base_per_u64;
         &self.packed_bases[index]
     }
 }
-
+*/
 impl FastaString {
+    const fasta_base_per_u64: usize = 64 / 4;
+    const FULL_SHIFT: u64 = 0xFFFFFFFFFFFFFFFF;
+    const OFFSET_SHIFT: [u64; 16] = [
+        (0xF << 60) as u64, (0xF << 56) as u64, (0xF << 52) as u64, (0xF << 48) as u64,
+        (0xF << 44) as u64, (0xF << 40) as u64, (0xF << 36) as u64, (0xF << 32) as u64,
+        (0xF << 28) as u64, (0xF << 24) as u64, (0xF << 20) as u64, (0xF << 16) as u64,
+        (0xF << 12) as u64, (0xF <<  8) as u64, (0xF <<  4) as u64, (0xF) as u64];
+
+
+    /// a helper method to set a specific
+    fn set_offset(u64_index: usize, offset: usize, value: FastaBase, full_array: &mut Vec<u64>) {
+
+    }
+
     pub fn from(string: &str) -> FastaString {
-        FastaString{packed_bases: string.chars().map(|s| {
+        let final_bases: Vec<u64> = Vec::with_capacity((string.len() as f64 / FastaString::fasta_base_per_u64 as f64).ceil() as usize);
+
+        string.chars().enumerate().for_each(|(index, s)| {
+            let final_base_index = (index / FastaString::fasta_base_per_u64) as usize;
+
             match char_to_encoding(&s) {
-                None => {panic!("unable to convert char {} to a FastaBase from string {}",s,string)}
-                Some(t) => {t}
+                None => { panic!("unable to convert char {} to a FastaBase within string {}", s, string) }
+                Some(t) => {
+                    let offset = (FastaString::fasta_base_per_u64 - (index % FastaString::fasta_base_per_u64)) - 1;
+
+                    final_bases[final_base_index] =
+                        (t << (offset * 4)) as u64 | final_bases[final_base_index];
+                }
             }
-        }).collect()}
+        });
+
+        FastaString { packed_bases: final_bases, character_length: string.len() }
     }
 
     pub fn reverse_complement(&self) -> FastaString {
-        FastaString{packed_bases: self.packed_bases.iter().map(|b|complement(b)).rev().collect()}
+        /*let final_bases: Vec<u64> = Vec::with_capacity((string.len() as f64 / FastaString::fasta_base_per_u64 as f64).ceil() as usize);
+        // bases are laid out in order, we want to swap the order and switch to complement bases
+        let mut forward_position = 0;
+        let mut reverse_position = self.character_length - 1;
+        while forward_index <= reverse_index {
+            let forward_offset  = (FastaString::fasta_base_per_u64 - (forward_position % FastaString::fasta_base_per_u64)) - 1;
+            let forward_index =  (forward_position / FastaString::fasta_base_per_u64) as usize;
+            let reverse_offset  = (FastaString::fasta_base_per_u64 - (reverse_position % FastaString::fasta_base_per_u64)) - 1;
+            let reverse_index =  (reverse_position / FastaString::fasta_base_per_u64) as usize;
+
+
+        }*/
+
     }
 
     #[allow(dead_code)]
@@ -221,7 +282,6 @@ mod tests {
         let fasta_string = FastaString::from("ACGT");
         let rev_comp = fasta_string.reverse_complement();
         assert_eq!(fasta_string, rev_comp);
-
     }
 
     #[test]
@@ -263,27 +323,27 @@ mod tests {
     }
 
 
-/*
-    #[test]
-    fn bit_compare_common_types() {
-        let test_read = String::from("AAAAA").as_bytes().to_owned();
+    /*
+        #[test]
+        fn bit_compare_common_types() {
+            let test_read = String::from("AAAAA").as_bytes().to_owned();
 
-        let aligned_string1 = string_to_bit(&test_read);
-        let aligned_string2 = string_to_bit(&test_read);
+            let aligned_string1 = string_to_bit(&test_read);
+            let aligned_string2 = string_to_bit(&test_read);
 
-        assert_eq!(hamming_bit_strings(&aligned_string1, &aligned_string2, CHAR_PER_ENCODING), 0);
+            assert_eq!(hamming_bit_strings(&aligned_string1, &aligned_string2, CHAR_PER_ENCODING), 0);
 
-        let test_read2 = String::from("CAAAA").as_bytes().to_owned();
-        let aligned_string2 = string_to_bit(&test_read2);
-        assert_eq!(hamming_bit_strings(&aligned_string1, &aligned_string2, CHAR_PER_ENCODING), 1);
+            let test_read2 = String::from("CAAAA").as_bytes().to_owned();
+            let aligned_string2 = string_to_bit(&test_read2);
+            assert_eq!(hamming_bit_strings(&aligned_string1, &aligned_string2, CHAR_PER_ENCODING), 1);
 
-        let test_read2 = String::from("CCCCC").as_bytes().to_owned();
-        let aligned_string2 = string_to_bit(&test_read2);
-        assert_eq!(hamming_bit_strings(&aligned_string1, &aligned_string2, CHAR_PER_ENCODING), 5);
-
-        // do 100K comparisons
-        for i in 0..100000 {
+            let test_read2 = String::from("CCCCC").as_bytes().to_owned();
+            let aligned_string2 = string_to_bit(&test_read2);
             assert_eq!(hamming_bit_strings(&aligned_string1, &aligned_string2, CHAR_PER_ENCODING), 5);
-        }
-    }*/
+
+            // do 100K comparisons
+            for i in 0..100000 {
+                assert_eq!(hamming_bit_strings(&aligned_string1, &aligned_string2, CHAR_PER_ENCODING), 5);
+            }
+        }*/
 }

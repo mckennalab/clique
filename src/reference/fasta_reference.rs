@@ -160,7 +160,7 @@ mod tests {
         let order_fastas = String::from("test_data/18guide1_pcr_sequence.fasta");
         let rm = ReferenceManager::from(&order_fastas,8 );
 
-        let read_iterator = ReadIterator::new(PathBuf::from("test_data/PAM_TWIST_1_018_S20_R1_001.fastq.gz"),
+        let read_iterator = ReadIterator::new(PathBuf::from("test_data/PAM_TWIST_1_018_S20_merged_001.fastq.gz"), // test_data/PAM_TWIST_1_018_S20_R1_001.fastq.gz
                                               None,
                                               None,
                                               None);

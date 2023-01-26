@@ -1,5 +1,9 @@
 use crate::alignment::fasta_bit_encoding::FastaString;
 
+pub fn merge_two_reads(read1: FastaString, read2: FastaString) -> FastaString {
+
+}
+
 
 #[cfg(test)]
 mod tests {
