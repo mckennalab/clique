@@ -39,6 +39,7 @@ serde_yaml = "0.9"
 symspell = "0.4.3"
 derive_more = "*"
 shrinkwraprs = "*"
+nohash-hasher = "*"
 
 [profile.release]
 lto = true

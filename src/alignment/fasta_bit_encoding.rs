@@ -85,7 +85,7 @@ const FASTA_D: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_enco
 const FASTA_H: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_T));
 const FASTA_V: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_G));
 
-
+#[allow(dead_code)]
 pub fn char_to_encoding(base: &char) -> Option<FastaBase> {
     match base {
         'A' | 'a' => Some(FASTA_A),
@@ -213,6 +213,7 @@ impl FastaString {
         FastaString { packed_bases: final_bases, character_length: string.len() }
     }
 
+    #[allow(dead_code)]
     pub fn reverse_complement(&self) -> FastaString {
         /*let final_bases: Vec<u64> = Vec::with_capacity((string.len() as f64 / FastaString::fasta_base_per_u64 as f64).ceil() as usize);
         // bases are laid out in order, we want to swap the order and switch to complement bases
