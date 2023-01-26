@@ -149,7 +149,7 @@ impl Zero for AlignmentDirection {
     }
 }
 
-
+#[derive(Clone)]
 pub struct Alignment<K> {
     pub scores: Array::<f64, K>,
     pub traceback: Array::<AlignmentDirection, K>,
@@ -234,16 +234,16 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
                             sequence1: &Vec<u8>,
                             sequence2: &Vec<u8>,
                             scoring_function: &dyn AffineScoringFunction) {
-    assert_eq!(alignment.scores.shape()[2], 3);
-    assert_eq!(alignment.scores.shape()[0], sequence1.len() + 1);
-    assert_eq!(alignment.scores.shape()[1], sequence2.len() + 1);
+    assert!(alignment.scores.shape()[2] == 3);
+    assert!(alignment.scores.shape()[0] >= sequence1.len() + 1);
+    assert!(alignment.scores.shape()[1] >= sequence2.len() + 1);
 
     alignment.scores[[0, 0, 0]] = 0.0;
     alignment.scores[[0, 0, 1]] = MAX_NEG_SCORE;
     alignment.scores[[0, 0, 2]] = MAX_NEG_SCORE;
 
     // first column (going down)
-    for x in 1..alignment.scores.shape()[0] {
+    for x in 1..(sequence1.len() + 1) {
         alignment.scores[[x, 0, 0]] = MAX_NEG_SCORE;
         alignment.traceback[[x, 0, 0]] = AlignmentDirection::UP(1);
         alignment.scores[[x, 0, 1]] = scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend());
@@ -252,7 +252,7 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
         alignment.traceback[[x, 0, 2]] = AlignmentDirection::UP(1);
     }
     // top row
-    for y in 1..alignment.scores.shape()[1] {
+    for y in 1..(sequence2.len() + 1) {
         alignment.scores[[0, y, 0]] = MAX_NEG_SCORE;
         alignment.traceback[[0, y, 0]] = AlignmentDirection::LEFT(1);
         alignment.scores[[0, y, 1]] = scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend());
@@ -261,8 +261,8 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
         alignment.traceback[[0, y, 2]] = AlignmentDirection::LEFT(1);
     }
 
-    for x in 1..alignment.scores.shape()[0] {
-        for y in 1..alignment.scores.shape()[1] {
+    for x in 1..(sequence1.len() + 1) {
+        for y in 1..(sequence2.len() + 1) {
             update_3d_score(alignment, &sequence1, &sequence2, scoring_function, x, y);
         }
     }
@@ -403,51 +403,65 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
     (_update_x, _update_y, _update_z)
 }
 
+//#[inline(always)]
 fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<u8>, sequence2: &Vec<u8>, scoring_function: &dyn AffineScoringFunction, x: usize, y: usize) -> (bool, bool, bool) {
     let mut _update_x = false;
     let mut _update_y = false;
     let mut _update_z = false;
     {
         let match_score = scoring_function.match_mismatch(&sequence1[x - 1], &sequence2[y - 1]);
-        let max_match_mismatch = vec![
-            if alignment.is_local {0.0} else {MAX_NEG_SCORE},
-            alignment.scores[[x - 1, y - 1, 0]] + match_score,
-            if alignment.is_local {match_score} else {MAX_NEG_SCORE},
-        ];
-        let max_match_mismatch = max_match_mismatch.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
-        let best_match = vec![
-            (alignment.scores[[x - 1, y - 1, 1]] + match_score, AlignmentDirection::UP(1)),
-            (alignment.scores[[x - 1, y - 1, 2]] + match_score, AlignmentDirection::LEFT(1)),
-            (*max_match_mismatch, AlignmentDirection::DIAG(1)), ];
-        let best_match = best_match.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
 
+        let max_match_mismatch = three_way_max_and_direction( &(if alignment.is_local {0.0} else {MAX_NEG_SCORE}),
+            &(alignment.scores[[x - 1, y - 1, 0]] + match_score),
+            &(if alignment.is_local {match_score} else {MAX_NEG_SCORE})).0;
 
-        _update_x = alignment.scores[[x, y, 0]] != best_match.unwrap().0;
-        alignment.scores[[x, y, 0]] = best_match.unwrap().0;
-        alignment.traceback[[x, y, 0]] = best_match.unwrap().1;
+        let best_match= three_way_max_and_direction(&(alignment.scores[[x - 1, y - 1, 1]] + match_score),
+                                                    &(alignment.scores[[x - 1, y - 1, 2]] + match_score), &max_match_mismatch);
+
+        _update_x = alignment.scores[[x, y, 0]] != best_match.0;
+        alignment.scores[[x, y, 0]] = best_match.0;
+        alignment.traceback[[x, y, 0]] = best_match.1;
     }
     {
-        let best_gap_x = vec![
-            (alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend(), AlignmentDirection::UP(1)),
-            (alignment.scores[[x - 1, y, 2]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::LEFT(1)),
-            (alignment.scores[[x - 1, y, 0]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::DIAG(1))];
-        let best_gap_x = best_gap_x.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
-        _update_y = alignment.scores[[x, y, 1]] != best_gap_x.unwrap().0;
-        alignment.scores[[x, y, 1]] = best_gap_x.unwrap().0;
-        alignment.traceback[[x, y, 1]] = best_gap_x.unwrap().1;
+        let best_gap_x = three_way_max_and_direction(&(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend()),
+                                                     &(alignment.scores[[x - 1, y, 2]] + scoring_function.gap_open() + scoring_function.gap_extend()),
+                                                     &(alignment.scores[[x - 1, y, 0]] + scoring_function.gap_open() + scoring_function.gap_extend()));
+
+        _update_y = alignment.scores[[x, y, 1]] != best_gap_x.0;
+        alignment.scores[[x, y, 1]] = best_gap_x.0;
+        alignment.traceback[[x, y, 1]] = best_gap_x.1;
     }
     {
-        let best_gap_y = vec![
-            (alignment.scores[[x, y - 1, 1]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::UP(1)),
-            (alignment.scores[[x, y - 1, 2]] + scoring_function.gap_extend(), AlignmentDirection::LEFT(1)),
-            (alignment.scores[[x, y - 1, 0]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::DIAG(1))];
-        let best_gap_y = best_gap_y.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
-        _update_z = alignment.scores[[x, y, 2]] != best_gap_y.unwrap().0;
-        alignment.scores[[x, y, 2]] = best_gap_y.unwrap().0;
-        alignment.traceback[[x, y, 2]] = best_gap_y.unwrap().1;
+        let best_gap_y =  three_way_max_and_direction(&(alignment.scores[[x, y - 1, 1]] + scoring_function.gap_open() + scoring_function.gap_extend()),
+                                                      &(alignment.scores[[x, y - 1, 2]] + scoring_function.gap_extend()),
+                                                      &(alignment.scores[[x, y - 1, 0]] + scoring_function.gap_open() + scoring_function.gap_extend()));
+
+
+        _update_z = alignment.scores[[x, y, 2]] != best_gap_y.0;
+        alignment.scores[[x, y, 2]] = best_gap_y.0;
+        alignment.traceback[[x, y, 2]] = best_gap_y.1;
     }
     (_update_x, _update_y, _update_z)
 }
+/// This was a hot point in the function above; we did a 3-way comparison using vectors which was really costly, mostly due to mallocs and frees.
+/// This does a three-way comparison and returns both the value and the traversal direction for alignment. It's about a 2X speedup over the previous version
+#[inline(always)]
+pub fn three_way_max_and_direction(up_value: &f64, left_value: &f64, diag_value: &f64) -> (f64,AlignmentDirection) {
+    if up_value > left_value {
+        if up_value > diag_value {
+            (*up_value,AlignmentDirection::UP(1))
+        } else {
+            (*diag_value,AlignmentDirection::DIAG(1))
+        }
+    } else {
+        if left_value > diag_value {
+            (*left_value,AlignmentDirection::LEFT(1))
+        } else {
+            (*diag_value,AlignmentDirection::DIAG(1))
+        }
+    }
+}
+
 
 #[derive(Hash, std::cmp::Eq, Debug, Copy, Clone)]
 pub struct AlignmentLocation {

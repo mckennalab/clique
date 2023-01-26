@@ -3,6 +3,7 @@ use std::{str, cmp};
 use crate::fasta_comparisons::DEGENERATEBASES;
 
 use std::convert::TryFrom;
+use ndarray::Ix3;
 use crate::*;
 use crate::reference::fasta_reference::SuffixTableLookup;
 
@@ -90,7 +91,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: 
     let mut greatest_ref_pos = 0;
 
     while (position as i64) < (search_string.len() as i64 - seeds.seed_size as i64) {
-        let ref_positions = seeds.suffix_table.positions(str::from_utf8(&search_string[position..(position + seeds.seed_size)]).unwrap());
+        let ref_positions = seeds.suffix_table.positions(&search_string[position..(position + seeds.seed_size)]);
         let mut longest_hit = 0;
         for ref_position in ref_positions {
             if ref_position >= &greatest_ref_pos {
@@ -131,12 +132,17 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>,
                                  overlaps: &SharedSegments,
                                  my_score: &InversionScoring,
                                  my_aff_score: &AffineScoring,
-                                 use_inversions: &bool) -> AlignmentResults {
+                                 use_inversions: &bool,
+                                 alignment_mat: &mut Alignment<Ix3>) -> AlignmentResults {
     let mut alignment_ref: Vec<u8> = Vec::new();
     let mut alignment_read: Vec<u8> = Vec::new();
     let mut alignment_cigar = Vec::new();
     let mut read_alignment_last_position: usize = 0;
     let mut ref_alignment_last_position: usize = 0;
+
+    // reuse this throughout the alignments
+    //let mut alignment_mat = create_scoring_record_3d(search_string.len() + 1, reference.len() + 1, AlignmentType::AFFINE, false);
+
 
     for overlap in &overlaps.alignment_segments {
         assert!(read_alignment_last_position <= overlap.search_start,"READ START FAILURE: {} and {}",read_alignment_last_position,overlap.search_start);
@@ -150,10 +156,9 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>,
             match use_inversions {
                 true => inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false),
                 false => {
-                    let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
-                    perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
+                    perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
-                    perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, None)
+                    perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, None)
                 }
             };
         read_alignment_last_position += read_slice.len();
@@ -184,10 +189,10 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>,
             match use_inversions {
                 true => inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false),
                 false => {
-                    let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
-                    perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
+                    //let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
+                    perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
-                    perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, None)
+                    perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, None)
                 }
             };
             alignment_ref.extend(alignment.alignment_string1);

@@ -13,8 +13,6 @@ use std::ops::{BitAnd, BitOr, Shl, Shr};
 #[display(fmt = "{}", _0)]
 pub struct FastaBase(u8);
 
-//pub struct FastaMask(u8);
-
 /// our comparisons are done using logical AND operations for speed (the layout of bits is really important).
 /// Each degenerate base should also be 'equal' to the correct 'ACGT' combination and be equal to other degenerate
 /// bases that share any overlap in their base patterns. E.g. R == K, but R != C (N == everything)
@@ -205,7 +203,7 @@ impl FastaString {
                     let offset = (FastaString::fasta_base_per_u64 - (index % FastaString::fasta_base_per_u64)) - 1;
 
                     final_bases[final_base_index] =
-                        (t << (offset * 4)) as u64 | final_bases[final_base_index];
+                        (u64::from(t) << (offset * 4)) as u64 | final_bases[final_base_index];
                 }
             }
         });

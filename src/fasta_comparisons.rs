@@ -18,9 +18,9 @@ lazy_static! {
         hashedvalues
     };
 
-    pub static ref DEGENERATEBASES: HashMap::<u8, bool, BuildHasherDefault<NoHashHasher<u8>>> = {
-        let mut hashedvalues = HashMap::with_capacity_and_hasher(15, BuildHasherDefault::default());
-        hashedvalues.insert(b'AA', true);
+    pub static ref DEGENERATEBASES: HashMap::<u8, HashMap<u8, bool>> = {
+        let mut hashedvalues = HashMap::new(); // with_capacity_and_hasher(15, BuildHasherDefault::default());
+        hashedvalues.insert(b'A', HashMap::from([('A' as u8, true), ('a' as u8, true)]));
         hashedvalues.insert(b'a', HashMap::from([('A' as u8, true), ('a' as u8, true)]));
 
         hashedvalues.insert(b'C', HashMap::from([('C' as u8, true), ('c' as u8, true)]));
@@ -82,7 +82,7 @@ lazy_static! {
     };
 
     pub static ref REVERSECOMP: HashMap::<u8, u8, BuildHasherDefault<NoHashHasher<u8>>> = {
-            let mut hashedvalues: HashMap<u8,u8> = HashMap::with_capacity_and_hasher(8, BuildHasherDefault::default());
+            let mut hashedvalues = HashMap::with_capacity_and_hasher(8, BuildHasherDefault::default());
             hashedvalues.insert(b'a', b'T');
             hashedvalues.insert(b'A', b'T');
             hashedvalues.insert(b'c', b'G');

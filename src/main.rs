@@ -58,7 +58,7 @@ mod read_strategies {
 mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
-    pub mod fasta_bit_encoding;
+    //pub mod fasta_bit_encoding;
 }
 
 pub mod fasta_comparisons;

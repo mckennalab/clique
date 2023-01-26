@@ -68,6 +68,8 @@ pub struct AffineScoring {
 
 impl AffineScoringFunction for AffineScoring {
     fn match_mismatch(&self, a: &u8, b: &u8) -> f64 {
+        if a == b { self.match_score } else { self.mismatch_score }
+        /*
         match (a, b) {
             (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && KNOWNBASES[&a] == KNOWNBASES[&b] => { self.match_score }
             (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && DEGENERATEBASES.contains_key(&a) && DEGENERATEBASES[&a].contains_key(&b) => { self.match_score }
@@ -75,6 +77,8 @@ impl AffineScoringFunction for AffineScoring {
             (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) => { self.mismatch_score }
             _ => { self.special_character_score } // special characters here
         }
+        */
+
     }
 
     fn gap_open(&self) -> f64 {
@@ -109,13 +113,14 @@ impl InversionScoringFunction for InversionScoring {
         if a == b { self.match_score } else { self.mismatch_score }
     }*/
     fn match_mismatch(&self, a: &u8, b: &u8) -> f64 {
-        match (a, b) {
+        if a == b { self.match_score } else { self.mismatch_score }
+        /*match (a, b) {
             (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && KNOWNBASES[&a] == KNOWNBASES[&b] => { self.match_score }
             (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && DEGENERATEBASES.contains_key(&a) && DEGENERATEBASES[&a].contains_key(&b) => { self.match_score }
             (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) && DEGENERATEBASES.contains_key(&b) && DEGENERATEBASES[&b].contains_key(&a) => { self.match_score }
             (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) => { self.mismatch_score }
             _ => { self.special_character_score } // special characters here
-        }
+        }*/
     }
     fn gap_open(&self) -> f64 {
         self.gap_open as f64

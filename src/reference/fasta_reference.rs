@@ -54,6 +54,7 @@ pub struct ReferenceManager<'a, 's, 't> {
     pub references: Vec<Reference<'a, 'a>>,
     pub unique_kmers: UniqueKmerLookup<'s, 't>,
     pub kmer_size: usize,
+    pub longest_ref: usize,
 }
 
 #[allow(dead_code)]
@@ -70,8 +71,9 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
     pub fn from(fasta: &String, kmer_size: usize) -> ReferenceManager {
 
         let references = reference_file_to_structs(fasta, kmer_size);
+        let longest_ref = references.iter().map(|r| r.sequence.len()).max().unwrap_or(0);
         let unique_kmers = ReferenceManager::unique_kmers(&references, kmer_size);
-        ReferenceManager{ references, unique_kmers, kmer_size }
+        ReferenceManager{ references, unique_kmers, kmer_size, longest_ref }
     }
 
     /// Find the suffix array 'seeds' given a reference sequence
