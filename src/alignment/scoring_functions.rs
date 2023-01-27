@@ -1,5 +1,3 @@
-use crate::fasta_comparisons::DEGENERATEBASES;
-use crate::fasta_comparisons::KNOWNBASES;
 
 /// Trait required to instantiate a Scoring instance
 pub trait ScoringFunction {

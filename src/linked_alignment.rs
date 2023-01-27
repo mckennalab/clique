@@ -156,11 +156,11 @@ pub fn align_string_with_anchors(search_string: &Vec<u8>,
 
         let alignment =
             match (read_slice.len(),ref_slice.len(), use_inversions) {
-                (x ,y, invert) if x < 5 && y < 5 && x == y => {
+                (x ,y, _invert) if x < 5 && y < 5 && x == y => {
                     AlignmentResult::from_match_segment(&ref_slice, &read_slice, ref_alignment_last_position,read_alignment_last_position,&my_aff_score)
                 },
-                (x, y ,true) => inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false),
-                (x, y ,false) => {
+                (_x, _y ,true) => inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false),
+                (_x, _y ,false) => {
                     perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
                     perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, None)

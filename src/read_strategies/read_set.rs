@@ -175,6 +175,7 @@ impl ReadSetNestingContainer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to(filename: &str, input_container: ReadSetNestingContainer) -> std::io::Result<()> {
         let encoded: Vec<u8> = bincode::serialize(&Some(input_container)).unwrap();
 

@@ -12,7 +12,7 @@ use crate::extractor::extract_tagged_sequences;
 use crate::linked_alignment::{align_string_with_anchors, AlignmentResults, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
-use std::time::{Duration, Instant};
+use std::time::{Instant};
 use ndarray::Ix3;
 
 
@@ -63,7 +63,7 @@ pub fn align_reads(use_capture_sequences: &bool,
         gap_extend: -5.0,
     };
     let start = Instant::now();
-    let mut read_count = Arc::new(Mutex::new(0)); // we rely on the Arc for output as access control
+    let read_count = Arc::new(Mutex::new(0)); // we rely on the Arc for output as access control
 
     type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 

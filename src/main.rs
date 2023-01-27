@@ -27,8 +27,7 @@ extern crate tempfile;
 extern crate serde_yaml;
 extern crate symspell;
 extern crate derive_more;
-
-#[macro_use] extern crate shrinkwraprs;
+extern crate shrinkwraprs;
 
 use ::std::io::Result;
 use std::path::{Path, PathBuf};
