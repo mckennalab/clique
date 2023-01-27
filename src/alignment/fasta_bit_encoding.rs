@@ -108,7 +108,30 @@ pub fn char_to_encoding(base: &char) -> Option<FastaBase> {
         _ => None,
     }
 }
+#[allow(dead_code)]
+pub fn u8_to_encoding_defaulted_to_N(base: &u8) -> FastaBase {
+    match base {
+        b'A' | b'a' => FASTA_A,
+        b'C' | b'c' => FASTA_C,
+        b'G' | b'g' => FASTA_G,
+        b'T' | b't' => FASTA_T,
 
+        b'R' | b'r' => FASTA_R,
+        b'Y' | b'y' => FASTA_C,
+        b'K' | b'k' => FASTA_K,
+        b'M' | b'm' => FASTA_M,
+
+        b'S' | b's' => FASTA_S,
+        b'W' | b'w' => FASTA_W,
+        b'B' | b'b' => FASTA_B,
+        b'D' | b'd' => FASTA_D,
+
+        b'H' | b'h' => FASTA_H,
+        b'V' | b'v' => FASTA_V,
+
+        _ => FASTA_N,
+    }
+}
 #[allow(dead_code)]
 pub fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
     match base {
@@ -131,7 +154,7 @@ pub fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
         b'V' | b'v' => Some(FASTA_V),
 
         b'N' | b'n' => Some(FASTA_N),
-        _ => None,
+        _ => Some(FASTA_N),
     }
 }
 
@@ -180,8 +203,8 @@ impl FastaString {
     const fasta_base_per_u64: usize = 64 / 4;
     const FULL_SHIFT: u64 = 0xFFFFFFFFFFFFFFFF;
     const OFFSET_SHIFT: [u64; 16] = [
-        (0xF << 60) as u64, (0xF << 56) as u64, (0xF << 52) as u64, (0xF << 48) as u64,
-        (0xF << 44) as u64, (0xF << 40) as u64, (0xF << 36) as u64, (0xF << 32) as u64,
+        ((0xF as u64) << 60) as u64, ((0xF as u64) << 56) as u64, ((0xF as u64) << 52) as u64, ((0xF as u64) << 48) as u64,
+        ((0xF as u64) << 44) as u64, ((0xF as u64) << 40) as u64, ((0xF as u64) << 36) as u64, ((0xF as u64) << 32) as u64,
         (0xF << 28) as u64, (0xF << 24) as u64, (0xF << 20) as u64, (0xF << 16) as u64,
         (0xF << 12) as u64, (0xF <<  8) as u64, (0xF <<  4) as u64, (0xF) as u64];
 
@@ -190,7 +213,7 @@ impl FastaString {
     fn set_offset(u64_index: usize, offset: usize, value: FastaBase, full_array: &mut Vec<u64>) {
 
     }
-
+    /*
     pub fn from(string: &str) -> FastaString {
         let final_bases: Vec<u64> = Vec::with_capacity((string.len() as f64 / FastaString::fasta_base_per_u64 as f64).ceil() as usize);
 
@@ -227,7 +250,7 @@ impl FastaString {
         }*/
 
     }
-
+*/
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.packed_bases.len()
@@ -276,12 +299,13 @@ pub fn string_to_bit(input: &Vec<u8>) -> BitEncodedFasta {
 mod tests {
     use super::*;
 
+    /*
     #[test]
     fn reverse_comp() {
         let fasta_string = FastaString::from("ACGT");
         let rev_comp = fasta_string.reverse_complement();
         assert_eq!(fasta_string, rev_comp);
-    }
+    }*/
 
     #[test]
     fn bit_compare_simple() {

@@ -27,6 +27,8 @@ extern crate tempfile;
 extern crate serde_yaml;
 extern crate symspell;
 extern crate derive_more;
+
+#[macro_use]
 extern crate shrinkwraprs;
 
 use ::std::io::Result;
@@ -57,7 +59,7 @@ mod read_strategies {
 mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
-    //pub mod fasta_bit_encoding;
+    pub mod fasta_bit_encoding;
 }
 
 pub mod fasta_comparisons;
