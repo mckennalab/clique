@@ -1,6 +1,5 @@
 extern crate derive_more;
 
-use std::mem::size_of;
 use derive_more::{From, Display, Add};
 use std::ops::{BitAnd, BitOr, Shl, Shr};
 
@@ -209,11 +208,11 @@ impl FastaString {
         (0xF << 12) as u64, (0xF <<  8) as u64, (0xF <<  4) as u64, (0xF) as u64];
 
 
+    /*
     /// a helper method to set a specific
     fn set_offset(u64_index: usize, offset: usize, value: FastaBase, full_array: &mut Vec<u64>) {
 
     }
-    /*
     pub fn from(string: &str) -> FastaString {
         let final_bases: Vec<u64> = Vec::with_capacity((string.len() as f64 / FastaString::fasta_base_per_u64 as f64).ceil() as usize);
 
