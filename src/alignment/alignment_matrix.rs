@@ -489,6 +489,20 @@ pub struct AlignmentResult {
 }
 
 impl AlignmentResult {
+    pub fn from_match_segment(str1: &Vec<u8>, str2: &Vec<u8>, start_x: usize, start_y: usize, af_score: &AffineScoring) -> AlignmentResult {
+        let cigar_string: Vec<AlignmentTag> = vec![AlignmentTag::MatchMismatch(str1.len())];
+        let path = (start_x..(start_x + str1.len())).zip((start_y..(start_y + str1.len()))).map(|(x,y)|AlignmentLocation{x,y}).collect();
+        let score = str1.iter().zip(str2.iter()).map(|(xb,yb)|af_score.match_mismatch(xb,yb)).sum();
+        AlignmentResult{
+            alignment_string1: str1.clone(),
+            alignment_string2: str1.clone(),
+            cigar_string,
+            path,
+            score,
+            bounding_box: None,
+        }
+    }
+
 
     #[allow(dead_code)]
     fn slice_out_inversions(&self) -> Vec<AlignmentResult> {

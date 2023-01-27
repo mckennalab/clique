@@ -69,7 +69,6 @@ pub fn align_reads(use_capture_sequences: &bool,
 
     lazy_static! {
         static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());
-        static ref NO_REENTRY: Mutex<()> = Mutex::new(());
     }
     thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
 
