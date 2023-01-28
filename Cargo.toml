@@ -18,7 +18,7 @@ petgraph = "*"
 flate2 = "1.0.23"
 noodles-fastq = "*"
 ndarray = "0.15.0"
-suffix = "1.2"
+suffix = {git = "https://github.com/aaronmck/suffix.git"}
 num-traits = "*"
 indicatif = "*"
 rust-spoa = "*"
