@@ -100,7 +100,7 @@ pub fn align_reads(use_capture_sequences: &bool,
                     let output = Arc::clone(&output);
                     let mut read_count = read_count.lock().unwrap();
                     *read_count += 1;
-                    if *read_count % 100 == 0 {
+                    if *read_count % 10000 == 0 {
                         let duration = start.elapsed();
                         println!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count, duration);
                     }
