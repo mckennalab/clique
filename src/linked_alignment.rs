@@ -349,6 +349,8 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
+
         };
         let reference_lookup = ReferenceManager::find_seeds(&reference, 20);
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
@@ -384,6 +386,8 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
+
         };
         let reference_lookup = ReferenceManager::find_seeds(&reference, 20);
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);

@@ -1,5 +1,29 @@
+use num_traits::Pow;
 use rand::{seq::IteratorRandom, thread_rng};
 use crate::read_strategies::read_set::ReadSetContainer;
+
+pub fn phred_to_prob(phred: &u8) -> f64 {
+    let phred_f64 = ((*phred as usize) - 33) as f64;
+    (10.0).pow((-1.0 * phred_f64)/10.0)
+}
+
+pub fn prob_to_phred(qual: f64) -> u8 {
+    (((-10.0) * qual.log10()) + 33.0) as u8
+}
+
+pub fn combine_phred_scores(phred_one: &u8, phred_two: &u8, agree: bool) -> u8 {
+    let prob1 = phred_to_prob(phred_one);
+    let prob2 = phred_to_prob(phred_two);
+
+    match agree {
+        true => {
+            prob_to_phred(prob1 * prob2)
+        }
+        false => {
+            prob_to_phred(1.0 - ((1.0 - prob2) * ( 1.0 * prob1)))
+        }
+    }
+}
 
 pub fn random_sequence(length: usize) -> String {
     let bases = vec![b'A', b'C', b'G', b'T'];
@@ -36,4 +60,32 @@ pub fn fake_reads(full_length: usize, permutation_leader_size: usize) -> Vec<Rea
         fake_reads.push(fake_rsc);
     }
     fake_reads
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phred_to_qual_test() {
+        assert_eq!(phred_to_prob(&b'I'), 0.0001);
+        assert_eq!(phred_to_prob(&b'H'), 0.00012589254117941674);
+        assert_eq!(phred_to_prob(&b'+'), 0.1);
+        assert_eq!(phred_to_prob(&b'5'), 0.01);
+    }
+
+    #[test]
+    fn qual_to_phred_test() {
+        assert_eq!(prob_to_phred(0.0001), b'I');
+        assert_eq!(prob_to_phred(0.00012589254117941674), b'H');
+        assert_eq!(prob_to_phred(0.1), b'+');
+        assert_eq!(prob_to_phred(0.01), b'5');
+    }
+
+    #[test]
+    fn combine_qual_test() {
+        assert_eq!(combine_phred_scores(&b'H',&b'+', false), b'!');
+        assert_eq!(combine_phred_scores(&b'H',&b'+', true), b'R');
+    }
+
 }

@@ -6,8 +6,8 @@ use std::str;
 use crate::itertools::Itertools;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
-use crate::alignment::alignment_matrix::{Alignment, AlignmentTag, AlignmentType, create_scoring_record_3d, reverse_complement};
-use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
+use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment, reverse_complement};
+use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
 use crate::extractor::extract_tagged_sequences;
 use crate::linked_alignment::{align_string_with_anchors, AlignmentResults, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
@@ -61,6 +61,8 @@ pub fn align_reads(use_capture_sequences: &bool,
         special_character_score: 10.0,
         gap_open: -20.0,
         gap_extend: -5.0,
+        final_gap_multiplier: 1.0,
+
     };
     let start = Instant::now();
     let read_count = Arc::new(Mutex::new(0)); // we rely on the Arc for output as access control
@@ -123,6 +125,28 @@ pub fn align_reads(use_capture_sequences: &bool,
     });
 }
 
+pub fn align_two_strings(read1_seq: &Vec<u8>, rev_comp_read2: &Vec<u8>, scoring_function: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
+
+    let mut alignment_mat = create_scoring_record_3d(
+        read1_seq.len() + 1,
+        rev_comp_read2.len() + 1,
+        AlignmentType::AFFINE,
+        local);
+
+    perform_affine_alignment(
+        &mut alignment_mat,
+        read1_seq,
+        rev_comp_read2,
+        scoring_function);
+
+    perform_3d_global_traceback(
+        &mut alignment_mat,
+        None,
+        read1_seq,
+        rev_comp_read2,
+        None)
+
+}
 
 pub fn best_reference(read: &ReadSetContainer,
                       references: &Vec<Reference>,

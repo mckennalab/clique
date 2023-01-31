@@ -14,7 +14,6 @@ use crate::alignment_functions::simplify_cigar_string;
 pub const MAX_NEG_SCORE: f64 = -100000.0;
 
 
-
 #[derive(Copy, Clone, Debug)]
 pub struct MatchedPosition {
     pub search_start: usize,
@@ -55,6 +54,7 @@ impl fmt::Display for AlignmentTag {
         }
     }
 }
+
 #[allow(dead_code)]
 #[derive(Eq, PartialEq, Debug, Clone, Hash)]
 pub enum AlignmentType {
@@ -231,9 +231,9 @@ fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
 
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
-                            sequence1: &Vec<u8>,
-                            sequence2: &Vec<u8>,
-                            scoring_function: &dyn AffineScoringFunction) {
+                                sequence1: &Vec<u8>,
+                                sequence2: &Vec<u8>,
+                                scoring_function: &dyn AffineScoringFunction) {
     assert!(alignment.scores.shape()[2] == 3);
     assert!(alignment.scores.shape()[0] >= sequence1.len() + 1);
     assert!(alignment.scores.shape()[1] >= sequence2.len() + 1);
@@ -246,18 +246,18 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
     for x in 1..(sequence1.len() + 1) {
         alignment.scores[[x, 0, 0]] = MAX_NEG_SCORE;
         alignment.traceback[[x, 0, 0]] = AlignmentDirection::UP(1);
-        alignment.scores[[x, 0, 1]] = scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend());
+        alignment.scores[[x, 0, 1]] = (scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend())) * scoring_function.final_gap_multiplier();
         alignment.traceback[[x, 0, 1]] = AlignmentDirection::UP(1);
-        alignment.scores[[x, 0, 2]] = scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend());
+        alignment.scores[[x, 0, 2]] = (scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend())) * scoring_function.final_gap_multiplier();
         alignment.traceback[[x, 0, 2]] = AlignmentDirection::UP(1);
     }
     // top row
     for y in 1..(sequence2.len() + 1) {
         alignment.scores[[0, y, 0]] = MAX_NEG_SCORE;
         alignment.traceback[[0, y, 0]] = AlignmentDirection::LEFT(1);
-        alignment.scores[[0, y, 1]] = scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend());
+        alignment.scores[[0, y, 1]] = (scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend())) * scoring_function.final_gap_multiplier();
         alignment.traceback[[0, y, 1]] = AlignmentDirection::LEFT(1);
-        alignment.scores[[0, y, 2]] = scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend());
+        alignment.scores[[0, y, 2]] = (scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend())) * scoring_function.final_gap_multiplier();
         alignment.traceback[[0, y, 2]] = AlignmentDirection::LEFT(1);
     }
 
@@ -275,7 +275,6 @@ fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
                                      sequence1: &Vec<u8>,
                                      sequence2: &Vec<u8>,
                                      scoring_function: &dyn InversionScoringFunction) {
-
     assert_eq!(alignment.scores.shape()[2], 3);
     assert_eq!(alignment.scores.shape()[0], sequence1.len() + 1);
     assert_eq!(alignment.scores.shape()[1], sequence2.len() + 1);
@@ -327,9 +326,9 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
         let pos = AlignmentLocation { x, y };
 
         let max_match_mismatch = vec![
-            if alignment.is_local {0.0} else {MAX_NEG_SCORE},
+            if alignment.is_local { 0.0 } else { MAX_NEG_SCORE },
             alignment.scores[[x - 1, y - 1, 0]] + match_score,
-            if alignment.is_local {match_score} else {MAX_NEG_SCORE},
+            if alignment.is_local { match_score } else { MAX_NEG_SCORE },
         ];
         let max_match_mismatch = max_match_mismatch.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
 
@@ -339,12 +338,12 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
                 if let Some(inversion) = inv {
                     let first_path = &inversion.bounding_box.0.clone();
                     let last_path = inversion.bounding_box.1.clone();
-                    assert_eq!(&last_path,&pos);
+                    assert_eq!(&last_path, &pos);
 
                     let inv_best_match = vec![
-                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 1]] , InvMove::UP(1)),
+                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 1]], InvMove::UP(1)),
                         (alignment.scores[[first_path.x - 1, first_path.y - 1, 2]], InvMove::LEFT(1)),
-                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 0]], InvMove::DIAG(1)),];
+                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 0]], InvMove::DIAG(1)), ];
                     let inv_best_match = inv_best_match.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap();
 
                     (inversion.alignment_result.score + inv_best_match.0 + scoring_function.inversion_cost(), AlignmentDirection::INV(first_path.clone(), last_path.clone(), inv_best_match.1))
@@ -361,7 +360,6 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
 
         best_match = match best_match.1 {
             AlignmentDirection::INV(_pos1, pos2, jump) => {
-
                 let aln = &alignment_inversion.get(&pos.clone());
                 if let Some(align) = aln {
                     let start_pos = &align.bounding_box.0.clone();
@@ -408,33 +406,42 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<u8>, sequence
     let mut _update_x = false;
     let mut _update_y = false;
     let mut _update_z = false;
+
+    let gap_multiplier = if x == sequence1.len() || y == sequence2.len() { scoring_function.final_gap_multiplier() } else { 1.0 };
+
     {
+        // match-mismatch matrix update
         let match_score = scoring_function.match_mismatch(&sequence1[x - 1], &sequence2[y - 1]);
 
-        let max_match_mismatch = three_way_max_and_direction( &(if alignment.is_local {0.0} else {MAX_NEG_SCORE}),
+        let max_match_mismatch = three_way_max_and_direction(
+            &(if alignment.is_local { 0.0 } else { MAX_NEG_SCORE }),
             &(alignment.scores[[x - 1, y - 1, 0]] + match_score),
-            &(if alignment.is_local {match_score} else {MAX_NEG_SCORE})).0;
+            &(if alignment.is_local { match_score } else { MAX_NEG_SCORE })).0;
 
-        let best_match= three_way_max_and_direction(&(alignment.scores[[x - 1, y - 1, 1]] + match_score),
-                                                    &(alignment.scores[[x - 1, y - 1, 2]] + match_score), &max_match_mismatch);
+        let best_match = three_way_max_and_direction(
+            &(alignment.scores[[x - 1, y - 1, 1]] + match_score),
+            &(alignment.scores[[x - 1, y - 1, 2]] + match_score),
+            &max_match_mismatch);
 
         _update_x = alignment.scores[[x, y, 0]] != best_match.0;
         alignment.scores[[x, y, 0]] = best_match.0;
         alignment.traceback[[x, y, 0]] = best_match.1;
     }
     {
-        let best_gap_x = three_way_max_and_direction(&(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend()),
-                                                     &(alignment.scores[[x - 1, y, 2]] + scoring_function.gap_open() + scoring_function.gap_extend()),
-                                                     &(alignment.scores[[x - 1, y, 0]] + scoring_function.gap_open() + scoring_function.gap_extend()));
+        let best_gap_x = three_way_max_and_direction(
+            &(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend()),
+            &(alignment.scores[[x - 1, y, 2]] + (scoring_function.gap_open() + scoring_function.gap_extend()) * gap_multiplier),
+            &(alignment.scores[[x - 1, y, 0]] + (scoring_function.gap_open() + scoring_function.gap_extend()) * gap_multiplier));
 
         _update_y = alignment.scores[[x, y, 1]] != best_gap_x.0;
         alignment.scores[[x, y, 1]] = best_gap_x.0;
         alignment.traceback[[x, y, 1]] = best_gap_x.1;
     }
     {
-        let best_gap_y =  three_way_max_and_direction(&(alignment.scores[[x, y - 1, 1]] + scoring_function.gap_open() + scoring_function.gap_extend()),
-                                                      &(alignment.scores[[x, y - 1, 2]] + scoring_function.gap_extend()),
-                                                      &(alignment.scores[[x, y - 1, 0]] + scoring_function.gap_open() + scoring_function.gap_extend()));
+        let best_gap_y = three_way_max_and_direction(
+            &(alignment.scores[[x, y - 1, 1]] + scoring_function.gap_open() + scoring_function.gap_extend()),
+            &(alignment.scores[[x, y - 1, 2]] + (scoring_function.gap_extend() * gap_multiplier)),
+            &(alignment.scores[[x, y - 1, 0]] + (scoring_function.gap_open() + scoring_function.gap_extend()) * gap_multiplier));
 
 
         _update_z = alignment.scores[[x, y, 2]] != best_gap_y.0;
@@ -443,21 +450,22 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<u8>, sequence
     }
     (_update_x, _update_y, _update_z)
 }
+
 /// This was a hot point in the function above; we did a 3-way comparison using vectors which was really costly, mostly due to mallocs and frees.
 /// This does a three-way comparison and returns both the value and the traversal direction for alignment. It's about a 2X speedup over the previous version
 #[inline(always)]
-pub fn three_way_max_and_direction(up_value: &f64, left_value: &f64, diag_value: &f64) -> (f64,AlignmentDirection) {
+pub fn three_way_max_and_direction(up_value: &f64, left_value: &f64, diag_value: &f64) -> (f64, AlignmentDirection) {
     if up_value > left_value {
         if up_value > diag_value {
-            (*up_value,AlignmentDirection::UP(1))
+            (*up_value, AlignmentDirection::UP(1))
         } else {
-            (*diag_value,AlignmentDirection::DIAG(1))
+            (*diag_value, AlignmentDirection::DIAG(1))
         }
     } else {
         if left_value > diag_value {
-            (*left_value,AlignmentDirection::LEFT(1))
+            (*left_value, AlignmentDirection::LEFT(1))
         } else {
-            (*diag_value,AlignmentDirection::DIAG(1))
+            (*diag_value, AlignmentDirection::DIAG(1))
         }
     }
 }
@@ -485,15 +493,15 @@ pub struct AlignmentResult {
     pub cigar_string: Vec<AlignmentTag>,
     pub path: Vec<AlignmentLocation>,
     pub score: f64,
-    pub bounding_box : Option<(AlignmentLocation,AlignmentLocation)>,
+    pub bounding_box: Option<(AlignmentLocation, AlignmentLocation)>,
 }
 
 impl AlignmentResult {
     pub fn from_match_segment(str1: &Vec<u8>, str2: &Vec<u8>, start_x: usize, start_y: usize, af_score: &AffineScoring) -> AlignmentResult {
         let cigar_string: Vec<AlignmentTag> = vec![AlignmentTag::MatchMismatch(str1.len())];
-        let path = (start_x..(start_x + str1.len())).zip(start_y..(start_y + str1.len())).map(|(x,y)|AlignmentLocation{x,y}).collect();
-        let score = str1.iter().zip(str2.iter()).map(|(xb,yb)|af_score.match_mismatch(xb,yb)).sum();
-        AlignmentResult{
+        let path = (start_x..(start_x + str1.len())).zip(start_y..(start_y + str1.len())).map(|(x, y)| AlignmentLocation { x, y }).collect();
+        let score = str1.iter().zip(str2.iter()).map(|(xb, yb)| af_score.match_mismatch(xb, yb)).sum();
+        AlignmentResult {
             alignment_string1: str1.clone(),
             alignment_string2: str1.clone(),
             cigar_string,
@@ -527,13 +535,13 @@ impl AlignmentResult {
                 }
                 AlignmentTag::InversionOpen => {
                     if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
-                        return_vec.push(AlignmentResult{
+                        return_vec.push(AlignmentResult {
                             alignment_string1,
                             alignment_string2,
                             cigar_string,
                             path,
                             score,
-                            bounding_box: None
+                            bounding_box: None,
                         });
                         alignment_string1 = Vec::new();
                         alignment_string2 = Vec::new();
@@ -544,13 +552,13 @@ impl AlignmentResult {
                 }
                 AlignmentTag::InversionClose => {
                     if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
-                        return_vec.push(AlignmentResult{
+                        return_vec.push(AlignmentResult {
                             alignment_string1,
                             alignment_string2,
                             cigar_string,
                             path,
                             score,
-                            bounding_box: None
+                            bounding_box: None,
                         });
                         alignment_string1 = Vec::new();
                         alignment_string2 = Vec::new();
@@ -562,13 +570,13 @@ impl AlignmentResult {
             }
         }
         if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
-            return_vec.push(AlignmentResult{
+            return_vec.push(AlignmentResult {
                 alignment_string1,
                 alignment_string2,
                 cigar_string,
                 path,
                 score,
-                bounding_box: None
+                bounding_box: None,
             });
         }
         return_vec
@@ -582,22 +590,23 @@ impl AlignmentResult {
         for path_obj in &self.path {
             let new_y = (1.0 + half_point + (half_point - (path_obj.y as f64))).round() as usize;
             trace!("old {},{} new {}",path_obj.x,path_obj.y,new_y);
-            new_path.push(AlignmentLocation { x: path_obj.x, y: new_y});
+            new_path.push(AlignmentLocation { x: path_obj.x, y: new_y });
         }
         new_path.reverse();
         let bounds = (
-            AlignmentLocation{x: new_path[new_path.len()-1].x, y: new_path[0].y},
-            AlignmentLocation{x: new_path[0].x, y: new_path[new_path.len()-1].y});
+            AlignmentLocation { x: new_path[new_path.len() - 1].x, y: new_path[0].y },
+            AlignmentLocation { x: new_path[0].x, y: new_path[new_path.len() - 1].y });
         AlignmentResult {
             alignment_string1: self.alignment_string1.clone(),
             alignment_string2: self.alignment_string2.clone(),
             cigar_string: self.cigar_string.clone(),
             path: new_path,
             score: self.score,
-            bounding_box: Some(bounds)
+            bounding_box: Some(bounds),
         }
     }
 }
+
 pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentLocation, f64)> {
     let mut _g_max_row = 0;
     let mut _g_max_col = 0;
@@ -643,7 +652,7 @@ pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentL
 
 pub struct BoundedAlignment {
     alignment_result: AlignmentResult,
-    bounding_box: (AlignmentLocation,AlignmentLocation)
+    bounding_box: (AlignmentLocation, AlignmentLocation),
 }
 
 pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
@@ -663,12 +672,12 @@ pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score:
         if length > 1 {
             let converted_path = aligned_inv_local.convert_inverted_path(read.len());
             let bounding = converted_path.bounding_box.unwrap().clone();
-            let b_alignment = BoundedAlignment{ alignment_result: converted_path, bounding_box: bounding };
+            let b_alignment = BoundedAlignment { alignment_result: converted_path, bounding_box: bounding };
             let true_position = AlignmentLocation { x: bounding.1.x, y: bounding.1.y };
             aligned_inv = if length >= my_score.min_inversion_length {
                 clean_and_find_next_best_match_3d(&mut inversion_mat, &reference, &rev_comp_read, my_aff_score, &aligned_inv_local);
                 long_enough_hits.insert(true_position, b_alignment);
-                Some(perform_3d_global_traceback(&mut inversion_mat, None, &reference, &rev_comp_read,  None))
+                Some(perform_3d_global_traceback(&mut inversion_mat, None, &reference, &rev_comp_read, None))
             } else {
                 None
             }
@@ -682,13 +691,11 @@ pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score:
 
 #[allow(dead_code)]
 pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
-                               inversion_mapping: Option<&HashMap<AlignmentLocation, BoundedAlignment>>,
-                               sequence1: &Vec<u8>,
-                               sequence2: &Vec<u8>,
-                               starting_position: Option<(usize, usize)>,
+                                   inversion_mapping: Option<&HashMap<AlignmentLocation, BoundedAlignment>>,
+                                   sequence1: &Vec<u8>,
+                                   sequence2: &Vec<u8>,
+                                   starting_position: Option<(usize, usize)>,
 ) -> AlignmentResult {
-    info!("STARTING {:?}",&starting_position);
-
     let mut alignment1 = Vec::new();
     let mut alignment2 = Vec::new();
     let mut cigars: Vec<AlignmentTag> = Vec::new();
@@ -707,8 +714,8 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         _starting_y = max_value_tuple.0.y;
     }
     let starting_z = vec![(alignment.scores[[_starting_x, _starting_y, 0]], 0),
-                              (alignment.scores[[_starting_x, _starting_y, 1]], 1),
-                              (alignment.scores[[_starting_x, _starting_y, 2]], 2)];
+                          (alignment.scores[[_starting_x, _starting_y, 1]], 1),
+                          (alignment.scores[[_starting_x, _starting_y, 2]], 2)];
 
     let mut _starting_z = starting_z.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap().1;
     let score = alignment.scores[[_starting_x, _starting_y, _starting_z]];
@@ -730,8 +737,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
             AlignmentDirection::UP(size) => (1, size),
             AlignmentDirection::LEFT(size) => (2, size),
             AlignmentDirection::INV(pos1, pos2, inv_move) => {
-
-                let inversion_alignment= inversion_mapping.unwrap().get(&AlignmentLocation{x: pos2.x, y: pos2.y}).unwrap();
+                let inversion_alignment = inversion_mapping.unwrap().get(&AlignmentLocation { x: pos2.x, y: pos2.y }).unwrap();
                 for p in &inversion_alignment.alignment_result.path {
                     path.push(p.clone());
                 }
@@ -748,9 +754,9 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 _starting_x = pos1.x - 1;
                 _starting_y = pos1.y - 1;
                 let matrix_move = match inv_move {
-                    InvMove::DIAG(_) => {0}
-                    InvMove::UP(_) => {1}
-                    InvMove::LEFT(_) => {2}
+                    InvMove::DIAG(_) => { 0 }
+                    InvMove::UP(_) => { 1 }
+                    InvMove::LEFT(_) => { 2 }
                 };
                 cigars.push(AlignmentTag::InversionClose); // it'll get reversed at the end
                 cigars.extend(&inversion_alignment.alignment_result.cigar_string);
@@ -761,7 +767,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
 
         match _starting_z {
             0 => {
-                if movement_delta.1 > 0 {cigars.push(AlignmentTag::MatchMismatch(1))};
+                if movement_delta.1 > 0 { cigars.push(AlignmentTag::MatchMismatch(1)) };
                 trace!("PUSH MM");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(*sequence1.get(_starting_x - 1).unwrap());
@@ -771,7 +777,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 }
             }
             1 => {
-                if movement_delta.1 > 0 {cigars.push(AlignmentTag::Del(1))};
+                if movement_delta.1 > 0 { cigars.push(AlignmentTag::Del(1)) };
                 trace!("PUSH INS");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(*sequence1.get(_starting_x - 1).unwrap());
@@ -780,7 +786,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 }
             }
             2 => {
-                if movement_delta.1 > 0 {cigars.push(AlignmentTag::Ins(1))};
+                if movement_delta.1 > 0 { cigars.push(AlignmentTag::Ins(1)) };
                 trace!("PUSH DEL");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(b'-');
@@ -816,7 +822,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         cigar_string: simplify_cigar_string(&cigars),
         path,
         score,
-        bounding_box: None
+        bounding_box: None,
     }
 }
 
@@ -879,6 +885,7 @@ fn reverse_base(base: u8) -> u8 {
         _ => b'N',
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -895,6 +902,7 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -10.0,
             gap_extend: -10.0,
+            final_gap_multiplier: 1.0,
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
@@ -924,6 +932,7 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -20.0,
             gap_extend: -10.0,
+            final_gap_multiplier: 1.0,
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
@@ -946,6 +955,7 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -10.0,
             gap_extend: -10.0,
+            final_gap_multiplier: 1.0,
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
@@ -967,6 +977,7 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -10.0,
             gap_extend: -10.0,
+            final_gap_multiplier: 1.0,
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
@@ -990,6 +1001,7 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
@@ -997,11 +1009,11 @@ mod tests {
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        /*println!("Aligned {} and {} from {} and {}",
+        println!("Aligned {} and {} from {} and {}",
                  str::from_utf8(&results.alignment_string1).unwrap(),
                  str::from_utf8(&results.alignment_string2).unwrap(),
                  str::from_utf8(&reference).unwrap(),
-                 str::from_utf8(&test_read).unwrap(), );*/
+                 str::from_utf8(&test_read).unwrap(), );
         assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "TACTGC");
         assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "TACAGC");
     }
@@ -1019,6 +1031,7 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
         };
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
@@ -1053,9 +1066,10 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
         };
 
-        let results = inversion_alignment(&reference,&test_read,&my_score,&my_aff_score,true);
+        let results = inversion_alignment(&reference, &test_read, &my_score, &my_aff_score, true);
 
         println!("Aligned {} and {} from {} and {}",
                  str::from_utf8(&results.alignment_string1).unwrap(),
@@ -1080,7 +1094,7 @@ mod tests {
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
-            min_inversion_length: 2
+            min_inversion_length: 2,
         };
 
 
@@ -1090,9 +1104,10 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
         };
 
-        let results = inversion_alignment(&reference,&test_read,&my_score,&my_aff_score,false);
+        let results = inversion_alignment(&reference, &test_read, &my_score, &my_aff_score, false);
 
 
         println!("Aligned {} and {} from {} and {}",
@@ -1105,6 +1120,7 @@ mod tests {
         assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "CCAATCTACTACTGCTTGCA");
         assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "CCAATCTACTACTGCTTGCA");
     }
+
     #[test]
     fn inversion_alignment_cigar_test() {
         let reference = String::from("CCAATCTACTACTGCTTGCA").as_bytes().to_owned();
@@ -1117,7 +1133,7 @@ mod tests {
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
-            min_inversion_length: 4
+            min_inversion_length: 4,
         };
 
 
@@ -1127,9 +1143,10 @@ mod tests {
             special_character_score: 8.0,
             gap_open: -15.0,
             gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
         };
 
-        let results = inversion_alignment(&reference,&test_read,&my_score,&my_aff_score,false);
+        let results = inversion_alignment(&reference, &test_read, &my_score, &my_aff_score, false);
 
         println!("Aligned {} and {} from {} and {}",
                  str::from_utf8(&results.alignment_string1).unwrap(),
@@ -1137,8 +1154,7 @@ mod tests {
                  str::from_utf8(&reference).unwrap(),
                  str::from_utf8(&test_read).unwrap());
 
-        println!("CIGAR: {:?}",results.cigar_string);
+        println!("CIGAR: {:?}", results.cigar_string);
     }
-
 }
 

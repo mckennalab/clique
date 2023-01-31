@@ -55,6 +55,7 @@ pub trait AffineScoringFunction {
     fn match_mismatch(&self, a: &u8, b: &u8) -> f64;
     fn gap_open(&self) -> f64;
     fn gap_extend(&self) -> f64;
+    fn final_gap_multiplier(&self) -> f64;
 }
 
 pub struct AffineScoring {
@@ -63,6 +64,8 @@ pub struct AffineScoring {
     pub(crate) special_character_score: f64,
     pub(crate) gap_open: f64,
     pub(crate) gap_extend: f64,
+    pub(crate) final_gap_multiplier: f64,
+
 }
 
 impl AffineScoringFunction for AffineScoring {
@@ -79,6 +82,8 @@ impl AffineScoringFunction for AffineScoring {
     fn gap_extend(&self) -> f64 {
         self.gap_extend as f64
     }
+
+    fn final_gap_multiplier(&self) -> f64 {self.final_gap_multiplier}
 }
 
 
