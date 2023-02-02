@@ -1,7 +1,7 @@
 extern crate derive_more;
 
 use derive_more::{From, Display, Add};
-use std::ops::{BitAnd, BitOr, Shl, Shr};
+use std::ops::{BitAnd, BitOr, BitXor, Shl, Shr};
 
 
 /// our core Fasta base - representing a single fasta character in a u8 data store. We actually pack
@@ -12,6 +12,11 @@ use std::ops::{BitAnd, BitOr, Shl, Shr};
 #[display(fmt = "{}", _0)]
 pub struct FastaBase(u8);
 
+impl FastaBase {
+    pub fn identity(&self, other: &FastaBase) -> bool {
+        (*self ^ *other).0 == 0
+    }
+}
 /// our comparisons are done using logical AND operations for speed (the layout of bits is really important).
 /// Each degenerate base should also be 'equal' to the correct 'ACGT' combination and be equal to other degenerate
 /// bases that share any overlap in their base patterns. E.g. R == K, but R != C (N == everything)
@@ -27,6 +32,13 @@ impl BitOr for FastaBase {
     type Output = FastaBase;
     fn bitor(self, rhs: FastaBase) -> FastaBase {
         FastaBase(self.0.bitor(rhs.0))
+    }
+}
+
+impl BitXor for FastaBase {
+    type Output = FastaBase;
+    fn bitxor(self, rhs: FastaBase) -> FastaBase {
+        FastaBase(self.0.bitxor(rhs.0))
     }
 }
 
@@ -66,21 +78,21 @@ const fn add_two_string_encodings(a: FastaBase, b: FastaBase) -> FastaBase {
     FastaBase((a.0 + b.0) as u8)
 }
 
-const FASTA_N: FastaBase = FastaBase(0xF as u8);
-const FASTA_A: FastaBase = FastaBase(0x1 as u8);
-const FASTA_C: FastaBase = FastaBase(0x2 as u8);
-const FASTA_G: FastaBase = FastaBase(0x4 as u8);
-const FASTA_T: FastaBase = FastaBase(0x8 as u8);
-const FASTA_R: FastaBase = add_two_string_encodings(FASTA_A, FASTA_G);
-const FASTA_Y: FastaBase = add_two_string_encodings(FASTA_C, FASTA_T);
-const FASTA_K: FastaBase = add_two_string_encodings(FASTA_G, FASTA_T);
-const FASTA_M: FastaBase = add_two_string_encodings(FASTA_A, FASTA_C);
-const FASTA_S: FastaBase = add_two_string_encodings(FASTA_C, FASTA_G);
-const FASTA_W: FastaBase = add_two_string_encodings(FASTA_A, FASTA_T);
-const FASTA_B: FastaBase = add_two_string_encodings(FASTA_C, add_two_string_encodings(FASTA_G, FASTA_T));
-const FASTA_D: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_G, FASTA_T));
-const FASTA_H: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_T));
-const FASTA_V: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_G));
+pub const FASTA_N: FastaBase = FastaBase(0xF as u8);
+pub const FASTA_A: FastaBase = FastaBase(0x1 as u8);
+pub const FASTA_C: FastaBase = FastaBase(0x2 as u8);
+pub const FASTA_G: FastaBase = FastaBase(0x4 as u8);
+pub const FASTA_T: FastaBase = FastaBase(0x8 as u8);
+pub const FASTA_R: FastaBase = add_two_string_encodings(FASTA_A, FASTA_G);
+pub const FASTA_Y: FastaBase = add_two_string_encodings(FASTA_C, FASTA_T);
+pub const FASTA_K: FastaBase = add_two_string_encodings(FASTA_G, FASTA_T);
+pub const FASTA_M: FastaBase = add_two_string_encodings(FASTA_A, FASTA_C);
+pub const FASTA_S: FastaBase = add_two_string_encodings(FASTA_C, FASTA_G);
+pub const FASTA_W: FastaBase = add_two_string_encodings(FASTA_A, FASTA_T);
+pub const FASTA_B: FastaBase = add_two_string_encodings(FASTA_C, add_two_string_encodings(FASTA_G, FASTA_T));
+pub const FASTA_D: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_G, FASTA_T));
+pub const FASTA_H: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_T));
+pub const FASTA_V: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_G));
 
 #[allow(dead_code)]
 pub fn char_to_encoding(base: &char) -> Option<FastaBase> {
@@ -91,7 +103,7 @@ pub fn char_to_encoding(base: &char) -> Option<FastaBase> {
         'T' | 't' => Some(FASTA_T),
 
         'R' | 'r' => Some(FASTA_R),
-        'Y' | 'y' => Some(FASTA_C),
+        'Y' | 'y' => Some(FASTA_Y),
         'K' | 'k' => Some(FASTA_K),
         'M' | 'm' => Some(FASTA_M),
 
@@ -107,6 +119,7 @@ pub fn char_to_encoding(base: &char) -> Option<FastaBase> {
         _ => None,
     }
 }
+
 #[allow(dead_code)]
 pub fn u8_to_encoding_defaulted_to_N(base: &u8) -> FastaBase {
     match base {
@@ -116,7 +129,7 @@ pub fn u8_to_encoding_defaulted_to_N(base: &u8) -> FastaBase {
         b'T' | b't' => FASTA_T,
 
         b'R' | b'r' => FASTA_R,
-        b'Y' | b'y' => FASTA_C,
+        b'Y' | b'y' => FASTA_Y,
         b'K' | b'k' => FASTA_K,
         b'M' | b'm' => FASTA_M,
 
@@ -131,6 +144,7 @@ pub fn u8_to_encoding_defaulted_to_N(base: &u8) -> FastaBase {
         _ => FASTA_N,
     }
 }
+
 #[allow(dead_code)]
 pub fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
     match base {
@@ -140,7 +154,7 @@ pub fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
         b'T' | b't' => Some(FASTA_T),
 
         b'R' | b'r' => Some(FASTA_R),
-        b'Y' | b'y' => Some(FASTA_C),
+        b'Y' | b'y' => Some(FASTA_Y),
         b'K' | b'k' => Some(FASTA_K),
         b'M' | b'm' => Some(FASTA_M),
 
@@ -205,7 +219,7 @@ impl FastaString {
         ((0xF as u64) << 60) as u64, ((0xF as u64) << 56) as u64, ((0xF as u64) << 52) as u64, ((0xF as u64) << 48) as u64,
         ((0xF as u64) << 44) as u64, ((0xF as u64) << 40) as u64, ((0xF as u64) << 36) as u64, ((0xF as u64) << 32) as u64,
         (0xF << 28) as u64, (0xF << 24) as u64, (0xF << 20) as u64, (0xF << 16) as u64,
-        (0xF << 12) as u64, (0xF <<  8) as u64, (0xF <<  4) as u64, (0xF) as u64];
+        (0xF << 12) as u64, (0xF << 8) as u64, (0xF << 4) as u64, (0xF) as u64];
 
 
     /*
@@ -296,15 +310,60 @@ pub fn string_to_bit(input: &Vec<u8>) -> BitEncodedFasta {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use super::*;
 
-    /*
     #[test]
-    fn reverse_comp() {
-        let fasta_string = FastaString::from("ACGT");
-        let rev_comp = fasta_string.reverse_complement();
-        assert_eq!(fasta_string, rev_comp);
-    }*/
+    fn test_identity() {
+        assert_eq!(FASTA_N.identity(&FASTA_N),true);
+        assert_eq!(FASTA_N.identity(&FASTA_A),false);
+    }
+
+    #[test]
+    fn test_u8_to_encoding_defaulted_to_N() {
+        assert_eq!(FASTA_A, u8_to_encoding_defaulted_to_N(&b'A'));
+        assert_eq!(FASTA_C, u8_to_encoding_defaulted_to_N(&b'C'));
+        assert_eq!(FASTA_G, u8_to_encoding_defaulted_to_N(&b'G'));
+        assert_eq!(FASTA_T, u8_to_encoding_defaulted_to_N(&b'T'));
+
+        assert_eq!(FASTA_A, u8_to_encoding_defaulted_to_N(&b'a'));
+        assert_eq!(FASTA_C, u8_to_encoding_defaulted_to_N(&b'c'));
+        assert_eq!(FASTA_G, u8_to_encoding_defaulted_to_N(&b'g'));
+        assert_eq!(FASTA_T, u8_to_encoding_defaulted_to_N(&b't'));
+
+        assert_eq!(FASTA_N, u8_to_encoding_defaulted_to_N(&b'N'));
+        assert_eq!(FASTA_N, u8_to_encoding_defaulted_to_N(&b'n'));
+
+        assert_eq!(FASTA_B, u8_to_encoding_defaulted_to_N(&b'B'));
+        assert_eq!(FASTA_B, u8_to_encoding_defaulted_to_N(&b'b'));
+
+        assert_eq!(FASTA_D, u8_to_encoding_defaulted_to_N(&b'D'));
+        assert_eq!(FASTA_D, u8_to_encoding_defaulted_to_N(&b'd'));
+
+        assert_eq!(FASTA_R, u8_to_encoding_defaulted_to_N(&b'R'));
+        assert_eq!(FASTA_R, u8_to_encoding_defaulted_to_N(&b'r'));
+
+        assert_eq!(FASTA_Y, u8_to_encoding_defaulted_to_N(&b'Y'));
+        assert_eq!(FASTA_Y, u8_to_encoding_defaulted_to_N(&b'y'));
+
+        assert_eq!(FASTA_K, u8_to_encoding_defaulted_to_N(&b'K'));
+        assert_eq!(FASTA_K, u8_to_encoding_defaulted_to_N(&b'k'));
+
+        assert_eq!(FASTA_M, u8_to_encoding_defaulted_to_N(&b'M'));
+        assert_eq!(FASTA_M, u8_to_encoding_defaulted_to_N(&b'm'));
+
+        assert_eq!(FASTA_S, u8_to_encoding_defaulted_to_N(&b'S'));
+        assert_eq!(FASTA_S, u8_to_encoding_defaulted_to_N(&b's'));
+
+        assert_eq!(FASTA_W, u8_to_encoding_defaulted_to_N(&b'W'));
+        assert_eq!(FASTA_W, u8_to_encoding_defaulted_to_N(&b'w'));
+
+        assert_eq!(FASTA_H, u8_to_encoding_defaulted_to_N(&b'H'));
+        assert_eq!(FASTA_H, u8_to_encoding_defaulted_to_N(&b'h'));
+
+        assert_eq!(FASTA_V, u8_to_encoding_defaulted_to_N(&b'V'));
+        assert_eq!(FASTA_V, u8_to_encoding_defaulted_to_N(&b'v'));
+    }
 
     #[test]
     fn bit_compare_simple() {
@@ -323,6 +382,80 @@ mod tests {
         let bit_one = FASTA_A; // StringEncodingPair { bases: FASTA_A, mask: SINGLE_BIT_MASK };
         let bit_two = FASTA_R; // StringEncodingPair { bases: FASTA_R, mask: SINGLE_BIT_MASK };
         assert_eq!(bit_one, bit_two);
+    }
+
+    #[test]
+    fn bit_compare_all() {
+        let mut known_mapping = HashMap::new();
+        let mut known_mismapping = HashMap::new();
+
+        known_mapping.insert(b'A', vec![b'A']);
+        known_mapping.insert(b'C', vec![b'C']);
+        known_mapping.insert(b'G', vec![b'G']);
+        known_mapping.insert(b'T', vec![b'T']);
+        known_mismapping.insert(b'A', vec![b'C', b'G', b'T']);
+        known_mismapping.insert(b'C', vec![b'A', b'G', b'T']);
+        known_mismapping.insert(b'G', vec![b'A', b'C', b'T']);
+        known_mismapping.insert(b'T', vec![b'A', b'C', b'G']);
+
+        known_mapping.insert(b'R', vec![b'A', b'G']);
+        known_mapping.insert(b'Y', vec![b'C', b'T']);
+        known_mapping.insert(b'K', vec![b'G', b'T']);
+        known_mapping.insert(b'M', vec![b'A', b'C']);
+        known_mapping.insert(b'S', vec![b'C', b'G']);
+        known_mapping.insert(b'W', vec![b'A', b'T']);
+
+        known_mismapping.insert(b'R', vec![b'T', b'C', b'Y']);
+        known_mismapping.insert(b'Y', vec![b'G', b'A', b'R']);
+        known_mismapping.insert(b'K', vec![b'A', b'C', b'M']);
+        known_mismapping.insert(b'M', vec![b'G', b'T', b'K']);
+        known_mismapping.insert(b'S', vec![b'A', b'T', b'W']);
+        known_mismapping.insert(b'W', vec![b'C', b'G', b'S']);
+
+        known_mapping.insert(b'B', vec![b'C', b'G', b'T']);
+        known_mapping.insert(b'D', vec![b'A', b'G', b'T']);
+        known_mapping.insert(b'H', vec![b'A', b'C', b'T']);
+        known_mapping.insert(b'V', vec![b'A', b'C', b'G']);
+
+        known_mismapping.insert(b'B', vec![b'A']);
+        known_mismapping.insert(b'D', vec![b'C']);
+        known_mismapping.insert(b'H', vec![b'G']);
+        known_mismapping.insert(b'V', vec![b'T']);
+
+        known_mapping.insert(b'N', vec![b'A', b'C', b'G', b'T']);
+
+        known_mapping.iter().for_each(|(x, y)| {
+            y.iter().for_each(|z| {
+                // u8_to_encoding
+                assert_eq!(u8_to_encoding(x).unwrap(),
+                           u8_to_encoding(z).unwrap(),
+                           "Testing {} and {}",
+                           String::from_utf8(vec![*x]).unwrap(),
+                           String::from_utf8(vec![*z]).unwrap());
+
+                assert_eq!(u8_to_encoding_defaulted_to_N(x),
+                           u8_to_encoding_defaulted_to_N(z),
+                           "Testing {} and {}",
+                           String::from_utf8(vec![*x]).unwrap(),
+                           String::from_utf8(vec![*z]).unwrap());
+            })
+        });
+
+        known_mismapping.iter().for_each(|(x, y)| {
+            y.iter().for_each(|z| {
+                assert_ne!(u8_to_encoding(x).unwrap(),
+                           u8_to_encoding(z).unwrap(),
+                           "Testing {} and {}",
+                           String::from_utf8(vec![*x]).unwrap(),
+                           String::from_utf8(vec![*z]).unwrap());
+
+                assert_ne!(u8_to_encoding_defaulted_to_N(x),
+                           u8_to_encoding_defaulted_to_N(z),
+                           "Testing {} and {}",
+                           String::from_utf8(vec![*x]).unwrap(),
+                           String::from_utf8(vec![*z]).unwrap());
+            })
+        });
     }
 
     #[test]

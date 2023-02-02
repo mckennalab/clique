@@ -942,7 +942,27 @@ mod tests {
         assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "CCAATCTACT");
         assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "CTACTCTACT");
     }
+    #[test]
+    fn affine_special_scoring_test() {
+        let reference = String::from("AAAANAAAA").as_bytes().to_owned();
+        let test_read = String::from("AAAAAAAA").as_bytes().to_owned();
 
+        let my_score = AffineScoring {
+            match_score: 6.0,
+            mismatch_score: -6.0,
+            special_character_score: 5.0,
+            gap_open: -10.0,
+            gap_extend: -10.0,
+            final_gap_multiplier: 1.0,
+        };
+
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
+        perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
+        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "AAAANAAAA");
+        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "AAAA-AAAA");
+    }
 
     #[test]
     fn affine_alignment_test() {
