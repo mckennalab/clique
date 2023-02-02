@@ -57,7 +57,7 @@ pub fn align_reads(use_capture_sequences: &bool,
 
     let my_aff_score = AffineScoring {
         match_score: 10.0,
-        mismatch_score: -11.0,
+        mismatch_score: -9.0,
         special_character_score: 9.0,
         gap_open: -20.0,
         gap_extend: -1.0,
@@ -65,7 +65,7 @@ pub fn align_reads(use_capture_sequences: &bool,
 
     };
     let start = Instant::now();
-    let read_count = Arc::new(Mutex::new(0)); // we rely on the Arc for output as access control
+    let read_count = Arc::new(Mutex::new(0)); // we rely on this Arc for output file access control
 
     type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 
@@ -101,7 +101,7 @@ pub fn align_reads(use_capture_sequences: &bool,
                 }
                 Some((results, ref_name)) => {
                     match results {
-                        None => {warn!("Unable to find alignment for read {}",xx.read_one.id());}
+                        None => { warn!("Unable to find alignment for read {}",xx.read_one.id()); }
                         Some(aln) => {
                             let output = Arc::clone(&output);
                             let mut read_count = read_count.lock().unwrap();
@@ -111,12 +111,11 @@ pub fn align_reads(use_capture_sequences: &bool,
                                 println!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count, duration);
                             }
 
-                            let cigar_string = aln.cigar_tags.iter().map(
-                                |tag| format!("{}", tag)).collect::<Vec<String>>().join(",");
+                            let cigar_string = format!("{}", "");
 
-                            output_alignment(&aln.aligned_read,
+                            output_alignment(&aln.alignment_string2,
                                              name,
-                                             &aln.aligned_ref,
+                                             &aln.alignment_string1,
                                              &ref_name,
                                              use_capture_sequences,
                                              only_output_captured_ref,
@@ -126,16 +125,13 @@ pub fn align_reads(use_capture_sequences: &bool,
                                              min_read_length);
                         }
                     }
-
                 }
             }
         });
-
     });
 }
 
 pub fn align_two_strings(read1_seq: &Vec<u8>, rev_comp_read2: &Vec<u8>, scoring_function: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
-
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
         rev_comp_read2.len() + 1,
@@ -154,7 +150,6 @@ pub fn align_two_strings(read1_seq: &Vec<u8>, rev_comp_read2: &Vec<u8>, scoring_
         read1_seq,
         rev_comp_read2,
         None)
-
 }
 
 pub fn best_reference(read: &ReadSetContainer,
@@ -164,8 +159,7 @@ pub fn best_reference(read: &ReadSetContainer,
                       my_score: &InversionScoring,
                       use_inversions: &bool,
                       max_reference_multiplier: usize,
-                      min_read_length: usize) -> Option<(Option<AlignmentResults>, Vec<u8>)> {
-
+                      min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>)> {
     match references.len() {
         0 => {
             warn!("Unable to align read {} as it has no candidate references",read.read_one.id());
@@ -181,16 +175,16 @@ pub fn best_reference(read: &ReadSetContainer,
                     None => None,
                     Some(aln) => Some((aln, reference.name.clone())),
                 }
-            }).filter(|x|x.is_some()).map(|c|c.unwrap());
+            }).filter(|x| x.is_some()).map(|c| c.unwrap());
 
             let ranked_alignments = ranked_alignments.into_iter().max_by(|al, al2|
-                matching_read_bases_prop(&al.0.aligned_read, &al.0.aligned_ref).
-                    partial_cmp(&matching_read_bases_prop(&al2.0.aligned_read, &al2.0.aligned_ref)).unwrap());
+                matching_read_bases_prop(&al.0.alignment_string2, &al.0.alignment_string1).
+                    partial_cmp(&matching_read_bases_prop(&al2.0.alignment_string2, &al2.0.alignment_string1)).unwrap());
 
             match ranked_alignments.iter().next() {
-                None => {None},
-                Some((x,y)) => {
-                    Some((Some(x.clone()),y.clone()))
+                None => { None }
+                Some((x, y)) => {
+                    Some((Some(x.clone()), y.clone()))
                 }
             }
         }
@@ -205,7 +199,7 @@ pub fn alignment(x: &ReadSetContainer,
                  my_score: &InversionScoring,
                  use_inversions: &bool,
                  max_reference_multiplier: usize,
-                 min_read_length: usize) -> Option<(AlignmentResults)> {
+                 min_read_length: usize) -> Option<(AlignmentResult)> {
 
     // find the best reference(s)
     let orientation = orient_by_longest_segment(&x.read_one.seq().to_vec(), &reference.sequence, &reference.suffix_table).0;
@@ -219,19 +213,18 @@ pub fn alignment(x: &ReadSetContainer,
         warn!("Dropping read of length {}",forward_oriented_seq.len());
         None
     } else {
-        let fwd_score_mp = find_greedy_non_overlapping_segments(
-            &forward_oriented_seq,
+        perform_affine_alignment(
+            alignment_mat,
             &reference.sequence,
-            &reference.suffix_table);
+            &forward_oriented_seq,
+            my_aff_score);
 
-        let results = align_string_with_anchors(
-            &forward_oriented_seq,
+        let results = perform_3d_global_traceback(
+            alignment_mat,
+            None,
             &reference.sequence,
-            &fwd_score_mp,
-            my_score,
-            my_aff_score,
-            use_inversions,
-            alignment_mat);
+            &forward_oriented_seq,
+            None);
 
         Some(results)
     }

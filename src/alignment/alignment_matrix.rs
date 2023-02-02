@@ -965,6 +965,28 @@ mod tests {
     }
 
     #[test]
+    fn affine_special_practical_test() {
+        let reference = String::from("AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA").as_bytes().to_owned();
+        let test_read = String::from("AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA").as_bytes().to_owned();
+
+        let my_score = AffineScoring {
+            match_score: 6.0,
+            mismatch_score: -6.0,
+            special_character_score: 5.0,
+            gap_open: -10.0,
+            gap_extend: -10.0,
+            final_gap_multiplier: 1.0,
+        };
+
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
+        perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
+        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "----------------AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA");
+        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA");
+    }
+
+    #[test]
     fn affine_alignment_test() {
         let reference = String::from("AAAA").as_bytes().to_owned();
         let test_read = String::from("AATAA").as_bytes().to_owned();
