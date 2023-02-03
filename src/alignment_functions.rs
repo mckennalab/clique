@@ -255,7 +255,7 @@ pub fn vec_to_uppercase(inp: &Vec<u8>) -> Vec<u8> {
 }
 
 pub fn tags_to_output(tags: &BTreeMap<u8, String>) -> String {
-    tags.iter().filter(|(k, v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", k, v)).join(";")
+    tags.iter().filter(|(k, v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", String::from_utf8(vec![*k]).unwrap(), v)).join(";")
 }
 
 /// Handle output of the alignment results based on the requested output formats
