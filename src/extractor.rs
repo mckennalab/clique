@@ -1,56 +1,72 @@
-use std::collections::{BTreeMap};
+use std::collections::{BTreeMap, HashMap};
+use std::{hash::BuildHasherDefault};
+use nohash_hasher::NoHashHasher;
+
 use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::fasta_comparisons::KNOWNBASES;
 use crate::fasta_comparisons::KNOWNBASESPLUSINSERT;
+use crate::alignment::fasta_bit_encoding::{char_to_encoding, u8_to_encoding};
 
 
+pub const REFERENCE_CHAR: u8 = b'R';
+pub const READ_CHAR: u8 = b'E';
 
-pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -> BTreeMap<String, String> {
-    let mut special_values: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let empty = &Vec::new();
+lazy_static! {
 
-    let mut current_extractor = -1;
+    pub static ref SPECIAL_CHARACTERS: HashMap::<u8, bool, BuildHasherDefault<NoHashHasher<u8>>> = {
+        let mut hashedvalues : HashMap::<u8, bool, BuildHasherDefault<NoHashHasher<u8>>> = HashMap::with_capacity_and_hasher(10, BuildHasherDefault::default());
+        hashedvalues.insert(b'!',true);
+        hashedvalues.insert(b'@',true);
+        hashedvalues.insert(b'#',true);
+        hashedvalues.insert(b'$',true);
+        hashedvalues.insert(b'%',true);
+        hashedvalues.insert(b'^',true);
+        hashedvalues.insert(b'&',true);
+        hashedvalues.insert(b'*',true);
+        hashedvalues.insert(b'(',true);
+        hashedvalues.insert(b')',true);
+        hashedvalues
+        };
+}
+
+pub fn error_out_on_unknown_base(base: &u8) {
+    panic!("Unknown base (not a FASTA base or degenerate) seen in reference {}", base);
+}
+
+pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -> BTreeMap<u8, String> {
+    let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let mut in_extractor = false;
 
     for (reference_base, read_base) in std::iter::zip(aligned_ref, aligned_read) {
-        if !KNOWNBASESPLUSINSERT.contains_key(&reference_base) && !DEGENERATEBASES.contains_key(&reference_base) {
-            let mut current_code = special_values.get(&format!("{}",reference_base)).unwrap_or(empty).clone();
-            current_code.push(read_base.clone());
-
-            special_values.insert(format!("{}",reference_base), current_code.clone());
-        } else if reference_base.is_ascii_uppercase() || (in_extractor && reference_base == &b'-') {
-            if !in_extractor {
-                current_extractor += 1;
+        match (u8_to_encoding(reference_base).is_some(), reference_base.is_ascii_uppercase() || *reference_base == b'-', in_extractor) {
+            (x, true, z) => {
                 in_extractor = true;
+                special_values.entry(REFERENCE_CHAR).or_insert_with(Vec::new).push(reference_base.clone());
+                special_values.entry(READ_CHAR).or_insert_with(Vec::new).push(read_base.clone());
             }
-
-            let mut current_code = match special_values.get(&(format!("r{}",current_extractor))) {
-                None => {
-                    let new_vec: Vec<u8> = Vec::new();
-                    new_vec
-                }
-                Some(x) => { x.clone() }
-            };
-
-            current_code.push(read_base.clone());
-
-            special_values.insert(format!("r{}",current_extractor), current_code.clone());
-
-            let mut current_code = match special_values.get(&(format!("e{}",current_extractor))) {
-                None => {
-                    let new_vec: Vec<u8> = Vec::new();
-                    new_vec
-                }
-                Some(x) => { x.clone() }
-            };
-
-            current_code.push(reference_base.clone());
-
-            special_values.insert(format!("e{}",current_extractor), current_code.clone());
-        } else {
-            in_extractor = false;
+            (false, y, false) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
+                special_values.entry(*reference_base).or_insert_with(Vec::new).push(read_base.clone());
+            }
+            (false, y, true) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
+                special_values.entry(REFERENCE_CHAR).or_insert_with(Vec::new).push(reference_base.clone());
+                special_values.entry(READ_CHAR).or_insert_with(Vec::new).push(read_base.clone());
+                special_values.entry(*reference_base).or_insert_with(Vec::new).push(read_base.clone());
+            }
+            (true, false, _z) => {
+                in_extractor = false;
+            }
+            _ => {
+                panic!("5Unknown condition {} {} {} {} {} {}",
+                       u8_to_encoding(reference_base).is_some(),
+                       reference_base.is_ascii_uppercase(),
+                       in_extractor,
+                       reference_base,
+                       read_base,
+                       String::from_utf8(aligned_read.clone()).unwrap())
+            }
         }
     }
+
     special_values.iter().map(|(key, value)| {
         (key.clone(), String::from_utf8(value.clone()).unwrap())
     }).collect()
@@ -86,26 +102,32 @@ mod tests {
 
     #[test]
     fn tagged_sequence_test_space() {
-        for _n in 1..100 {
-            let reference = String::from("AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--CAGTTCGATCTA").as_bytes().to_owned();
-            let test_read = String::from("-------------------------------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC-----------").as_bytes().to_owned();
+        let reference = String::from("AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--CAGTTCGATCTA").as_bytes().to_owned();
+        let test_read = String::from("-------------------------------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC-----------").as_bytes().to_owned();
 
-            let keyvalues = extract_tagged_sequences(&test_read, &reference);
+        let keyvalues = extract_tagged_sequences(&test_read, &reference);
 
-            assert_eq!(keyvalues.get("42").unwrap(), "CACCGTAAG");
-        }
+        assert_eq!(keyvalues.get(&b'*').unwrap(), "CACCGTAAG");
     }
 
     #[test]
     fn test_real_example() {
-        for _n in 1..100 {
-            let reference = String::from("tcgtcggcagcgtcagatgtgtataagagacagctagcagATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACACATCAAAAGGATCTTTAATGAGATGGATCGCATACTAGACAGTTGCCANNNNNNNNNNNNgcttgcactgtactctacgcgactc############agatcg").as_bytes().to_owned();
-            let test_read = String::from("-----------------------------------AGCAGATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACA-------AGGATCTTTAATGAGATG--------------------CCACCTAGTCTCCAGGCTTGCACTGTACTCTACGCGACTCTCACCAACCGAAA----").as_bytes().to_owned();
+        let reference = String::from("tcgtcggcagcgtcagatgtgtataagagacagctagcagATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACACATCAAAAGGATCTTTAATGAGATGGATCGCATACTAGACAGTTGCCANNNNNNNNNNNNgcttgcactgtactctacgcgactc############agatcg").as_bytes().to_owned();
+        let test_read = String::from("-----------------------------------AGCAGATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACA-------AGGATCTTTAATGAGATG--------------------CCACCTAGTCTCCAGGCTTGCACTGTACTCTACGCGACTCTCACCAACCGAAA----").as_bytes().to_owned();
 
-            let keyvalues = extract_tagged_sequences(&test_read, &reference);
+        let keyvalues = extract_tagged_sequences(&test_read, &reference);
 
-            println!("{:?}",&keyvalues);
-            assert_eq!(keyvalues.get("35").unwrap(), "TCACCAACCGAA");
-        }
+        println!("{:?}", &keyvalues);
+        assert_eq!(keyvalues.get(&b'#').unwrap(), "TCACCAACCGAA");
+    }
+
+    #[test]
+    fn lower_and_uppercase_test() {
+        let reference = String::from("aaatacttgtacttcgttcaGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--caaaaaaaaaaa").as_bytes().to_owned();
+        let test_read = String::from("AAATACTTGTACTTCGTTCA-----------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC-----------").as_bytes().to_owned();
+
+        let keyvalues = extract_tagged_sequences(&test_read, &reference);
+
+        assert_eq!(keyvalues.get(&READ_CHAR).unwrap(), "-----------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGC");
     }
 }

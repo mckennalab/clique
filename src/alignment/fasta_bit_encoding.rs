@@ -167,7 +167,7 @@ pub fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
         b'V' | b'v' => Some(FASTA_V),
 
         b'N' | b'n' => Some(FASTA_N),
-        _ => Some(FASTA_N),
+        _ => None,
     }
 }
 

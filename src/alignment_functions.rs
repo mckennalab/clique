@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::io::Write;
@@ -8,7 +9,7 @@ use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
 use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment, reverse_complement};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
-use crate::extractor::extract_tagged_sequences;
+use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR};
 use crate::linked_alignment::{align_string_with_anchors, AlignmentResults, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
@@ -253,6 +254,10 @@ pub fn vec_to_uppercase(inp: &Vec<u8>) -> Vec<u8> {
     inp.iter().map(|x| x.to_ascii_uppercase()).collect::<Vec<u8>>()
 }
 
+pub fn tags_to_output(tags: &BTreeMap<u8, String>) -> String {
+    tags.iter().filter(|(k, v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", k, v)).join(";")
+}
+
 /// Handle output of the alignment results based on the requested output formats
 ///
 pub fn output_alignment(aligned_read: &Vec<u8>,
@@ -267,79 +272,46 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
                         min_read_length: &usize) {
     let mut output = output.lock().unwrap();
 
-    let extracted_seqs = if *use_capture_sequences {
-        Some(extract_tagged_sequences(aligned_read, aligned_ref))
-    } else {
-        None
-    };
-
-    if *only_output_captured_ref {
-        match extracted_seqs {
-            None => {
-                warn!("unable to extract sequences from read {}",aligned_name)
+    let (ref_seq, read_seq, read_tags) =
+        if *use_capture_sequences {
+            let ets = extract_tagged_sequences(aligned_read, aligned_ref);
+            let read_tags = tags_to_output(&ets);
+            if *only_output_captured_ref {
+                (ets.get(&REFERENCE_CHAR).unwrap().clone(), ets.get(&READ_CHAR).unwrap().clone(), read_tags)
+            } else {
+                (String::from_utf8(aligned_ref.clone()).unwrap(), String::from_utf8(aligned_read.clone()).unwrap(), read_tags)
             }
-            Some(btree) => {
-                let read_seq = btree.iter().map(|kv| {
-                    if kv.0.starts_with('r') {
-                        kv.1.clone()
-                    } else {
-                        String::from("")
-                    }
-                }).join("");
-                let ref_seq = btree.iter().map(|kv| {
-                    if kv.0.starts_with('e') {
-                        kv.1.clone()
-                    } else {
-                        String::from("")
-                    }
-                }).join("");
-                let others = btree.iter().
-                    filter(|k| !k.0.starts_with('e') && !k.0.starts_with('r')).
-                    map(|k| format!("key={}:{}", &k.0, &k.1)).join(";");
-
-                if *to_fake_fastq {
-                    let replaced = read_seq.replace("-", "");
-
-                    if replaced.len() >= *min_read_length {
-                        let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
-                        write!(output, "@{}_{}_ref_{}\n{}\n+\n{}\n",
-                               str::replace(aligned_name, " ", "_"),
-                               others,
-                               String::from_utf8(reference_name.clone()).unwrap(),
-                               replaced,
-                               fake_qual,
-                        ).expect("Unable to write to output file");
-                    } else {
-                        warn!("Final read product too short after trimming: {}, dropping read", replaced.len());
-                    }
-                } else {
-                    if read_seq.len() >= *min_read_length {
-                        write!(output, ">{}\n{}\n>{}_{}\n{}\n",
-                               String::from_utf8(reference_name.clone()).unwrap(),
-                               ref_seq,
-                               str::replace(aligned_name, " ", "_"),
-                               others,
-                               read_seq,
-                        ).expect("Unable to write to output file");
-                    } else {
-                        warn!("Final read product too short after trimming: {}, dropping read", read_seq.len());
-                    }
-                }
-            }
+        } else {
+            (String::from_utf8(aligned_ref.clone()).unwrap(), String::from_utf8(aligned_read.clone()).unwrap(), String::from(""))
         };
+
+    if *to_fake_fastq {
+        let replaced = read_seq.replace("-", "");
+
+        if replaced.len() >= *min_read_length {
+            let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
+            write!(output, "@{}_{}_ref_{}\n{}\n+\n{}\n",
+                   str::replace(aligned_name, " ", "_"),
+                   read_tags,
+                   String::from_utf8(reference_name.clone()).unwrap(),
+                   replaced,
+                   fake_qual,
+            ).expect("Unable to write to output file");
+        } else {
+            warn!("Final read product too short after trimming: {}, dropping read", replaced.len());
+        }
     } else {
-        let collapsed_tags = match extracted_seqs {
-            None => { String::from("NONE") }
-            Some(x) => { x.iter().map(|k| format!("key={}:{}", &k.0, &k.1)).join(";") }
-        };
-        write!(output, ">{}\n{}\n>{};{};{}\n{}\n",
-               String::from_utf8(reference_name.clone()).unwrap(),
-               str::from_utf8(&aligned_ref).unwrap(),
-               str::replace(aligned_name, " ", "_"),
-               collapsed_tags,
-               cigar_string,
-               str::from_utf8(&aligned_read).unwrap(),
-        ).expect("Unable to write to output file");
+        if read_seq.len() >= *min_read_length {
+            write!(output, ">{}\n{}\n>{}_{}\n{}\n",
+                   String::from_utf8(reference_name.clone()).unwrap(),
+                   ref_seq,
+                   str::replace(aligned_name, " ", "_"),
+                   read_tags,
+                   read_seq,
+            ).expect("Unable to write to output file");
+        } else {
+            warn!("Final read product too short after trimming: {}, dropping read", read_seq.len());
+        }
     }
 }
 
