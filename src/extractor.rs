@@ -52,7 +52,7 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
                 special_values.entry(READ_CHAR).or_insert_with(Vec::new).push(read_base.clone());
                 special_values.entry(*reference_base).or_insert_with(Vec::new).push(read_base.clone());
             }
-            (true, false, _z) => {
+            (x, false, _z) => {
                 in_extractor = false;
             }
             _ => {
