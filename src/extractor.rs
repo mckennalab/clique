@@ -38,7 +38,7 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
     let mut in_extractor = false;
 
     for (reference_base, read_base) in std::iter::zip(aligned_ref, aligned_read) {
-        match (u8_to_encoding(reference_base).is_some(), reference_base.is_ascii_uppercase() || *reference_base == b'-', in_extractor) {
+        match (u8_to_encoding(reference_base).is_some(), reference_base.is_ascii_uppercase() || (*reference_base == b'-' && in_extractor), in_extractor) {
             (x, true, z) => {
                 in_extractor = true;
                 special_values.entry(REFERENCE_CHAR).or_insert_with(Vec::new).push(reference_base.clone());
