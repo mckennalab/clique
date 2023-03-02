@@ -51,6 +51,7 @@ mod linked_alignment;
 pub mod extractor;
 pub mod sequence_lookup;
 
+
 mod read_strategies {
     pub mod read_set;
     pub mod sequence_layout;
@@ -72,6 +73,7 @@ mod utils {
 mod merger;
 
 mod alignment_functions;
+mod sorter;
 
 mod reference {
     pub mod fasta_reference;

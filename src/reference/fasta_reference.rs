@@ -4,6 +4,7 @@ use bio::io::fasta::*;
 use itertools::Itertools;
 
 use suffix::SuffixTable;
+use crate::alignment::fasta_bit_encoding::{FastaBase, str_to_fasta_vec};
 use crate::read_strategies::read_set::ReadSetContainer;
 
 
@@ -20,7 +21,8 @@ pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> V
 
         let seeds = ReferenceManager::find_seeds(&ref_copy, kmer_size);
         references.push(Reference {
-            sequence: ref_entry.seq().to_vec(),
+            sequence: str_to_fasta_vec(&String::from_utf8(ref_entry.seq().to_vec()).unwrap().as_str()),
+            sequence_u8: ref_entry.seq().to_vec(),
             name: str::as_bytes(ref_entry.id()).to_vec(),
             suffix_table: seeds,
         });
@@ -37,14 +39,15 @@ pub struct SuffixTableLookup<'s, 't> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reference<'s, 't> {
-    pub sequence: Vec<u8>,
+    pub sequence: Vec<FastaBase>,
+    pub sequence_u8: Vec<u8>,
     pub name: Vec<u8>,
     pub suffix_table: SuffixTableLookup<'s, 't>,
 }
 
 impl Hash for Reference<'_, '_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.sequence.hash(state);
+        self.sequence_u8.hash(state);
         self.name.hash(state);
     }
 }
@@ -95,7 +98,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         let mut kmer_counts = HashMap::new();
 
         for reference in references {
-            let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence, kmer_size);
+            let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence_u8, kmer_size);
             for kmer in kmers {
                 kmer_counts.insert(kmer.0.clone(),if kmer_counts.contains_key(&kmer.0) {kmer_counts.get(&kmer.0).unwrap()} else {&0} + kmer.1);
             }
@@ -106,7 +109,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
         let mut all_unique = true;
         for reference in references {
-            let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence, kmer_size);
+            let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence_u8, kmer_size);
             let unique_kmers = kmers.iter().filter(|(k,_c)| kmer_counts.contains_key(k) && *kmer_counts.get(k).unwrap() == 1).collect_vec();
 
             if unique_kmers.is_empty() {

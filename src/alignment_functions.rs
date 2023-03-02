@@ -7,7 +7,7 @@ use std::str;
 use crate::itertools::Itertools;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
-use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment, reverse_complement};
+use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR};
 use crate::linked_alignment::{align_string_with_anchors, AlignmentResults, find_greedy_non_overlapping_segments, orient_by_longest_segment};
@@ -15,6 +15,7 @@ use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
 use std::time::{Instant};
 use ndarray::Ix3;
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, fasta_vec_to_string, fasta_vec_to_vec_u8, FastaBase, reverse_complement, str_to_fasta_vec};
 
 
 pub fn align_reads(use_capture_sequences: &bool,
@@ -114,9 +115,9 @@ pub fn align_reads(use_capture_sequences: &bool,
 
                             let cigar_string = format!("{}", "");
 
-                            output_alignment(&aln.alignment_string2,
+                            output_alignment(&fasta_vec_to_vec_u8(&aln.alignment_string2),
                                              name,
-                                             &aln.alignment_string1,
+                                             &fasta_vec_to_vec_u8(&aln.alignment_string1),
                                              &ref_name,
                                              use_capture_sequences,
                                              only_output_captured_ref,
@@ -132,7 +133,7 @@ pub fn align_reads(use_capture_sequences: &bool,
     });
 }
 
-pub fn align_two_strings(read1_seq: &Vec<u8>, rev_comp_read2: &Vec<u8>, scoring_function: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
+pub fn align_two_strings(read1_seq: &Vec<FastaBase>, rev_comp_read2: &Vec<FastaBase>, scoring_function: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
         rev_comp_read2.len() + 1,
@@ -203,11 +204,11 @@ pub fn alignment(x: &ReadSetContainer,
                  min_read_length: usize) -> Option<(AlignmentResult)> {
 
     // find the best reference(s)
-    let orientation = orient_by_longest_segment(&x.read_one.seq().to_vec(), &reference.sequence, &reference.suffix_table).0;
+    let orientation = orient_by_longest_segment(&x.read_one.seq().to_vec(), &reference.sequence_u8, &reference.suffix_table).0;
     let forward_oriented_seq = if orientation {
-        x.read_one.seq().to_vec()
+        str_to_fasta_vec(String::from_utf8(x.read_one.seq().to_vec()).unwrap().as_str())
     } else {
-        reverse_complement(&x.read_one.seq().to_vec())
+        reverse_complement(&str_to_fasta_vec(String::from_utf8(x.read_one.seq().to_vec()).unwrap().as_str()))
     };
 
     if forward_oriented_seq.len() > reference.sequence.len() * max_reference_multiplier || forward_oriented_seq.len() < min_read_length {
@@ -231,15 +232,15 @@ pub fn alignment(x: &ReadSetContainer,
     }
 }
 
-pub fn matching_read_bases_prop(read: &Vec<u8>, reference: &Vec<u8>) -> f32 {
+pub fn matching_read_bases_prop(read: &Vec<FastaBase>, reference: &Vec<FastaBase>) -> f32 {
     assert_eq!(read.len(), reference.len());
     let mut total_read_bases = 0;
     let mut matched = 0;
-    vec_to_uppercase(read).iter().zip(vec_to_uppercase(reference).iter()).for_each(|(readb, refb)| {
-        if *readb != b'-' {
+    read.iter().zip(reference.iter()).for_each(|(readb, refb)| {
+        if *readb != FASTA_UNSET {
             total_read_bases += 1;
         }
-        if *readb != b'-' && readb == refb {
+        if *readb != FASTA_UNSET && readb == refb {
             matched += 1;
         }
     });

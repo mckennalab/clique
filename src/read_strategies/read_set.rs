@@ -184,6 +184,20 @@ impl ReadSetNestingContainer {
 
 }
 
+///
+pub trait ReadSetNestingContainerSortingTransform {
+    /// sort the retained bin of reads
+    fn sort_bin(container: &mut ReadSetNestingContainer) -> Box<ReadSetNestingContainer>;
+}
+
+/// all
+pub trait ReadSetNestingContainerStream {
+    /// Use this method to correct reads to known barcodes, and to build
+    /// up a database of observed subsequences for UMIs
+    fn transform_stream(read_set: &ReadSetContainer) -> ReadSetContainer;
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

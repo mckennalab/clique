@@ -3,14 +3,12 @@ use std::io::{BufRead, BufReader};
 use symspell::{AsciiStringStrategy, SymSpell, Verbosity};
 use crate::read_strategies::sequence_layout::UMIConfiguration;
 
-
 pub struct KnownLookup {
     corrector: SymSpell<AsciiStringStrategy>,
 }
 
 impl KnownLookup {
     pub fn from(input_configuration: &UMIConfiguration) -> KnownLookup {
-        //https://crates.io/crates/symspell
         let mut symspell: SymSpell<AsciiStringStrategy> = SymSpell::default();
 
         match &input_configuration.file {
@@ -48,61 +46,81 @@ impl KnownLookup {
 
 #[cfg(test)]
 mod tests {
+    use crate::read_strategies::sequence_layout::UMISortType::KnownTag;
     use super::*;
+    use std::time::Instant;
+    use time_test::time_test;
 
-    /*
     #[test]
     fn test_100K_by_100K_lookup() {
+        time_test!();
+
         let configuration = UMIConfiguration{
-            start: 0,
-            length: 10,
+            symbol: '#',
             file: Some(String::from("test_data/100K-february-2018.txt")),
-            prefix: None,
+            sort_type: KnownTag,
+            length: 16,
         };
-
+        println!("loading file...");
+        let now = Instant::now();
         let kf = KnownLookup::from(&configuration);
-
-        for x in 0..100000 {
+        let elapsed = now.elapsed();
+        println!("Elapsed: {:.2?}", elapsed);
+        println!("Searching...");
+        let now = Instant::now();
+        for x in 0..1000000 {
             let result = kf.corrector.lookup("AAACCCAAGAACCCGG", Verbosity::Top, 2);
             assert_eq!(result.len(),1);
         }
-
+        let elapsed = now.elapsed();
+        println!("Elapsed: {:.2?}", elapsed);
         // we used the top 100K entries in the 3M sequence file, so there's no sequences starting with Ts
         let result = kf.corrector.lookup("TTTCCCAAGAACCCGG", Verbosity::Top, 2);
         assert_eq!(result.len(),0);
 
     }
-
+    /*
     #[test]
     fn test_3M_by_100K_lookup() {
         let configuration = UMIConfiguration{
-            start: 0,
-            length: 10,
+            symbol: '#',
             file: Some(String::from("test_data/3M-february-2018.txt")),
-            prefix: None,
+            sort_type: KnownTag,
+            length: 16,
         };
 
+        println!("loading file...");
+        let now = Instant::now();
+
         let kf = KnownLookup::from(&configuration);
+        let elapsed = now.elapsed();
+        println!("Elapsed: {:.2?}", elapsed);
+
+        println!("Searching...");
+        let now = Instant::now();
 
         for x in 0..100000 {
             let result = kf.corrector.lookup("AAACCCAAGAACCCGG", Verbosity::Top, 2);
             assert_eq!(result.len(),1);
         }
+        let elapsed = now.elapsed();
 
         // we used the top 100K entries in the 3M sequence file, so there's no sequences starting with Ts
         let result = kf.corrector.lookup("TTTCCCAAGAACCCGG", Verbosity::Top, 2);
         assert_eq!(result.len(),1);
 
     }
-    */
+*/
 
     #[test]
     fn test_simple_exact_correction() {
+        time_test!();
+
         let configuration = UMIConfiguration{
-            start: 0,
-            length: 10,
+            symbol: '#',
             file: Some(String::from("test_data/just_sequences_500.txt")),
-            prefix: None,
+            sort_type: KnownTag,
+            length: 16,
         };
 
         let kf = KnownLookup::from(&configuration);

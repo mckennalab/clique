@@ -1,50 +1,27 @@
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use serde::{Serialize,Deserialize};
 use bio::io::fastq::Record;
 use std::collections::BTreeMap;
+use crate::read_strategies::read_set::ReadSetContainer;
 
-
-/// holds a set of reads for reading and writing to disk
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ReadSetContainer {
-    pub read_one: Record,
-    pub read_two: Option<Record>,
-    pub index_one: Option<Record>,
-    pub index_two: Option<Record>,
-}
-
-impl Clone for ReadSetContainer {
-    fn clone(&self) -> ReadSetContainer {
-        ReadSetContainer {
-            read_one: self.read_one.clone(),
-            read_two: if self.read_two.as_ref().is_some() { Some(self.read_two.as_ref().unwrap().clone()) } else { None },
-            index_one: if self.index_one.as_ref().is_some() { Some(self.index_one.as_ref().unwrap().clone()) } else { None },
-            index_two: if self.index_two.as_ref().is_some() { Some(self.index_two.as_ref().unwrap().clone()) } else { None },
-        }
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum UMISortType {
     /// This enum represents how we should extract molecular identifiers and known sequences from the
     /// stream of reads. It specifies the location (as aligned to the reference), the maximum distance
     /// you allow before not considering two sequences to be from the same source.
-    KNOWNTAG{name: String, ref_start: i32, ref_stop:i32, max_distance: usize},
-    DEGENERATETAG{name: String, ref_start: i32, ref_stop:i32, max_distance: usize},
+    KnownTag,
+    DegenerateTag,
 }
 
-#[allow(dead_code)]
 pub struct SequenceLayout {
     name: Vec<u8>,
     umis: HashMap<UMISortType,Vec<u8>>,
     original_reads: Option<ReadSetContainer>,
 }
 
-#[allow(dead_code)]
 impl SequenceLayout {
     pub fn from(rsc: ReadSetContainer, layout: &SequenceLayoutDesign) -> SequenceLayout {
         ReadPosition::assert_has_all_reads(&layout.reads, &rsc);
@@ -109,10 +86,10 @@ impl ReadPosition {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct UMIConfiguration {
-    pub start: usize,
-    pub length: usize,
+    pub symbol: char,
     pub file: Option<String>,
-    pub prefix: Option<String>
+    pub sort_type: UMISortType,
+    pub length: usize,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -122,6 +99,9 @@ pub struct SequenceLayoutDesign {
     umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 
+// *********************************************       *********************************************
+// ********************************************* TESTS *********************************************
+// *********************************************       *********************************************
 
 #[cfg(test)]
 mod tests {
@@ -129,9 +109,10 @@ mod tests {
 
     #[test]
     fn test_basic_yaml_readback() {
-        let configuration = SequenceLayoutDesign::from_yaml(String::from("test_data/test_layout.yaml")).unwrap();
+        let configuration =
+            SequenceLayoutDesign::from_yaml(String::from("test_data/test_layout.yaml")).unwrap();
         assert_eq!(configuration.align,true);
         assert!(configuration.umi_configurations.contains_key("pcr"));
-        assert_eq!(configuration.umi_configurations.get("pcr").unwrap().start,0);
+        assert_eq!(configuration.umi_configurations.get("pcr").unwrap().symbol,'#');
     }
 }

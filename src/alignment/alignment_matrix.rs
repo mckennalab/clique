@@ -6,6 +6,7 @@ use ndarray::Array;
 use ndarray::prelude::*;
 use num_traits::identities::Zero;
 use log::{info, trace};
+use crate::alignment::fasta_bit_encoding::{complement, encoding_to_u8, FASTA_UNSET, FastaBase, reverse_complement};
 
 use crate::alignment::scoring_functions::*;
 use crate::alignment_functions::simplify_cigar_string;
@@ -167,8 +168,8 @@ pub fn create_scoring_record_3d(hint_seq_a_len: usize, hint_seq_b_len: usize, al
 }
 
 fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
-                       sequence1: &Vec<u8>,
-                       sequence2: &Vec<u8>,
+                       sequence1: &Vec<FastaBase>,
+                       sequence2: &Vec<FastaBase>,
                        scoring_function: &dyn AffineScoringFunction,
                        row: usize,
                        column: usize,
@@ -199,8 +200,8 @@ fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
 }
 
 fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
-                                     sequence1: &Vec<u8>,
-                                     sequence2: &Vec<u8>,
+                                     sequence1: &Vec<FastaBase>,
+                                     sequence2: &Vec<FastaBase>,
                                      scoring_function: &dyn AffineScoringFunction,
                                      previous_result: &AlignmentResult) {
     let mut current_row = 0;
@@ -231,8 +232,8 @@ fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
 
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
-                                sequence1: &Vec<u8>,
-                                sequence2: &Vec<u8>,
+                                sequence1: &Vec<FastaBase>,
+                                sequence2: &Vec<FastaBase>,
                                 scoring_function: &dyn AffineScoringFunction) {
     assert!(alignment.scores.shape()[2] == 3);
     assert!(alignment.scores.shape()[0] >= sequence1.len() + 1);
@@ -272,8 +273,8 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
                                      alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
-                                     sequence1: &Vec<u8>,
-                                     sequence2: &Vec<u8>,
+                                     sequence1: &Vec<FastaBase>,
+                                     sequence2: &Vec<FastaBase>,
                                      scoring_function: &dyn InversionScoringFunction) {
     assert_eq!(alignment.scores.shape()[2], 3);
     assert_eq!(alignment.scores.shape()[0], sequence1.len() + 1);
@@ -311,8 +312,8 @@ fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
 
 fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
                               alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
-                              sequence1: &Vec<u8>,
-                              sequence2: &Vec<u8>,
+                              sequence1: &Vec<FastaBase>,
+                              sequence2: &Vec<FastaBase>,
                               scoring_function: &dyn InversionScoringFunction,
                               x: usize,
                               y: usize) -> (bool, bool, bool) {
@@ -402,7 +403,7 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
 }
 
 //#[inline(always)]
-fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<u8>, sequence2: &Vec<u8>, scoring_function: &dyn AffineScoringFunction, x: usize, y: usize) -> (bool, bool, bool) {
+fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<FastaBase>, sequence2: &Vec<FastaBase>, scoring_function: &dyn AffineScoringFunction, x: usize, y: usize) -> (bool, bool, bool) {
     let mut _update_x = false;
     let mut _update_y = false;
     let mut _update_z = false;
@@ -488,8 +489,8 @@ impl PartialEq for AlignmentLocation {
 
 #[derive(Clone)]
 pub struct AlignmentResult {
-    pub alignment_string1: Vec<u8>,
-    pub alignment_string2: Vec<u8>,
+    pub alignment_string1: Vec<FastaBase>,
+    pub alignment_string2: Vec<FastaBase>,
     pub cigar_string: Vec<AlignmentTag>,
     pub path: Vec<AlignmentLocation>,
     pub score: f64,
@@ -497,10 +498,11 @@ pub struct AlignmentResult {
 }
 
 impl AlignmentResult {
-    pub fn from_match_segment(str1: &Vec<u8>, str2: &Vec<u8>, start_x: usize, start_y: usize, af_score: &AffineScoring) -> AlignmentResult {
+    pub fn from_match_segment(str1: &Vec<FastaBase>, str2: &Vec<FastaBase>, start_x: usize, start_y: usize, af_score: &AffineScoring) -> AlignmentResult {
         let cigar_string: Vec<AlignmentTag> = vec![AlignmentTag::MatchMismatch(str1.len())];
         let path = (start_x..(start_x + str1.len())).zip(start_y..(start_y + str1.len())).map(|(x, y)| AlignmentLocation { x, y }).collect();
         let score = str1.iter().zip(str2.iter()).map(|(xb, yb)| af_score.match_mismatch(xb, yb)).sum();
+
         AlignmentResult {
             alignment_string1: str1.clone(),
             alignment_string2: str1.clone(),
@@ -514,8 +516,8 @@ impl AlignmentResult {
 
     #[allow(dead_code)]
     fn slice_out_inversions(&self) -> Vec<AlignmentResult> {
-        let mut alignment_string1: Vec<u8> = Vec::new();
-        let mut alignment_string2: Vec<u8> = Vec::new();
+        let mut alignment_string1: Vec<FastaBase> = Vec::new();
+        let mut alignment_string2: Vec<FastaBase> = Vec::new();
         let mut cigar_string: Vec<AlignmentTag> = Vec::new();
         let mut path = Vec::new();
         let mut score: f64 = 0.0;
@@ -655,11 +657,10 @@ pub struct BoundedAlignment {
     bounding_box: (AlignmentLocation, AlignmentLocation),
 }
 
-pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
+pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, my_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::AFFINE, local);
     let mut inversion_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::AFFINE, true);
 
-    info!("GGGGGGGGGG --------> ref: {} read: {}", String::from_utf8(reference.clone()).unwrap(), String::from_utf8(read.clone()).unwrap());
     let mut long_enough_hits: HashMap<AlignmentLocation, BoundedAlignment> = HashMap::new();
     let rev_comp_read = &reverse_complement(&read);
     perform_affine_alignment(&mut inversion_mat, &reference, rev_comp_read, my_aff_score);
@@ -692,12 +693,12 @@ pub(crate) fn inversion_alignment(reference: &Vec<u8>, read: &Vec<u8>, my_score:
 #[allow(dead_code)]
 pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                                    inversion_mapping: Option<&HashMap<AlignmentLocation, BoundedAlignment>>,
-                                   sequence1: &Vec<u8>,
-                                   sequence2: &Vec<u8>,
+                                   sequence1: &Vec<FastaBase>,
+                                   sequence2: &Vec<FastaBase>,
                                    starting_position: Option<(usize, usize)>,
 ) -> AlignmentResult {
-    let mut alignment1 = Vec::new();
-    let mut alignment2 = Vec::new();
+    let mut alignment1: Vec<FastaBase> = Vec::new();
+    let mut alignment2: Vec<FastaBase> = Vec::new();
     let mut cigars: Vec<AlignmentTag> = Vec::new();
 
     let mut _starting_x = sequence1.len();
@@ -781,7 +782,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 trace!("PUSH INS");
                 for _i in 0..(movement_delta.1) {
                     alignment1.push(*sequence1.get(_starting_x - 1).unwrap());
-                    alignment2.push(b'-');
+                    alignment2.push(FASTA_UNSET);
                     _starting_x -= 1;
                 }
             }
@@ -789,7 +790,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 if movement_delta.1 > 0 { cigars.push(AlignmentTag::Ins(1)) };
                 trace!("PUSH DEL");
                 for _i in 0..(movement_delta.1) {
-                    alignment1.push(b'-');
+                    alignment1.push(FASTA_UNSET);
                     alignment2.push(*sequence2.get(_starting_y - 1).unwrap());
                     _starting_y -= 1;
                 }
@@ -802,12 +803,12 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
     //info!("OUT: {},{},{}", starting_x, starting_y, starting_z);
     while _starting_x > 0 && !alignment.is_local {
         alignment1.push(*sequence1.get(_starting_x - 1).unwrap());
-        alignment2.push(b'-');
+        alignment2.push(FASTA_UNSET);
         _starting_x -= 1;
         cigars.push(AlignmentTag::Del(1));
     }
     while _starting_y > 0 && !alignment.is_local {
-        alignment1.push(b'-');
+        alignment1.push(FASTA_UNSET);
         alignment2.push(*sequence2.get(_starting_y - 1).unwrap());
         _starting_y -= 1;
         cigars.push(AlignmentTag::Ins(1));
@@ -866,35 +867,16 @@ pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &Vec<u8>, s
     }
 }
 
-pub(crate) fn reverse_complement(bases: &Vec<u8>) -> Vec<u8> {
-    let mut new_bases = bases.clone().iter().map(|&b| reverse_base(b)).collect::<Vec<u8>>();
-    new_bases.reverse();
-    new_bases
-}
-
-fn reverse_base(base: u8) -> u8 {
-    match base {
-        b'A' => b'T',
-        b'a' => b't',
-        b'C' => b'G',
-        b'c' => b'g',
-        b'G' => b'C',
-        b'g' => b'c',
-        b'T' => b'A',
-        b't' => b'a',
-        _ => b'N',
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::str;
+    use crate::alignment::fasta_bit_encoding::{fasta_vec_to_string, is_all_same_vec_fasta, reverse_complement, str_to_fasta_vec};
 
     #[test]
     fn waterman_eggart_affine_test_case_2nds() {
-        let reference = String::from("CCAATCTACTACTGCTTGCAGTAC").as_bytes().to_owned();
-        let test_read = String::from("AGTCCGAGGGCTACTCTACTGAAC").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCAGTAC");
+        let test_read = str_to_fasta_vec("AGTCCGAGGGCTACTCTACTGAAC");
 
         let my_score = AffineScoring {
             match_score: 10.0,
@@ -910,21 +892,22 @@ mod tests {
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "CCAATCTACT");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "CTACTCTACT");
+
+        assert_eq!(results.alignment_string1, str_to_fasta_vec("CCAATCTACT"));
+        assert_eq!(results.alignment_string2, str_to_fasta_vec("CTACTCTACT"));
 
         clean_and_find_next_best_match_3d(&mut alignment_mat, &reference, &test_read, &my_score, &results);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "CTACTACTGCT");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "CTACT-CTACT");
+        assert_eq!(results.alignment_string1, str_to_fasta_vec("CTACTACTGCT"));
+        assert_eq!(results.alignment_string2, str_to_fasta_vec("CTACT-CTACT"));
     }
 
     #[test]
     fn waterman_eggart_affine_test_case() {
-        let reference = String::from("CCAATCTACTACTGCTTGCAGTAC").as_bytes().to_owned();
-        let test_read = String::from("AGTCCGAGGGCTACTCTACTGAAC").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCAGTAC");
+        let test_read = str_to_fasta_vec("AGTCCGAGGGCTACTCTACTGAAC");
 
         let my_score = AffineScoring {
             match_score: 10.0,
@@ -939,13 +922,13 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "CCAATCTACT");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "CTACTCTACT");
+        assert_eq!(results.alignment_string1, str_to_fasta_vec("CCAATCTACT"));
+        assert_eq!(results.alignment_string2, str_to_fasta_vec("CTACTCTACT"));
     }
     #[test]
     fn affine_special_scoring_test() {
-        let reference = String::from("AAAANAAAA").as_bytes().to_owned();
-        let test_read = String::from("AAAAAAAA").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("AAAANAAAA");
+        let test_read = str_to_fasta_vec("AAAAAAAA");
 
         let my_score = AffineScoring {
             match_score: 6.0,
@@ -960,14 +943,14 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "AAAANAAAA");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "AAAA-AAAA");
+        assert_eq!(results.alignment_string1, str_to_fasta_vec("AAAANAAAA"));
+        assert_eq!(results.alignment_string2, str_to_fasta_vec("AAAA-AAAA"));
     }
 
     #[test]
     fn affine_special_practical_test() {
-        let reference = String::from("AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA").as_bytes().to_owned();
-        let test_read = String::from("AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA");
+        let test_read = str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA");
 
         let my_score = AffineScoring {
             match_score: 6.0,
@@ -982,14 +965,14 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "----------------AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA");
+        assert_eq!(results.alignment_string1, str_to_fasta_vec("----------------AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
+        assert_eq!(results.alignment_string2, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
     }
 
     #[test]
     fn affine_alignment_test() {
-        let reference = String::from("AAAA").as_bytes().to_owned();
-        let test_read = String::from("AATAA").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("AAAA");
+        let test_read = str_to_fasta_vec("AATAA");
 
         let my_score = AffineScoring {
             match_score: 6.0,
@@ -1004,14 +987,14 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "AA-AA");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "AATAA");
+        assert_eq!(results.alignment_string1, str_to_fasta_vec("AA-AA"));
+        assert_eq!(results.alignment_string2, str_to_fasta_vec("AATAA"));
     }
 
     #[test]
     fn affine_alignment_cigar_test() {
-        let reference = String::from("AAAA").as_bytes().to_owned();
-        let test_read = String::from("AATAA").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("AAAA");
+        let test_read = str_to_fasta_vec("AATAA");
 
         let my_score = AffineScoring {
             match_score: 6.0,
@@ -1026,16 +1009,20 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "AA-AA");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "AATAA");
+        assert_eq!(results.alignment_string1, str_to_fasta_vec("AA-AA"));
+        assert_eq!(results.alignment_string2, str_to_fasta_vec("AATAA"));
 
         println!("CIGAR : {:?}", results.cigar_string);
     }
 
     #[test]
     fn affine_alignment_test2() {
-        let reference = String::from("CCAATCTACTACTGCTTGCA").as_bytes().to_owned();
-        let test_read = reverse_complement(&String::from("GCCACTCTCGCTGTACTGTG").as_bytes().to_owned());
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCA");
+        let test_read = reverse_complement(&str_to_fasta_vec("GCCACTCTCGCTGTACTGTG"));
+        println!("Aligned {} and {} pre {} --",
+                 fasta_vec_to_string(&reference),
+                 fasta_vec_to_string(&test_read),
+                 fasta_vec_to_string(&str_to_fasta_vec("GCCACTCTCGCTGTACTGTG")));
 
         let my_score = AffineScoring {
             match_score: 10.0,
@@ -1051,19 +1038,19 @@ mod tests {
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        println!("Aligned {} and {} from {} and {}",
-                 str::from_utf8(&results.alignment_string1).unwrap(),
-                 str::from_utf8(&results.alignment_string2).unwrap(),
-                 str::from_utf8(&reference).unwrap(),
-                 str::from_utf8(&test_read).unwrap(), );
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "TACTGC");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "TACAGC");
+        println!("Aligned {} and {}; from {} and {}",
+                 fasta_vec_to_string(&results.alignment_string1),
+                 fasta_vec_to_string(&results.alignment_string2),
+                 fasta_vec_to_string(&reference),
+                 fasta_vec_to_string(&test_read));
+        assert_eq!(fasta_vec_to_string(&results.alignment_string1), "TACTGC");
+        assert_eq!(fasta_vec_to_string(&results.alignment_string2), "TACAGC");
     }
 
     #[test]
     fn inversion_alignment_setup_test() {
-        let reference = String::from("CCAATCTACTACTGCTTGCA").as_bytes().to_owned();
-        let test_read = reverse_complement(&String::from("GCCACTCTCGCTGTACTGTG").as_bytes().to_owned());
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCA");
+        let test_read = reverse_complement(&str_to_fasta_vec("GCCACTCTCGCTGTACTGTG"));
         //let reference = String::from("CCAAT").as_bytes().to_owned();
         //let test_read = reverse_complement(&String::from("CTGTG").as_bytes().to_owned());
 
@@ -1082,14 +1069,14 @@ mod tests {
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
 
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "TACTGC");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "TACAGC");
+        assert_eq!(fasta_vec_to_string(&results.alignment_string1), "TACTGC");
+        assert_eq!(fasta_vec_to_string(&results.alignment_string2), "TACAGC");
     }
 
     #[test]
     fn inversion_alignment_test() {
-        let reference = String::from("CCAATCTACTACTGCTTGCA").as_bytes().to_owned();
-        let test_read = String::from("GCCACTCTCGCTGTACTGTG").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCA");
+        let test_read = str_to_fasta_vec("GCCACTCTCGCTGTACTGTG");
 
         let my_score = InversionScoring {
             match_score: 10.0,
@@ -1114,20 +1101,20 @@ mod tests {
         let results = inversion_alignment(&reference, &test_read, &my_score, &my_aff_score, true);
 
         println!("Aligned {} and {} from {} and {}",
-                 str::from_utf8(&results.alignment_string1).unwrap(),
-                 str::from_utf8(&results.alignment_string2).unwrap(),
-                 str::from_utf8(&reference).unwrap(),
-                 str::from_utf8(&test_read).unwrap());
+                 fasta_vec_to_string(&results.alignment_string1),
+                 fasta_vec_to_string(&results.alignment_string2),
+                 fasta_vec_to_string(&reference),
+                 fasta_vec_to_string(&test_read));
         //                                                                  CCAATCTACtactgcTTG
         //                                                                  CCACTCT-CTCTCGCCTG
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "CCAATCTACTACTGCTTG");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "CCACTCT-CTACAGCCTG");
+        assert_eq!(fasta_vec_to_string(&results.alignment_string1), "CCAATCTACTACTGCTTG");
+        assert_eq!(fasta_vec_to_string(&results.alignment_string2), "CCACTCT-CTACAGCCTG");
     }
 
     #[test]
     fn inversion_alignment_global_test() {
-        let reference = String::from("CCAATCTACTACTGCTTGCA").as_bytes().to_owned();
-        let test_read = String::from("CCGTAGATTTACTGCTTGCA").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCA");
+        let test_read = str_to_fasta_vec("CCGTAGATTTACTGCTTGCA");
 
         let my_score = InversionScoring {
             match_score: 10.0,
@@ -1153,20 +1140,20 @@ mod tests {
 
 
         println!("Aligned {} and {} from {} and {}",
-                 str::from_utf8(&results.alignment_string1).unwrap(),
-                 str::from_utf8(&results.alignment_string2).unwrap(),
-                 str::from_utf8(&reference).unwrap(),
-                 str::from_utf8(&test_read).unwrap());
+                 fasta_vec_to_string(&results.alignment_string1),
+                 fasta_vec_to_string(&results.alignment_string2),
+                 fasta_vec_to_string(&reference),
+                 fasta_vec_to_string(&test_read));
         //                                                                  CCAATCTACtactgcTTG
         //                                                                  CCACTCT-CTCTCGCCTG
-        assert_eq!(str::from_utf8(&results.alignment_string1).unwrap(), "CCAATCTACTACTGCTTGCA");
-        assert_eq!(str::from_utf8(&results.alignment_string2).unwrap(), "CCAATCTACTACTGCTTGCA");
+        assert_eq!(fasta_vec_to_string(&results.alignment_string1), "CCAATCTACTACTGCTTGCA");
+        assert_eq!(fasta_vec_to_string(&results.alignment_string2), "CCAATCTACTACTGCTTGCA");
     }
 
     #[test]
     fn inversion_alignment_cigar_test() {
-        let reference = String::from("CCAATCTACTACTGCTTGCA").as_bytes().to_owned();
-        let test_read = String::from("CCGTAGATTTACTGCTTGCA").as_bytes().to_owned();
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCA");
+        let test_read = str_to_fasta_vec("CCGTAGATTTACTGCTTGCA");
 
         let my_score = InversionScoring {
             match_score: 10.0,
@@ -1191,10 +1178,10 @@ mod tests {
         let results = inversion_alignment(&reference, &test_read, &my_score, &my_aff_score, false);
 
         println!("Aligned {} and {} from {} and {}",
-                 str::from_utf8(&results.alignment_string1).unwrap(),
-                 str::from_utf8(&results.alignment_string2).unwrap(),
-                 str::from_utf8(&reference).unwrap(),
-                 str::from_utf8(&test_read).unwrap());
+                 fasta_vec_to_string(&results.alignment_string1),
+                 fasta_vec_to_string(&results.alignment_string2),
+                 fasta_vec_to_string(&reference),
+                 fasta_vec_to_string(&test_read));
 
         println!("CIGAR: {:?}", results.cigar_string);
     }

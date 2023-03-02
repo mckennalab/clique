@@ -52,7 +52,7 @@ impl ConvexScoringFunction for ConvexScoring {
 
 /// Trait required to instantiate a Scoring instance
 pub trait AffineScoringFunction {
-    fn match_mismatch(&self, a: &u8, b: &u8) -> f64;
+    fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64;
     fn gap_open(&self) -> f64;
     fn gap_extend(&self) -> f64;
     fn final_gap_multiplier(&self) -> f64;
@@ -69,9 +69,7 @@ pub struct AffineScoring {
 }
 
 impl AffineScoringFunction for AffineScoring {
-    fn match_mismatch(&self, a: &u8, b: &u8) -> f64 {
-        let bit_a = u8_to_encoding_defaulted_to_N(a);
-        let bit_b = u8_to_encoding_defaulted_to_N(b);
+    fn match_mismatch(&self, bit_a: &FastaBase, bit_b: &FastaBase) -> f64 {
         if bit_a == bit_b && (bit_a .identity(&FASTA_N) || bit_b.identity(&FASTA_N)) { self.special_character_score }
         else if bit_a == bit_b {self.match_score}
         else { self.mismatch_score }
@@ -90,7 +88,7 @@ impl AffineScoringFunction for AffineScoring {
 
 
 pub trait InversionScoringFunction {
-    fn match_mismatch(&self, a: &u8, b: &u8) -> f64;
+    fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64;
     fn gap_open(&self) -> f64;
     fn gap_extend(&self) -> f64;
     fn inversion_cost(&self) -> f64;
@@ -108,10 +106,8 @@ pub struct InversionScoring {
 
 impl InversionScoringFunction for InversionScoring {
 
-    fn match_mismatch(&self, a: &u8, b: &u8) -> f64 {
-        let bit_a = u8_to_encoding_defaulted_to_N(a);
-        let bit_b = u8_to_encoding_defaulted_to_N(b);
-        if bit_a == bit_b { self.match_score } else { self.mismatch_score }
+    fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64 {
+        if a == b { self.match_score } else { self.mismatch_score }
     }
     fn gap_open(&self) -> f64 {
         self.gap_open as f64
