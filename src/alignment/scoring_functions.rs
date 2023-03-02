@@ -1,4 +1,4 @@
-use crate::alignment::fasta_bit_encoding::{FastaBase, FASTA_N, u8_to_encoding_defaulted_to_N};
+use crate::alignment::fasta_bit_encoding::{FastaBase, FASTA_N};
 
 /// Trait required to instantiate a Scoring instance
 pub trait ScoringFunction {

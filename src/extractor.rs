@@ -4,8 +4,7 @@ use nohash_hasher::NoHashHasher;
 
 use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::fasta_comparisons::KNOWNBASES;
-use crate::fasta_comparisons::KNOWNBASESPLUSINSERT;
-use crate::alignment::fasta_bit_encoding::{char_to_encoding, u8_to_encoding};
+use crate::alignment::fasta_bit_encoding::{u8_to_encoding};
 
 
 pub const REFERENCE_CHAR: u8 = b'R';
@@ -39,30 +38,21 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
 
     for (reference_base, read_base) in std::iter::zip(aligned_ref, aligned_read) {
         match (u8_to_encoding(reference_base).is_some(), reference_base.is_ascii_uppercase() || (*reference_base == b'-' && in_extractor), in_extractor) {
-            (x, true, z) => {
+            (_x, true, _z) => {
                 in_extractor = true;
                 special_values.entry(REFERENCE_CHAR).or_insert_with(Vec::new).push(reference_base.clone());
                 special_values.entry(READ_CHAR).or_insert_with(Vec::new).push(read_base.clone());
             }
-            (false, y, false) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
+            (false, _y, false) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
                 special_values.entry(*reference_base).or_insert_with(Vec::new).push(read_base.clone());
             }
-            (false, y, true) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
+            (false, _y, true) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
                 special_values.entry(REFERENCE_CHAR).or_insert_with(Vec::new).push(reference_base.clone());
                 special_values.entry(READ_CHAR).or_insert_with(Vec::new).push(read_base.clone());
                 special_values.entry(*reference_base).or_insert_with(Vec::new).push(read_base.clone());
             }
-            (x, false, _z) => {
+            (_x, false, _z) => {
                 in_extractor = false;
-            }
-            _ => {
-                panic!("5Unknown condition {} {} {} {} {} {}",
-                       u8_to_encoding(reference_base).is_some(),
-                       reference_base.is_ascii_uppercase(),
-                       in_extractor,
-                       reference_base,
-                       read_base,
-                       String::from_utf8(aligned_read.clone()).unwrap())
             }
         }
     }

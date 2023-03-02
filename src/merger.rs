@@ -1,8 +1,7 @@
 use bio::io::fastq::Record;
 use needletail::Sequence;
-use crate::alignment::alignment_matrix::{AlignmentLocation, AlignmentResult, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, str_to_fasta_vec, u8_to_encoding_defaulted_to_N};
-use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, str_to_fasta_vec};
+use crate::alignment::scoring_functions::{AffineScoring};
 use crate::alignment_functions::align_two_strings;
 use crate::utils::read_utils::combine_phred_scores;
 

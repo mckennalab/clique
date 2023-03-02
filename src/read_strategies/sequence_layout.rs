@@ -1,11 +1,8 @@
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
-use std::collections::{HashMap, VecDeque};
 use serde::{Serialize,Deserialize};
-use bio::io::fastq::Record;
 use std::collections::BTreeMap;
-use crate::read_strategies::read_set::ReadSetContainer;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum UMISortType {
@@ -14,19 +11,6 @@ pub enum UMISortType {
     /// you allow before not considering two sequences to be from the same source.
     KnownTag,
     DegenerateTag,
-}
-
-pub struct SequenceLayout {
-    name: Vec<u8>,
-    umis: HashMap<UMISortType,Vec<u8>>,
-    original_reads: Option<ReadSetContainer>,
-}
-
-impl SequenceLayout {
-    pub fn from(rsc: ReadSetContainer, layout: &SequenceLayoutDesign) -> SequenceLayout {
-        ReadPosition::assert_has_all_reads(&layout.reads, &rsc);
-        todo!();
-    }
 }
 
 impl SequenceLayoutDesign {
@@ -67,21 +51,6 @@ enum ReadPosition {
     READ2,
     INDEX1,
     INDEX2
-}
-
-impl ReadPosition {
-    pub fn assert_has_all_reads(positions: &Vec<ReadPosition>, rsc: &ReadSetContainer) {
-        positions.iter().for_each(|p| ReadPosition::assert_contains_read(p,rsc));
-    }
-
-    pub fn assert_contains_read(pos: &ReadPosition, rsc: &ReadSetContainer) {
-        match pos {
-            ReadPosition::READ1 => {assert!(!rsc.read_one.is_empty())}
-            ReadPosition::READ2 => {assert!(rsc.read_two.is_some())}
-            ReadPosition::INDEX1 => {assert!(rsc.index_one.is_some())}
-            ReadPosition::INDEX2 => {assert!(rsc.index_two.is_some())}
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]

@@ -2,15 +2,18 @@ use num_traits::Pow;
 use rand::{seq::IteratorRandom, thread_rng};
 use crate::read_strategies::read_set::ReadSetContainer;
 
+#[allow(dead_code)]
 pub fn phred_to_prob(phred: &u8) -> f64 {
     let phred_f64 = ((*phred as usize) - 33) as f64;
     (10.0).pow((-1.0 * phred_f64)/10.0)
 }
 
+#[allow(dead_code)]
 pub fn prob_to_phred(qual: f64) -> u8 {
     (((-10.0) * qual.log10()) + 33.0) as u8
 }
 
+#[allow(dead_code)]
 pub fn combine_phred_scores(phred_one: &u8, phred_two: &u8, agree: bool) -> u8 {
     let prob1 = phred_to_prob(phred_one);
     let prob2 = phred_to_prob(phred_two);

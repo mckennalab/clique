@@ -28,8 +28,6 @@ extern crate serde_yaml;
 extern crate symspell;
 extern crate derive_more;
 
-#[macro_use]
-extern crate shrinkwraprs;
 
 use ::std::io::Result;
 use std::path::{Path, PathBuf};
@@ -69,8 +67,6 @@ mod utils {
     pub mod base_utils;
     pub mod read_utils;
 }
-
-mod merger;
 
 mod alignment_functions;
 mod sorter;

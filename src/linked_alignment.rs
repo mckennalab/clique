@@ -130,6 +130,7 @@ pub struct AlignmentResults {
 /// * `search_string` - a u8 Vec representing the search string
 /// * `reference` - a u8 Vec representing the reference string
 /// * `seeds` - a suffix array lookup object
+#[allow(dead_code)]
 pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
                                  reference: &Vec<FastaBase>,
                                  overlaps: &SharedSegments,

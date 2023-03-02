@@ -1,7 +1,7 @@
 extern crate derive_more;
 
 use std::fmt;
-use derive_more::{From, Display, Add};
+use derive_more::{From, Add};
 use std::ops::{BitAnd, BitOr, BitXor, Shl, Shr};
 
 
@@ -157,7 +157,7 @@ pub fn encoding_to_u8(base: &FastaBase) -> u8 {
 //pub fn compare_fasta_vec(vec1: &[FastaBase], vec2: &[FastaBase]) ->
 
 #[allow(dead_code)]
-pub fn u8_to_encoding_defaulted_to_N(base: &u8) -> FastaBase {
+pub fn u8_to_encoding_defaulted_to_n(base: &u8) -> FastaBase {
     match base {
         b'-' => FASTA_UNSET,
 
@@ -237,10 +237,12 @@ pub fn complement(base: &FastaBase) -> FastaBase {
 pub fn str_to_fasta_vec(st: &str) -> Vec<FastaBase> {
     let mut ret_vec = Vec::with_capacity(st.len());
     for b in st.as_bytes() {
-        ret_vec.push(u8_to_encoding_defaulted_to_N(b));
+        ret_vec.push(u8_to_encoding_defaulted_to_n(b));
     }
     ret_vec
 }
+
+#[allow(dead_code)]
 pub fn fasta_vec_to_string(vc: &Vec<FastaBase>) -> String {
     String::from_utf8(fasta_vec_to_vec_u8(vc)).unwrap()
 }
@@ -253,8 +255,13 @@ pub fn fasta_vec_to_vec_u8(vc: &Vec<FastaBase>) -> Vec<u8> {
     ret_vec
 }
 
-pub fn is_all_same_vec_fasta<T: PartialEq>(arr: &[T]) -> bool {
-    arr.windows(2).all(|w| w[0] == w[1])
+
+pub(crate) fn reverse_complement(bases: &Vec<FastaBase>) -> Vec<FastaBase> {
+    let mut new_bases = bases.clone().iter().map(|b| {
+        complement(b)
+    }).collect::<Vec<FastaBase>>();
+    new_bases.reverse();
+    new_bases
 }
 
 #[derive(Clone, From, Debug, PartialEq, Eq)]
@@ -262,7 +269,7 @@ pub struct FastaString {
     packed_bases: Vec<u64>,
     character_length: usize,
 }
-
+/*
 impl FastaString {
     const fasta_base_per_u64: usize = 64 / 4;
     const FULL_SHIFT: u64 = 0xFFFFFFFFFFFFFFFF;
@@ -322,16 +329,8 @@ impl FastaString {
         self.packed_bases.len()
     }
 }
+*/
 
-
-pub(crate) fn reverse_complement(bases: &Vec<FastaBase>) -> Vec<FastaBase> {
-    let mut new_bases = bases.clone().iter().map(|b| {
-        println!("Base {} inoto {}",b,complement(b));
-        complement(b)
-    }).collect::<Vec<FastaBase>>();
-    new_bases.reverse();
-    new_bases
-}
 
 /*
 pub fn hamming_bit_strings(a: &BitEncodedFasta, b: &BitEncodedFasta, width: usize) -> u64 {
@@ -383,48 +382,48 @@ mod tests {
 
     #[test]
     fn test_u8_to_encoding_defaulted_to_N() {
-        assert_eq!(FASTA_A, u8_to_encoding_defaulted_to_N(&b'A'));
-        assert_eq!(FASTA_C, u8_to_encoding_defaulted_to_N(&b'C'));
-        assert_eq!(FASTA_G, u8_to_encoding_defaulted_to_N(&b'G'));
-        assert_eq!(FASTA_T, u8_to_encoding_defaulted_to_N(&b'T'));
+        assert_eq!(FASTA_A, u8_to_encoding_defaulted_to_n(&b'A'));
+        assert_eq!(FASTA_C, u8_to_encoding_defaulted_to_n(&b'C'));
+        assert_eq!(FASTA_G, u8_to_encoding_defaulted_to_n(&b'G'));
+        assert_eq!(FASTA_T, u8_to_encoding_defaulted_to_n(&b'T'));
 
-        assert_eq!(FASTA_A, u8_to_encoding_defaulted_to_N(&b'a'));
-        assert_eq!(FASTA_C, u8_to_encoding_defaulted_to_N(&b'c'));
-        assert_eq!(FASTA_G, u8_to_encoding_defaulted_to_N(&b'g'));
-        assert_eq!(FASTA_T, u8_to_encoding_defaulted_to_N(&b't'));
+        assert_eq!(FASTA_A, u8_to_encoding_defaulted_to_n(&b'a'));
+        assert_eq!(FASTA_C, u8_to_encoding_defaulted_to_n(&b'c'));
+        assert_eq!(FASTA_G, u8_to_encoding_defaulted_to_n(&b'g'));
+        assert_eq!(FASTA_T, u8_to_encoding_defaulted_to_n(&b't'));
 
-        assert_eq!(FASTA_N, u8_to_encoding_defaulted_to_N(&b'N'));
-        assert_eq!(FASTA_N, u8_to_encoding_defaulted_to_N(&b'n'));
+        assert_eq!(FASTA_N, u8_to_encoding_defaulted_to_n(&b'N'));
+        assert_eq!(FASTA_N, u8_to_encoding_defaulted_to_n(&b'n'));
 
-        assert_eq!(FASTA_B, u8_to_encoding_defaulted_to_N(&b'B'));
-        assert_eq!(FASTA_B, u8_to_encoding_defaulted_to_N(&b'b'));
+        assert_eq!(FASTA_B, u8_to_encoding_defaulted_to_n(&b'B'));
+        assert_eq!(FASTA_B, u8_to_encoding_defaulted_to_n(&b'b'));
 
-        assert_eq!(FASTA_D, u8_to_encoding_defaulted_to_N(&b'D'));
-        assert_eq!(FASTA_D, u8_to_encoding_defaulted_to_N(&b'd'));
+        assert_eq!(FASTA_D, u8_to_encoding_defaulted_to_n(&b'D'));
+        assert_eq!(FASTA_D, u8_to_encoding_defaulted_to_n(&b'd'));
 
-        assert_eq!(FASTA_R, u8_to_encoding_defaulted_to_N(&b'R'));
-        assert_eq!(FASTA_R, u8_to_encoding_defaulted_to_N(&b'r'));
+        assert_eq!(FASTA_R, u8_to_encoding_defaulted_to_n(&b'R'));
+        assert_eq!(FASTA_R, u8_to_encoding_defaulted_to_n(&b'r'));
 
-        assert_eq!(FASTA_Y, u8_to_encoding_defaulted_to_N(&b'Y'));
-        assert_eq!(FASTA_Y, u8_to_encoding_defaulted_to_N(&b'y'));
+        assert_eq!(FASTA_Y, u8_to_encoding_defaulted_to_n(&b'Y'));
+        assert_eq!(FASTA_Y, u8_to_encoding_defaulted_to_n(&b'y'));
 
-        assert_eq!(FASTA_K, u8_to_encoding_defaulted_to_N(&b'K'));
-        assert_eq!(FASTA_K, u8_to_encoding_defaulted_to_N(&b'k'));
+        assert_eq!(FASTA_K, u8_to_encoding_defaulted_to_n(&b'K'));
+        assert_eq!(FASTA_K, u8_to_encoding_defaulted_to_n(&b'k'));
 
-        assert_eq!(FASTA_M, u8_to_encoding_defaulted_to_N(&b'M'));
-        assert_eq!(FASTA_M, u8_to_encoding_defaulted_to_N(&b'm'));
+        assert_eq!(FASTA_M, u8_to_encoding_defaulted_to_n(&b'M'));
+        assert_eq!(FASTA_M, u8_to_encoding_defaulted_to_n(&b'm'));
 
-        assert_eq!(FASTA_S, u8_to_encoding_defaulted_to_N(&b'S'));
-        assert_eq!(FASTA_S, u8_to_encoding_defaulted_to_N(&b's'));
+        assert_eq!(FASTA_S, u8_to_encoding_defaulted_to_n(&b'S'));
+        assert_eq!(FASTA_S, u8_to_encoding_defaulted_to_n(&b's'));
 
-        assert_eq!(FASTA_W, u8_to_encoding_defaulted_to_N(&b'W'));
-        assert_eq!(FASTA_W, u8_to_encoding_defaulted_to_N(&b'w'));
+        assert_eq!(FASTA_W, u8_to_encoding_defaulted_to_n(&b'W'));
+        assert_eq!(FASTA_W, u8_to_encoding_defaulted_to_n(&b'w'));
 
-        assert_eq!(FASTA_H, u8_to_encoding_defaulted_to_N(&b'H'));
-        assert_eq!(FASTA_H, u8_to_encoding_defaulted_to_N(&b'h'));
+        assert_eq!(FASTA_H, u8_to_encoding_defaulted_to_n(&b'H'));
+        assert_eq!(FASTA_H, u8_to_encoding_defaulted_to_n(&b'h'));
 
-        assert_eq!(FASTA_V, u8_to_encoding_defaulted_to_N(&b'V'));
-        assert_eq!(FASTA_V, u8_to_encoding_defaulted_to_N(&b'v'));
+        assert_eq!(FASTA_V, u8_to_encoding_defaulted_to_n(&b'V'));
+        assert_eq!(FASTA_V, u8_to_encoding_defaulted_to_n(&b'v'));
     }
 
     #[test]
@@ -503,8 +502,8 @@ mod tests {
                            String::from_utf8(vec![*x]).unwrap(),
                            String::from_utf8(vec![*z]).unwrap());
 
-                assert_eq!(u8_to_encoding_defaulted_to_N(x),
-                           u8_to_encoding_defaulted_to_N(z),
+                assert_eq!(u8_to_encoding_defaulted_to_n(x),
+                           u8_to_encoding_defaulted_to_n(z),
                            "Testing {} and {}",
                            String::from_utf8(vec![*x]).unwrap(),
                            String::from_utf8(vec![*z]).unwrap());
@@ -519,8 +518,8 @@ mod tests {
                            String::from_utf8(vec![*x]).unwrap(),
                            String::from_utf8(vec![*z]).unwrap());
 
-                assert_ne!(u8_to_encoding_defaulted_to_N(x),
-                           u8_to_encoding_defaulted_to_N(z),
+                assert_ne!(u8_to_encoding_defaulted_to_n(x),
+                           u8_to_encoding_defaulted_to_n(z),
                            "Testing {} and {}",
                            String::from_utf8(vec![*x]).unwrap(),
                            String::from_utf8(vec![*z]).unwrap());

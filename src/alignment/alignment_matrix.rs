@@ -5,8 +5,8 @@ use std::ops::Add;
 use ndarray::Array;
 use ndarray::prelude::*;
 use num_traits::identities::Zero;
-use log::{info, trace};
-use crate::alignment::fasta_bit_encoding::{complement, encoding_to_u8, FASTA_UNSET, FastaBase, reverse_complement};
+use log::{trace};
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 
 use crate::alignment::scoring_functions::*;
 use crate::alignment_functions::simplify_cigar_string;

@@ -94,7 +94,3 @@ lazy_static! {
             hashedvalues
         };
 }
-
-pub fn compare_bases(base_a: &u8, base_b: &u8) {
-
-}

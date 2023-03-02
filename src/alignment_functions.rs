@@ -10,12 +10,12 @@ use crate::rayon::iter::ParallelIterator;
 use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR};
-use crate::linked_alignment::{align_string_with_anchors, AlignmentResults, find_greedy_non_overlapping_segments, orient_by_longest_segment};
+use crate::linked_alignment::{orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
 use std::time::{Instant};
 use ndarray::Ix3;
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, fasta_vec_to_string, fasta_vec_to_vec_u8, FastaBase, reverse_complement, str_to_fasta_vec};
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, fasta_vec_to_vec_u8, FastaBase, reverse_complement, str_to_fasta_vec};
 
 
 pub fn align_reads(use_capture_sequences: &bool,
@@ -133,6 +133,7 @@ pub fn align_reads(use_capture_sequences: &bool,
     });
 }
 
+#[allow(dead_code)]
 pub fn align_two_strings(read1_seq: &Vec<FastaBase>, rev_comp_read2: &Vec<FastaBase>, scoring_function: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
@@ -194,14 +195,15 @@ pub fn best_reference(read: &ReadSetContainer,
     }
 }
 
+// TODO bring back inversions
 pub fn alignment(x: &ReadSetContainer,
                  reference: &Reference,
                  alignment_mat: &mut Alignment<Ix3>,
                  my_aff_score: &AffineScoring,
-                 my_score: &InversionScoring,
-                 use_inversions: &bool,
+                 _my_score: &InversionScoring,
+                 _use_inversions: &bool,
                  max_reference_multiplier: usize,
-                 min_read_length: usize) -> Option<(AlignmentResult)> {
+                 min_read_length: usize) -> Option<AlignmentResult> {
 
     // find the best reference(s)
     let orientation = orient_by_longest_segment(&x.read_one.seq().to_vec(), &reference.sequence_u8, &reference.suffix_table).0;
@@ -251,12 +253,8 @@ pub fn matching_read_bases_prop(read: &Vec<FastaBase>, reference: &Vec<FastaBase
     }
 }
 
-pub fn vec_to_uppercase(inp: &Vec<u8>) -> Vec<u8> {
-    inp.iter().map(|x| x.to_ascii_uppercase()).collect::<Vec<u8>>()
-}
-
 pub fn tags_to_output(tags: &BTreeMap<u8, String>) -> String {
-    tags.iter().filter(|(k, v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", String::from_utf8(vec![*k]).unwrap(), v)).join(";")
+    tags.iter().filter(|(k, _v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", String::from_utf8(vec![*k]).unwrap(), v)).join(";")
 }
 
 /// Handle output of the alignment results based on the requested output formats
@@ -269,7 +267,7 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
                         only_output_captured_ref: &bool,
                         to_fake_fastq: &bool,
                         output: Arc<Mutex<File>>,
-                        cigar_string: &String,
+                        _cigar_string: &String,
                         min_read_length: &usize) {
     let mut output = output.lock().unwrap();
 
