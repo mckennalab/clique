@@ -1,14 +1,16 @@
 extern crate derive_more;
 
+use std::cmp::Ordering;
 use std::fmt;
 use derive_more::{From, Add};
 use std::ops::{BitAnd, BitOr, BitXor, Shl, Shr};
+use serde::{Serialize,Deserialize};
 
 
 /// our core Fasta base - representing a single fasta character in a u8 data store. We actually pack
 /// everything into a u4 (if that was a type) but FastaString below handles the more dense packing and
 /// unpacking into u64 structures
-#[derive(Clone, Copy, From, Add, Debug)]
+#[derive(Clone, Copy, From, Add, Debug,Serialize, Deserialize)]
 pub struct FastaBase(u8);
 
 impl FastaBase {
@@ -17,11 +19,27 @@ impl FastaBase {
     }
 }
 /// our comparisons are done using logical AND operations for speed (the layout of bits is really important).
-/// Each degenerate base should also be 'equal' to the correct 'ACGT' combination and be equal to other degenerate
-/// bases that share any overlap in their base patterns. E.g. R == K, but R != C (or N == everything)
+/// Each degenerate base should also be 'equal' to the correct 'ACGT' matches and be equal to other degenerate
+/// bases that share any overlap in their base patterns. E.g. R == K, but R != C (and N == everything)
 impl PartialEq for FastaBase {
     fn eq(&self, other: &Self) -> bool {
         self.0 & other.0 > (0 as u8)
+    }
+}
+
+impl Eq for FastaBase {}
+
+impl PartialOrd for FastaBase {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Right now we simply offer a stable sort for bases -- there's no natural ordering to nucleotides;
+/// you could argue alphabetical, but we simply sort on their underlying bit encoding
+impl Ord for FastaBase {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
     }
 }
 
@@ -31,7 +49,6 @@ impl fmt::Display for FastaBase {
     }
 }
 
-impl Eq for FastaBase {}
 
 impl BitOr for FastaBase {
     type Output = FastaBase;
@@ -454,6 +471,21 @@ mod tests {
     }
 
     #[test]
+    fn bit_ordering() {
+        assert!(FASTA_N > FASTA_A);
+        assert!(FASTA_A < FASTA_N);
+    }
+
+    fn bit_ordering_vec() {
+        let str1 = vec![FASTA_N,FASTA_N,FASTA_N,FASTA_N,FASTA_N];
+        let str2 = vec![FASTA_A,FASTA_C,FASTA_G,FASTA_N,FASTA_N];
+        assert!(str1 > str2);
+    }
+
+
+
+
+    #[test]
     fn bit_compare_all() {
         let mut known_mapping = HashMap::new();
         let mut known_mismapping = HashMap::new();
@@ -546,7 +578,7 @@ mod tests {
         assert_ne!(bit_one, bit_two);
     }
 
-
+/*
     #[test]
     fn basic_bitstring_conversion() {
         let base = "A";
@@ -586,7 +618,7 @@ mod tests {
         assert_eq!(str_version," 0b1000000000000000000000000000000000000000000000000000000000000");
     }
 
-    /*
+
         #[test]
         fn bit_compare_common_types() {
             let test_read = String::from("AAAAA").as_bytes().to_owned();

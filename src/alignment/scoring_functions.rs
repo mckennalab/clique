@@ -96,7 +96,6 @@ pub trait InversionScoringFunction {
 pub struct InversionScoring {
     pub(crate) match_score: f64,
     pub(crate) mismatch_score: f64,
-    pub(crate) special_character_score: f64,
     pub(crate) gap_open: f64,
     pub(crate) gap_extend: f64,
     pub(crate) inversion_penalty: f64,

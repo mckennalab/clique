@@ -871,7 +871,7 @@ pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &Vec<u8>, s
 mod tests {
     use super::*;
     use std::str;
-    use crate::alignment::fasta_bit_encoding::{fasta_vec_to_string, is_all_same_vec_fasta, reverse_complement, str_to_fasta_vec};
+    use crate::alignment::fasta_bit_encoding::{fasta_vec_to_string, reverse_complement, str_to_fasta_vec};
 
     #[test]
     fn waterman_eggart_affine_test_case_2nds() {
@@ -1081,7 +1081,7 @@ mod tests {
         let my_score = InversionScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
-            special_character_score: 9.0,
+            //special_character_score: 9.0,
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
@@ -1119,7 +1119,7 @@ mod tests {
         let my_score = InversionScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
-            special_character_score: 10.0,
+            //special_character_score: 10.0,
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,
@@ -1158,7 +1158,7 @@ mod tests {
         let my_score = InversionScoring {
             match_score: 10.0,
             mismatch_score: -11.0,
-            special_character_score: 9.0,
+            //special_character_score: 9.0,
             gap_open: -15.0,
             gap_extend: -5.0,
             inversion_penalty: -2.0,

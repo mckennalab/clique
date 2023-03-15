@@ -50,7 +50,6 @@ pub fn align_reads(use_capture_sequences: &bool,
     let my_score = InversionScoring {
         match_score: 9.0,
         mismatch_score: -21.0,
-        special_character_score: 8.0,
         gap_open: -25.0,
         gap_extend: -1.0,
         inversion_penalty: -40.0,

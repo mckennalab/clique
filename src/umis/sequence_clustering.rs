@@ -22,8 +22,6 @@ use crate::fasta_comparisons::*;
 use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::umis::bronkerbosch::BronKerbosch;
 use crate::utils::base_utils::*;
-use crate::utils::file_utils::get_reader;
-use crate::sorters::known_list::KnownList;
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,

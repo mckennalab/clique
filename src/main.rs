@@ -49,10 +49,14 @@ mod linked_alignment;
 pub mod extractor;
 pub mod sequence_lookup;
 
+mod consensus {
+    //pub mod shard_sorting;
+}
 
 mod read_strategies {
     pub mod read_set;
     pub mod sequence_layout;
+    pub mod read_disk_sorter;
 }
 
 mod alignment {
@@ -60,7 +64,10 @@ mod alignment {
     pub mod scoring_functions;
     pub mod fasta_bit_encoding;
 }
-
+mod umis {
+    //pub mod sequence_clustering;
+    pub mod bronkerbosch;
+}
 pub mod fasta_comparisons;
 
 mod utils {
