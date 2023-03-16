@@ -53,41 +53,7 @@ impl Clone for BestHits {
     }
 }
 
-pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance: usize) -> BestHits {
-    let mut hits = Vec::new();
-    let mut distance = max_distance;
-    if kl.known_list_map.contains_key(barcode) {
-        hits.push(barcode.clone());
-        distance = 0;
-        BestHits { hits, distance }
-    } else {
-        let mut min_distance = max_distance;
-        let barcode_subslice = &barcode[0..kl.known_list_subset_key_size].to_vec();
 
-        for candidate_key in kl.known_list_subset.keys() {
-            let key_dist = simple_edit_distance(barcode_subslice, &candidate_key);
-
-            if key_dist <= min_distance {
-                let subset = kl.known_list_subset.get(candidate_key).unwrap();
-
-                for full_candidate in subset {
-                    if full_candidate.len() == barcode.len() {
-                        let dist = simple_edit_distance(&full_candidate, barcode);
-                        if dist < min_distance {
-                            hits.clear();
-                            min_distance = dist;
-                        }
-                        if dist == min_distance {
-                            hits.push(full_candidate.clone());
-                        }
-                    }
-                }
-            }
-        }
-        kl.known_list_map.insert(barcode.clone(), BestHits { hits: hits.clone(), distance });
-        BestHits { hits, distance }
-    }
-}
 pub fn average_dist(strings: &Vec<Vec<u8>>,compare: fn(&Vec<u8>, &Vec<u8>) -> u64) -> f64 {
     let mut dist : f64 = 0.0;
     let mut count: usize = 0;

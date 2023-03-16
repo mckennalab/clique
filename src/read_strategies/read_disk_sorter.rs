@@ -1,14 +1,27 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
+use std::hash::BuildHasherDefault;
+use std::path::{Path, PathBuf};
 use flate2::bufread::GzEncoder;
+use nohash_hasher::NoHashHasher;
 use crate::read_strategies::read_set::ReadSetContainer;
 use serde::ser::{SerializeSeq, Serializer};
 use serde::{Serialize, Deserialize};
 use tempfile::TempPath;
 use crate::alignment::fasta_bit_encoding::FastaBase;
+use shardio::*;
+use crate::LivedTempDir;
+use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration, UMISortType};
+use crate::umis::sequence_clustering::StringGraph;
 
-#[derive(Serialize, Deserialize, Debug)]
+
+/// a sortable read set container that sorts on a set of keys -- which we populate with
+/// extracted barcode sequences. These sorting sequences can have been corrected to a known list
+/// or corrected based on the set as a whole, but each iteration they're output and then read
+/// back sorted for the next layer of sorting, before finally being merged.
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SortingReadSetContainer {
     sorting_keys: Vec<Vec<FastaBase>>,
     reads: ReadSetContainer,
@@ -23,140 +36,74 @@ impl PartialEq<Self> for SortingReadSetContainer {
     }
 }
 
-impl PartialOrd<Self> for SortingReadSetContainer {
+impl PartialOrd for SortingReadSetContainer {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Right now we simply offer a stable sort for bases -- there's no natural ordering to nucleotides;
+/// you could argue alphabetical, but we simply sort on their underlying bit encoding
+impl Ord for SortingReadSetContainer {
+    fn cmp(&self, other: &Self) -> Ordering {
         for (a, b) in self.sorting_keys.iter().zip(other.sorting_keys.iter()) {
             if a > b {
-                return Some(Ordering::Greater);
+                return Ordering::Greater;
             }
             else if a < b {
-                return Some(Ordering::Less);
+                return Ordering::Less;
             }
         }
-        Some(Ordering::Equal)
+        Ordering::Equal
     }
 }
 
-pub struct SplitWriteAndSort {
-    split_files: Vec<Option<GzEncoder<File>>>,
-
+pub struct StreamSorter {
+    shard_writer: ShardWriter<SortingReadSetContainer>,
+    sender: ShardSender<SortingReadSetContainer>,
+    number_of_splits: usize,
+    filename: PathBuf,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ReadSetNestingContainer {
-    /// A structure that contains zero or more subcontainers, with an optional set of unsorted reads.
-    /// We use this as a multilayer hierarchy of reads to be arranged on disk and then read back in for
-    /// sorting / merging.
-    nest: Option<Box<ReadSetNestingContainer>>,
-    unsorted: Option<Vec<ReadSetContainer>>,
-}
+impl StreamSorter {
+    pub fn from(filedir: &LivedTempDir, splits: &usize) -> StreamSorter {
+        let filename = filedir.path().join("my-temporary-shard-sort.txt");
+        let mut writer: ShardWriter<SortingReadSetContainer> = ShardWriter::new(filename.clone(), 64, 256, 1<<16).unwrap();
 
-impl ReadSetNestingContainer {
-    #[allow(dead_code)]
-    pub fn from(input_file: &str) -> Option<ReadSetNestingContainer> {
-        let file_contents =
-            fs::read(&input_file).
-                expect(&format!("Unable to open encoded ReadSetNestingContainer binary file: {}", &input_file));
+        // Get a handle to send data to the file
+        let mut sender = writer.get_sender();
 
-        bincode::deserialize(&file_contents).unwrap()
+        StreamSorter{
+            shard_writer: writer,
+            sender,
+            number_of_splits: 0,
+            filename: filename,
+        }
     }
 
-    #[allow(dead_code)]
-    pub fn to(filename: &str, input_container: ReadSetNestingContainer) -> std::io::Result<()> {
-        let encoded: Vec<u8> = bincode::serialize(&Some(input_container)).unwrap();
 
-        std::fs::write(filename, encoded)
+    pub fn preprocess_reads(reads: &dyn Iterator<Item=ReadSetContainer>, sld: &SequenceLayoutDesign) { // -> HashMap<char,StringGraph> {
+        let hash_characters = sld.umi_configurations.iter().map(|(k,v)| (v.symbol,v.sort_type == UMISortType::DegenerateTag)).filter(|(c,isd)| *isd).collect::<Vec<(char,bool)>>();
+        let mut hashedvalues: HashMap::<char, StringGraph, BuildHasherDefault<NoHashHasher<u8>>> = HashMap::with_capacity_and_hasher(hash_characters.len(), BuildHasherDefault::default());
+
+
+
     }
+
+
+    /// sort the iterator of ReadSetContainers by a specific capture sequence
+    pub fn sort_level(reads: &dyn Iterator<Item=ReadSetContainer>, sort_on: UMIConfiguration) {
+
+
+    }
+
 }
-
-
-pub trait ReadSetNestingContainerSortingTransform {
-    /// sort the retained bin of reads
-    fn sort_bin(container: &mut ReadSetNestingContainer) -> Box<ReadSetNestingContainer>;
-}
-
-/// all
-pub trait ReadSetNestingContainerStream {
-    /// Use this method to correct reads to known barcodes, and to build
-    /// up a database of observed subsequences for UMIs
-    fn transform_stream(read_set: &ReadSetContainer) -> ReadSetContainer;
-}
-
 
 #[cfg(test)]
 mod tests {
     use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_N};
     use super::*;
     use crate::utils::read_utils::fake_reads;
-
-    #[test]
-    fn simple_read_set_container() {
-        let fake_reads = fake_reads(80, 8);
-        let _srsc_reads = ReadSetNestingContainer { nest: None, unsorted: Some(fake_reads) };
-    }
-
-    #[test]
-    fn nested_read_set_container() {
-        let fake_reads = fake_reads(80, 8);
-        let srsc_reads1 = ReadSetNestingContainer { nest: None, unsorted: Some(fake_reads) };
-
-        let _srsc2 = ReadSetNestingContainer { nest: Some(Box::new(srsc_reads1)), unsorted: None };
-    }
-
-    #[test]
-    fn simple_serialize_deserialize() {
-        let fake_reads = fake_reads(80, 8);
-        let srsc_reads = ReadSetNestingContainer { nest: None, unsorted: Some(fake_reads.clone()) };
-
-        let encoded: Vec<u8> = bincode::serialize(&Some(srsc_reads)).unwrap();
-
-        let decoded: Option<ReadSetNestingContainer> = bincode::deserialize(&encoded[..]).unwrap();
-
-        match decoded {
-            None => { panic!("Unable to unwrap the decoded string") }
-            Some(x) => {
-                assert_eq!(x.unsorted.unwrap().len(), fake_reads.len());
-            }
-        }
-    }
-
-    #[test]
-    fn enbedded_serialize_deserialize() {
-        let fake_reads = fake_reads(80, 8);
-        let fake_read_size = fake_reads.len();
-        let srsc_reads = ReadSetNestingContainer { nest: None, unsorted: Some(fake_reads.clone()) };
-
-        // now another layer!
-        let srsc_reads2 = ReadSetNestingContainer { nest: Some(Box::new(srsc_reads)), unsorted: None };
-
-        let encoded: Vec<u8> = bincode::serialize(&Some(srsc_reads2)).unwrap();
-
-        let decoded: Option<ReadSetNestingContainer> = bincode::deserialize(&encoded[..]).unwrap();
-
-        match decoded {
-            None => { panic!("Unable to unwrap the decoded string") }
-            Some(x) => {
-                assert_eq!(x.nest.unwrap().unsorted.unwrap().len(), fake_read_size);
-            }
-        }
-    }
-
-    #[test]
-    fn to_disk_serialize_deserialize() {
-        let fake_reads = fake_reads(80, 8);
-        let fake_read_size = fake_reads.len();
-        let srsc_reads = ReadSetNestingContainer { nest: None, unsorted: Some(fake_reads.clone()) };
-
-        // now another layer!
-        let srsc_reads2 = ReadSetNestingContainer { nest: Some(Box::new(srsc_reads)), unsorted: None };
-
-        let filename = "test_data/test_rsnc.bin";
-        ReadSetNestingContainer::to(filename, srsc_reads2).expect("Unable to write read set container");
-
-        let decoded = ReadSetNestingContainer::from(&filename).unwrap();
-
-        assert_eq!(decoded.nest.unwrap().unsorted.unwrap().len(), fake_read_size);
-    }
 
     #[test]
     fn test_sorting_read_container() {
@@ -181,6 +128,5 @@ mod tests {
         let st1 = SortingReadSetContainer{ sorting_keys: vec![key1.clone(),key2.clone()], reads: reads.get(0).unwrap().clone() };
         let st2 = SortingReadSetContainer{ sorting_keys: vec![key1.clone(),key1.clone()], reads: reads.get(1).unwrap().clone() };
         assert!(st1 > st2);
-
     }
 }

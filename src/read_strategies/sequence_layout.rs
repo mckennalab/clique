@@ -45,7 +45,7 @@ impl SequenceLayoutDesign {
     }
 }
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-enum ReadPosition {
+pub enum ReadPosition {
     READ1,
     READ2,
     INDEX1,
@@ -62,9 +62,8 @@ pub struct UMIConfiguration {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SequenceLayoutDesign {
-    align: bool,
-    reads: Vec<ReadPosition>,
-    umi_configurations: BTreeMap<String,UMIConfiguration>,
+    pub reads: Vec<ReadPosition>,
+    pub umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 
 // *********************************************       *********************************************
@@ -79,7 +78,6 @@ mod tests {
     fn test_basic_yaml_readback() {
         let configuration =
             SequenceLayoutDesign::from_yaml(String::from("test_data/test_layout.yaml")).unwrap();
-        assert_eq!(configuration.align,true);
         assert!(configuration.umi_configurations.contains_key("pcr"));
         assert_eq!(configuration.umi_configurations.get("pcr").unwrap().symbol,'#');
     }

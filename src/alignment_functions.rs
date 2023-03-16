@@ -132,6 +132,9 @@ pub fn align_reads(use_capture_sequences: &bool,
     });
 }
 
+
+
+
 #[allow(dead_code)]
 pub fn align_two_strings(read1_seq: &Vec<FastaBase>, rev_comp_read2: &Vec<FastaBase>, scoring_function: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(

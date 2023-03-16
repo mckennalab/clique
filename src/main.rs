@@ -27,6 +27,7 @@ extern crate tempfile;
 extern crate serde_yaml;
 extern crate symspell;
 extern crate derive_more;
+extern crate shardio;
 
 
 use ::std::io::Result;
@@ -50,7 +51,6 @@ pub mod extractor;
 pub mod sequence_lookup;
 
 mod consensus {
-    //pub mod shard_sorting;
 }
 
 mod read_strategies {
@@ -65,7 +65,7 @@ mod alignment {
     pub mod fasta_bit_encoding;
 }
 mod umis {
-    //pub mod sequence_clustering;
+    pub mod sequence_clustering;
     pub mod bronkerbosch;
 }
 pub mod fasta_comparisons;
@@ -77,6 +77,7 @@ mod utils {
 
 mod alignment_functions;
 mod sorter;
+pub mod merger;
 
 mod reference {
     pub mod fasta_reference;
@@ -290,23 +291,23 @@ pub struct RunSpecifications {
     pub sorting_file_count: usize,
     pub sorting_threads: usize,
     pub processing_threads: usize,
-    pub tmp_location: Arc<TempDir>,
+    pub tmp_location: Arc<LivedTempDir>,
 }
 
 #[derive(Debug)]
-pub struct TempDir(Option<ActualTempDir>);
+pub struct LivedTempDir(Option<ActualTempDir>);
 
 // Forward inherent methods to the tempdir crate.
-impl TempDir {
-    pub fn new() -> Result<TempDir>
-    { ActualTempDir::new().map(Some).map(TempDir) }
+impl LivedTempDir {
+    pub fn new() -> Result<LivedTempDir>
+    { ActualTempDir::new().map(Some).map(LivedTempDir) }
 
     pub fn path(&self) -> &Path
     { self.0.as_ref().unwrap().path() }
 }
 
 /// Leaks the inner TempDir if we are unwinding.
-impl Drop for TempDir {
+impl Drop for LivedTempDir {
     fn drop(&mut self) {
         if ::std::thread::panicking() {
             ::std::mem::forget(self.0.take())

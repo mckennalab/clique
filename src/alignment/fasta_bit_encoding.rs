@@ -10,7 +10,7 @@ use serde::{Serialize,Deserialize};
 /// our core Fasta base - representing a single fasta character in a u8 data store. We actually pack
 /// everything into a u4 (if that was a type) but FastaString below handles the more dense packing and
 /// unpacking into u64 structures
-#[derive(Clone, Copy, From, Add, Debug,Serialize, Deserialize)]
+#[derive(Clone, Copy, From, Add,Serialize, Deserialize)]
 pub struct FastaBase(u8);
 
 impl FastaBase {
@@ -18,6 +18,15 @@ impl FastaBase {
         (*self ^ *other).0 == 0
     }
 }
+
+
+impl fmt::Debug for FastaBase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", encoding_to_u8(self) as char)
+    }
+}
+
+
 /// our comparisons are done using logical AND operations for speed (the layout of bits is really important).
 /// Each degenerate base should also be 'equal' to the correct 'ACGT' matches and be equal to other degenerate
 /// bases that share any overlap in their base patterns. E.g. R == K, but R != C (and N == everything)
