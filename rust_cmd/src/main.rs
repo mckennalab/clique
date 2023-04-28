@@ -19,7 +19,6 @@ extern crate pretty_env_logger;
 extern crate rand;
 extern crate rayon;
 extern crate rust_htslib;
-extern crate rust_spoa;
 extern crate seq_io;
 extern crate serde;
 extern crate suffix;

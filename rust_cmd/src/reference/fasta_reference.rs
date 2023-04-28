@@ -15,7 +15,6 @@ pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> V
 
     let mut references = Vec::new();
 
-
     for ref_entry in fasta_entries {
         let ref_copy = ref_entry.seq().clone().to_vec();
 

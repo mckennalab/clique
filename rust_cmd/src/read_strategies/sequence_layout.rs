@@ -78,7 +78,7 @@ mod tests {
     fn test_basic_yaml_readback() {
         let configuration =
             SequenceLayoutDesign::from_yaml(String::from("test_data/test_layout.yaml")).unwrap();
-        assert!(configuration.umi_configurations.contains_key("pcr"));
-        assert_eq!(configuration.umi_configurations.get("pcr").unwrap().symbol,'#');
+        assert!(configuration.umi_configurations.contains_key("cell_id"));
+        assert_eq!(configuration.umi_configurations.get("cell_id").unwrap().symbol,'*');
     }
 }

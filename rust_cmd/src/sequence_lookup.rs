@@ -49,18 +49,16 @@ mod tests {
     use crate::read_strategies::sequence_layout::UMISortType::KnownTag;
     use super::*;
     use std::time::Instant;
-    use time_test::time_test;
 
     #[test]
     fn test_100K_by_100K_lookup() {
-        time_test!();
-
         let configuration = UMIConfiguration{
             symbol: '#',
             file: Some(String::from("test_data/100K-february-2018.txt")),
             sort_type: KnownTag,
             length: 16,
         };
+
         println!("loading file...");
         let now = Instant::now();
         let kf = KnownLookup::from(&configuration);
@@ -114,7 +112,6 @@ mod tests {
 
     #[test]
     fn test_simple_exact_correction() {
-        time_test!();
 
         let configuration = UMIConfiguration{
             symbol: '#',
