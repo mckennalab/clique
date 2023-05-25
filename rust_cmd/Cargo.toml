@@ -21,7 +21,6 @@ ndarray = "0.15.0"
 suffix = {git = "https://github.com/aaronmck/suffix.git"}
 num-traits = "*"
 indicatif = "*"
-rust-spoa = "*"
 tempfile = "3"
 bgzip = "0.2.1"
 rust-htslib = { git = "https://github.com/rust-bio/rust-htslib" }
@@ -40,11 +39,11 @@ symspell = "0.4.3"
 derive_more = "*"
 shrinkwraprs = "*"
 nohash-hasher = "*"
+shardio = "*"
+astarpa = { git = "https://github.com/RagnarGrootKoerkamp/astar-pairwise-aligner", branch = "master" }
 
 [profile.release]
 lto = true
 debug = true
 
-[build]
-rustflags = "-C target-cpu=native"
 

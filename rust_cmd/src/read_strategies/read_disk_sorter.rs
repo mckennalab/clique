@@ -18,9 +18,7 @@ use crate::umis::sequence_clustering::StringGraph;
 
 
 /// a sortable read set container that sorts on a set of keys -- which we populate with
-/// extracted barcode sequences. These sorting sequences can have been corrected to a known list
-/// or corrected based on the set as a whole, but each iteration they're output and then read
-/// back sorted for the next layer of sorting, before finally being merged.
+/// extracted barcode sequences. These sorting sequences could have been corrected to a known list
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SortingReadSetContainer {
     sorting_keys: Vec<Vec<FastaBase>>,

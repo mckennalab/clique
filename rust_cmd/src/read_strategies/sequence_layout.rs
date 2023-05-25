@@ -66,12 +66,9 @@ pub struct SequenceLayoutDesign {
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 
-// *********************************************       *********************************************
-// ********************************************* TESTS *********************************************
-// *********************************************       *********************************************
-
 #[cfg(test)]
 mod tests {
+    use std::io;
     use super::*;
 
     #[test]
@@ -81,4 +78,15 @@ mod tests {
         assert!(configuration.umi_configurations.contains_key("cell_id"));
         assert_eq!(configuration.umi_configurations.get("cell_id").unwrap().symbol,'*');
     }
+
+
+    /*
+    TODO: figure out how to get SERDE to panic here or something else reasonable
+    #[test]
+    #[should_panic]
+    fn test_parsing_wrong_data() {
+        let configuration =
+            SequenceLayoutDesign::from_yaml(String::from("test_data/test_layout-busted.yaml"));
+    }
+    */
 }

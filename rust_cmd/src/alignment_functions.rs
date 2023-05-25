@@ -165,6 +165,7 @@ pub fn best_reference(read: &ReadSetContainer,
                       use_inversions: &bool,
                       max_reference_multiplier: usize,
                       min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>)> {
+
     match references.len() {
         0 => {
             warn!("Unable to align read {} as it has no candidate references",read.read_one.id());
