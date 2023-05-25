@@ -34,6 +34,7 @@ pub fn error_out_on_unknown_base(base: &u8) {
 
 pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: &Vec<u8>) -> Vec<u8> {
     assert!(aligned_version.len() >= native_version.len());
+    println!("{} {}", String::from_utf8(&aligned_version).unwrap(), String::from_utf8(&native_version).unwrap());
     let mut native_result = Vec::new();
     let mut native_index = 0;
     let mut aligned_index = 0;
