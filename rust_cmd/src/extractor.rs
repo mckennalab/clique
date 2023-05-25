@@ -44,7 +44,7 @@ pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: 
             native_result.push(b'-');
         }
         else {
-            native_result.push(aligned_version.get(native_index).unwrap().clone());
+            native_result.push(native_version.get(native_index).unwrap().clone());
             aligned_index += 1;
             native_index += 1;
 
