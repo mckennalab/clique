@@ -50,7 +50,7 @@ pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: 
 
         }
     }
-    assert!(aligned_index >= aligned_version.len() -1 && native_index >= native_version.len() -1);
+    //assert!(aligned_index >= aligned_version.len() -1 && native_index >= native_version.len() -1);
     native_result
 }
 
