@@ -34,8 +34,7 @@ pub fn error_out_on_unknown_base(base: &u8) {
 
 pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: &Vec<u8>) -> Vec<u8> {
     assert!(aligned_version.len() >= native_version.len());
-    println!("SADASD");
-    println!("---{}---{}---", String::from_utf8(aligned_version.clone()).unwrap(), String::from_utf8(native_version.clone()).unwrap());
+    //println!("---{}---{}---", String::from_utf8(aligned_version.clone()).unwrap(), String::from_utf8(native_version.clone()).unwrap());
     let mut native_result = Vec::new();
     let mut native_index = 0;
     let mut aligned_index = 0;
@@ -45,9 +44,10 @@ pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: 
             native_result.push(b'-');
         }
         else {
+            native_result.push(aligned_version.get(aligned_index).unwrap().clone());
             aligned_index += 1;
             native_index += 1;
-            native_result.push(aligned_version.get(aligned_index).unwrap().clone());
+
         }
     }
     assert!(aligned_index >= aligned_version.len() -1 && native_index >= native_version.len() -1);
