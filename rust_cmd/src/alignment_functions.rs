@@ -9,7 +9,7 @@ use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
 use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
-use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR};
+use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR, stretch_sequence_to_alignment};
 use crate::linked_alignment::{orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
@@ -100,14 +100,14 @@ pub fn align_reads(use_capture_sequences: &bool,
                 None => {
                     warn!("Unable to find alignment for read {}",xx.read_one.id());
                 }
-                Some((results, ref_name)) => {
+                Some((results, orig_ref_seq, ref_name)) => {
                     match results {
                         None => { warn!("Unable to find alignment for read {}",xx.read_one.id()); }
                         Some(aln) => {
                             let output = Arc::clone(&output);
                             let mut read_count = read_count.lock().unwrap();
                             *read_count += 1;
-                            if *read_count % 10000 == 0 {
+                            if *read_count % 100000 == 0 {
                                 let duration = start.elapsed();
                                 println!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count, duration);
                             }
@@ -117,6 +117,7 @@ pub fn align_reads(use_capture_sequences: &bool,
                             output_alignment(&fasta_vec_to_vec_u8(&aln.alignment_string2),
                                              name,
                                              &fasta_vec_to_vec_u8(&aln.alignment_string1),
+                                             &orig_ref_seq,
                                              &ref_name,
                                              use_capture_sequences,
                                              only_output_captured_ref,
@@ -164,7 +165,7 @@ pub fn best_reference(read: &ReadSetContainer,
                       my_score: &InversionScoring,
                       use_inversions: &bool,
                       max_reference_multiplier: usize,
-                      min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>)> {
+                      min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
 
     match references.len() {
         0 => {
@@ -173,24 +174,24 @@ pub fn best_reference(read: &ReadSetContainer,
         }
         1 => {
             let aln = alignment(read, &references[0], alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length);
-            Some((aln, references[0].name.clone()))
+            Some((aln, references[0].sequence_u8.clone(), references[0].name.clone()))
         }
         x if x > 1 => {
             let ranked_alignments = references.iter().map(|reference| {
                 match alignment(read, reference, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length) {
                     None => None,
-                    Some(aln) => Some((aln, reference.name.clone())),
+                    Some(aln) => Some((aln, reference.sequence_u8.clone(), reference.name.clone())),
                 }
             }).filter(|x| x.is_some()).map(|c| c.unwrap());
 
-            let ranked_alignments = ranked_alignments.into_iter().max_by(|al, al2|
-                matching_read_bases_prop(&al.0.alignment_string2, &al.0.alignment_string1).
-                    partial_cmp(&matching_read_bases_prop(&al2.0.alignment_string2, &al2.0.alignment_string1)).unwrap());
+            let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2|
+                matching_read_bases_prop(&al.1.0.alignment_string2, &al.1.0.alignment_string1).
+                    partial_cmp(&matching_read_bases_prop(&al2.1.0.alignment_string2, &al2.1.0.alignment_string1)).unwrap());
 
             match ranked_alignments.iter().next() {
                 None => { None }
                 Some((x, y)) => {
-                    Some((Some(x.clone()), y.clone()))
+                    Some((Some(y.0.clone()), y.1.clone(), y.2.clone()))
                 }
             }
         }
@@ -265,6 +266,7 @@ pub fn tags_to_output(tags: &BTreeMap<u8, String>) -> String {
 pub fn output_alignment(aligned_read: &Vec<u8>,
                         aligned_name: &String,
                         aligned_ref: &Vec<u8>,
+                        original_ref: &Vec<u8>,
                         reference_name: &Vec<u8>,
                         use_capture_sequences: &bool,
                         only_output_captured_ref: &bool,
@@ -276,7 +278,9 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
 
     let (ref_seq, read_seq, read_tags) =
         if *use_capture_sequences {
-            let ets = extract_tagged_sequences(aligned_read, aligned_ref);
+
+            let full_ref = stretch_sequence_to_alignment(aligned_ref,original_ref);
+            let ets = extract_tagged_sequences(aligned_read, &full_ref);
             let read_tags = tags_to_output(&ets);
             if *only_output_captured_ref {
                 (ets.get(&REFERENCE_CHAR).unwrap().clone(), ets.get(&READ_CHAR).unwrap().clone(), read_tags)
