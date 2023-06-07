@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str;
 use crate::itertools::Itertools;
 use crate::rayon::iter::ParallelBridge;
@@ -21,8 +21,8 @@ use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, fasta_vec_to_vec_u8, Fas
 pub fn align_reads(use_capture_sequences: &bool,
                    only_output_captured_ref: &bool,
                    to_fake_fastq: &bool,
-                   reference: &String,
-                   output: &String,
+                   rm: &ReferenceManager,
+                   output: &Path,
                    max_reference_multiplier: &usize,
                    min_read_length: &usize,
                    read1: &String,
@@ -32,8 +32,6 @@ pub fn align_reads(use_capture_sequences: &bool,
                    threads: &usize,
                    inversions: &bool) {
 
-    //let reference = reference_file_to_structs(reference, 20);
-    let rm = ReferenceManager::from(&reference, 8);
 
     let output_file = File::create(&output).unwrap();
 
@@ -261,6 +259,10 @@ pub fn tags_to_output(tags: &BTreeMap<u8, String>) -> String {
     tags.iter().filter(|(k, _v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", String::from_utf8(vec![*k]).unwrap(), v)).join(";")
 }
 
+
+
+
+
 /// Handle output of the alignment results based on the requested output formats
 ///
 pub fn output_alignment(aligned_read: &Vec<u8>,
@@ -297,7 +299,7 @@ pub fn output_alignment(aligned_read: &Vec<u8>,
         if replaced.len() >= *min_read_length {
             let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
             write!(output, "@{}_{}_ref_{}\n{}\n+\n{}\n",
-                   str::replace(aligned_name, " ", "_"),
+                   str::replace(aligned_name, " ", "."),
                    read_tags,
                    String::from_utf8(reference_name.clone()).unwrap(),
                    replaced,

@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::{Arc};
 
-use tempfile::TempDir as ActualTempDir;
+use tempfile::{TempDir as ActualTempDir};
 
 use alignment::alignment_matrix::*;
 use alignment::scoring_functions::*;
@@ -44,13 +44,15 @@ use nanoid::nanoid;
 
 use pretty_trace::*;
 use crate::alignment_functions::align_reads;
+use crate::collapse::collapse;
+use crate::read_strategies::sequence_layout::SequenceLayoutDesign;
+use crate::reference::fasta_reference::ReferenceManager;
 
 mod linked_alignment;
 pub mod extractor;
 pub mod sequence_lookup;
 
-mod consensus {
-}
+mod consensus {}
 
 mod read_strategies {
     pub mod read_set;
@@ -63,10 +65,12 @@ mod alignment {
     pub mod scoring_functions;
     pub mod fasta_bit_encoding;
 }
+
 mod umis {
     pub mod sequence_clustering;
     pub mod bronkerbosch;
 }
+
 pub mod fasta_comparisons;
 
 mod utils {
@@ -77,6 +81,7 @@ mod utils {
 mod alignment_functions;
 mod sorter;
 pub mod merger;
+mod collapse;
 
 mod reference {
     pub mod fasta_reference;
@@ -87,6 +92,9 @@ mod reference {
 enum Cmd {
     Collapse {
         #[clap(long)]
+        reference: String,
+
+        #[clap(long)]
         /// Name of the package to search
         package_name: String,
 
@@ -96,14 +104,8 @@ enum Cmd {
         #[clap(long)]
         output: String,
 
-        #[clap(long)]
-        read_template: String,
-
         #[clap(long, default_value = "NONE")]
-        known_list: String,
-
-        #[clap(long, default_value = "250")]
-        max_bins: usize,
+        read_structure: String,
 
         #[clap(long, default_value = "1")]
         sorting_threads: usize,
@@ -123,11 +125,6 @@ enum Cmd {
         #[clap(long, default_value = "NONE")]
         index2: String,
 
-        #[clap(long, default_value_t = 1)]
-        threads: usize,
-
-        #[clap(long, default_value = "1")]
-        processing_threads: usize,
     },
     Align {
         #[clap(long)]
@@ -169,7 +166,6 @@ enum Cmd {
         #[clap(long)]
         find_inversions: bool,
 
-
     },
 }
 
@@ -194,8 +190,34 @@ fn main() {
     trace!("{:?}", &parameters.cmd);
 
     match &parameters.cmd {
-        Cmd::Collapse { .. } => {
-            //merger(&parameters);
+        Cmd::Collapse {
+            reference,
+            package_name,
+            output_base,
+            output,
+            read_structure: yaml_configuration,
+            sorting_threads,
+            temp_dir,
+            read1,
+            read2,
+            index1,
+            index2,
+        } => {
+            let my_yaml = SequenceLayoutDesign::from_yaml(yaml_configuration).unwrap();
+
+            let tmp = InstanceLivedTempDir::new().unwrap();
+            collapse(reference,
+                     output,
+                     &tmp,
+                     &my_yaml,
+                     &2,
+                     &50,
+                     read1,
+                     read2,
+                     index1,
+                     index2,
+                     &1,
+                     &false);
         }
 
         Cmd::Align {
@@ -211,14 +233,20 @@ fn main() {
             index1,
             index2,
             threads,
-            find_inversions
-
+            find_inversions,
         } => {
+
+
+            // load up the reference files
+            let rm = ReferenceManager::from(&reference, 8);
+
+            let output_path = Path::new(&output);
+
             align_reads(use_capture_sequences,
                         only_output_captured_ref,
                         to_fake_fastq,
-                        reference,
-                        output,
+                        &rm,
+                        &output_path,
                         max_reference_multiplier,
                         min_read_length,
                         read1,
@@ -290,23 +318,28 @@ pub struct RunSpecifications {
     pub sorting_file_count: usize,
     pub sorting_threads: usize,
     pub processing_threads: usize,
-    pub tmp_location: Arc<LivedTempDir>,
+    pub tmp_location: Arc<InstanceLivedTempDir>,
 }
 
 #[derive(Debug)]
-pub struct LivedTempDir(Option<ActualTempDir>);
+pub struct InstanceLivedTempDir(Option<ActualTempDir>);
 
 // Forward inherent methods to the tempdir crate.
-impl LivedTempDir {
-    pub fn new() -> Result<LivedTempDir>
-    { ActualTempDir::new().map(Some).map(LivedTempDir) }
+impl InstanceLivedTempDir {
+    pub fn new() -> Result<InstanceLivedTempDir>
+    { ActualTempDir::new().map(Some).map(InstanceLivedTempDir) }
+
+    pub fn temp_file(&self, name: &str) -> PathBuf
+    {
+        self.0.as_ref().unwrap().path().join(name.clone()).clone()
+    }
 
     pub fn path(&self) -> &Path
     { self.0.as_ref().unwrap().path() }
 }
 
 /// Leaks the inner TempDir if we are unwinding.
-impl Drop for LivedTempDir {
+impl Drop for InstanceLivedTempDir {
     fn drop(&mut self) {
         if ::std::thread::panicking() {
             ::std::mem::forget(self.0.take())

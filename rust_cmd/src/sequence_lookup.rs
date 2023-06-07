@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use symspell::{AsciiStringStrategy, SymSpell, Verbosity};
 use crate::read_strategies::sequence_layout::UMIConfiguration;
+use std::convert::TryFrom;
 
 pub struct KnownLookup {
     corrector: SymSpell<AsciiStringStrategy>,
@@ -27,8 +28,8 @@ impl KnownLookup {
         KnownLookup{ corrector: symspell}
     }
 
-    pub fn correct(&self, sequence: &String, max_distance: &i64, if_multiple_take_first: bool) -> Option<String> {
-        let result = self.corrector.lookup(sequence, Verbosity::Top, *max_distance);
+    pub fn correct(&self, sequence: &String, max_distance: &usize, if_multiple_take_first: bool) -> Option<String> {
+        let result = self.corrector.lookup(sequence, Verbosity::Top, i64::try_from(*max_distance).unwrap());
         match result.len() {
             0 => None,
             1 => {Some(result[0].term.clone())}
@@ -51,12 +52,14 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn test_100K_by_100K_lookup() {
+    fn test_100k_by_100k_lookup() {
         let configuration = UMIConfiguration{
             symbol: '#',
             file: Some(String::from("test_data/100K-february-2018.txt")),
             sort_type: KnownTag,
             length: 16,
+            order: 0,
+            max_distance: 2,
         };
 
         println!("loading file...");
@@ -118,6 +121,8 @@ mod tests {
             file: Some(String::from("test_data/just_sequences_500.txt")),
             sort_type: KnownTag,
             length: 16,
+            order: 0,
+            max_distance: 2,
         };
 
         let kf = KnownLookup::from(&configuration);

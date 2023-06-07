@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
 use serde::{Serialize,Deserialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum UMISortType {
@@ -30,9 +30,9 @@ impl SequenceLayoutDesign {
     ///
     /// an example of this format is the *test_layout.yaml* file in the test_data directory
     ///
-    pub fn from_yaml(yaml_file: String) -> Option<SequenceLayoutDesign> {
+    pub fn from_yaml(yaml_file: &String) -> Option<SequenceLayoutDesign> {
 
-        let mut file = File::open(&yaml_file).expect(&format!("Unable to open YAML configuration file: {}",&yaml_file));
+        let mut file = File::open(yaml_file).expect(&format!("Unable to open YAML configuration file: {}",yaml_file));
 
         let mut yaml_contents = String::new();
 
@@ -41,8 +41,33 @@ impl SequenceLayoutDesign {
 
         let deserialized_map: SequenceLayoutDesign = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
+        // validate that UMIConfigurations have orders and that they're sequential
+        let mut ordering = deserialized_map.umi_configurations.iter().map(|(name,umi_config)| {
+            umi_config.order.clone()
+        }).collect::<Vec<usize>>();
+        ordering.sort_by(|a,b| a.cmp(b));
+
+        assert!(ordering.iter().enumerate().all(|(i,order)| {
+            i == *order
+        }), "The UMIConfigurations must have sequential order numbers, starting at 0");
+
         Some(deserialized_map)
     }
+
+    ///
+    /// Validate that the reference sequence contains all of the bases that we need to extract UMIs
+    ///
+    /// # Arguments
+    ///    * ref_bases - the reference sequence, as a vector of bases
+    ///
+    pub fn validate_reference_sequence(&self, ref_bases: &Vec<u8>) -> bool {
+        let existing_bases = ref_bases.iter().map(|base| (char::from(base.clone()), true)).collect::<BTreeMap<_, _>>();
+
+        self.umi_configurations.iter().map(|(name,umi_config)| {
+            existing_bases.contains_key(&umi_config.symbol)
+        }).all(|x| x == true)
+    }
+
 }
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum ReadPosition {
@@ -58,6 +83,8 @@ pub struct UMIConfiguration {
     pub file: Option<String>,
     pub sort_type: UMISortType,
     pub length: usize,
+    pub order: usize,
+    pub max_distance: usize,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -66,15 +93,43 @@ pub struct SequenceLayoutDesign {
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 
+impl SequenceLayoutDesign {
+    pub fn get_sorted_umi_configurations(&self) -> Vec<UMIConfiguration> {
+        let mut presorted = self.umi_configurations.iter().map(|(name,umi_config)| {
+            umi_config.clone()
+        }).collect::<Vec<UMIConfiguration>>();
+        presorted.sort_by(|a,b| a.order.cmp(&b.order));
+        presorted
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::io;
     use super::*;
 
     #[test]
     fn test_basic_yaml_readback() {
         let configuration =
-            SequenceLayoutDesign::from_yaml(String::from("test_data/test_layout.yaml")).unwrap();
+            SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout.yaml")).unwrap();
+        assert!(configuration.umi_configurations.contains_key("cell_id"));
+        assert_eq!(configuration.umi_configurations.get("cell_id").unwrap().symbol,'*');
+    }
+
+
+    #[test]
+    #[should_panic]
+    fn test_basic_yaml_readback_invalid_ordering() {
+        let configuration =
+            SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid.yaml")).unwrap();
+        assert!(configuration.umi_configurations.contains_key("cell_id"));
+        assert_eq!(configuration.umi_configurations.get("cell_id").unwrap().symbol,'*');
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_basic_yaml_readback_invalid_ordering2() {
+        let configuration =
+            SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid2.yaml")).unwrap();
         assert!(configuration.umi_configurations.contains_key("cell_id"));
         assert_eq!(configuration.umi_configurations.get("cell_id").unwrap().symbol,'*');
     }

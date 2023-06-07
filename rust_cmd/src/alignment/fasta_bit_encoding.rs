@@ -17,6 +17,22 @@ impl FastaBase {
     pub fn identity(&self, other: &FastaBase) -> bool {
         (*self ^ *other).0 == 0
     }
+
+    pub fn from_string(st: &String) -> Vec<FastaBase> {
+        st.chars().map(|c| FastaBase::from(c as u8)).collect()
+    }
+
+    pub fn from_vec_u8(st: &Vec<u8>) -> Vec<FastaBase> {
+        st.iter().map(|c| FastaBase::from(*c as u8)).collect()
+    }
+
+    pub fn to_string(bases: &Vec<FastaBase>) -> String {
+        String::from_utf8(FastaBase::to_vec_u8(bases)).unwrap()
+    }
+
+    pub fn to_vec_u8(bases: &Vec<FastaBase>) -> Vec<u8> {
+        bases.iter().map(|b| b.0).collect()
+    }
 }
 
 
@@ -407,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn test_u8_to_encoding_defaulted_to_N() {
+    fn test_u8_to_encoding_defaulted_to_n() {
         assert_eq!(FASTA_A, u8_to_encoding_defaulted_to_n(&b'A'));
         assert_eq!(FASTA_C, u8_to_encoding_defaulted_to_n(&b'C'));
         assert_eq!(FASTA_G, u8_to_encoding_defaulted_to_n(&b'G'));

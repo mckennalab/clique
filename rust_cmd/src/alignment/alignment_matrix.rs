@@ -870,7 +870,6 @@ pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &Vec<u8>, s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str;
     use crate::alignment::fasta_bit_encoding::{fasta_vec_to_string, reverse_complement, str_to_fasta_vec};
 
     #[test]

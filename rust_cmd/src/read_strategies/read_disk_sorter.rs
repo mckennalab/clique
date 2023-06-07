@@ -1,36 +1,34 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fs;
-use std::fs::File;
-use std::hash::BuildHasherDefault;
-use std::path::{Path, PathBuf};
-use flate2::bufread::GzEncoder;
-use nohash_hasher::NoHashHasher;
+use std::collections::{VecDeque};
+use std::path::{PathBuf};
 use crate::read_strategies::read_set::ReadSetContainer;
-use serde::ser::{SerializeSeq, Serializer};
 use serde::{Serialize, Deserialize};
-use tempfile::TempPath;
 use crate::alignment::fasta_bit_encoding::FastaBase;
 use shardio::*;
-use crate::LivedTempDir;
-use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration, UMISortType};
-use crate::umis::sequence_clustering::StringGraph;
-
+use crate::read_strategies::sequence_layout::{UMIConfiguration};
 
 /// a sortable read set container that sorts on a set of keys -- which we populate with
 /// extracted barcode sequences. These sorting sequences could have been corrected to a known list
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SortingReadSetContainer {
-    sorting_keys: Vec<Vec<FastaBase>>,
-    reads: ReadSetContainer,
+    pub ordered_sorting_keys: Vec<(char,Vec<FastaBase>)>,   // grow in order
+    pub ordered_unsorted_keys: VecDeque<(char, Vec<FastaBase>)>, // use the default behavior to push back, pop front
+    pub aligned_read: SortedAlignment,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SortedAlignment {
+    pub aligned_read: Vec<FastaBase>,
+    pub aligned_ref: Vec<FastaBase>,
+    pub ref_name: String,
 }
 
 impl Eq for SortingReadSetContainer {}
 
 impl PartialEq<Self> for SortingReadSetContainer {
     fn eq(&self, other: &Self) -> bool {
-        assert_eq!(self.sorting_keys.len(), other.sorting_keys.len());
-        self.sorting_keys.iter().zip(other.sorting_keys.iter()).map(|(a, b)| a == b).count() == 0
+        assert_eq!(self.ordered_sorting_keys.len(), other.ordered_sorting_keys.len());
+        self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()).map(|(a, b)| a.0 == b.0 && a.1 == b.1).count() == 0
     }
 }
 
@@ -44,11 +42,10 @@ impl PartialOrd for SortingReadSetContainer {
 /// you could argue alphabetical, but we simply sort on their underlying bit encoding
 impl Ord for SortingReadSetContainer {
     fn cmp(&self, other: &Self) -> Ordering {
-        for (a, b) in self.sorting_keys.iter().zip(other.sorting_keys.iter()) {
-            if a > b {
+        for (a, b) in self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()) {
+            if a.1 > b.1 {
                 return Ordering::Greater;
-            }
-            else if a < b {
+            } else if a.1 < b.1 {
                 return Ordering::Less;
             }
         }
@@ -57,44 +54,40 @@ impl Ord for SortingReadSetContainer {
 }
 
 pub struct StreamSorter {
-    shard_writer: ShardWriter<SortingReadSetContainer>,
-    sender: ShardSender<SortingReadSetContainer>,
-    number_of_splits: usize,
+    shard_reader: ShardReader<SortingReadSetContainer>,
     filename: PathBuf,
 }
 
 impl StreamSorter {
-    pub fn from(filedir: &LivedTempDir, splits: &usize) -> StreamSorter {
+    /*
+    pub fn from_fasta(filedir: &InstanceLivedTempDir,
+                reads: &dyn Iterator<Item=ReadSetContainer>,
+                sort_on: UMIConfiguration) -> StreamSorter {
+
         let filename = filedir.path().join("my-temporary-shard-sort.txt");
-        let mut writer: ShardWriter<SortingReadSetContainer> = ShardWriter::new(filename.clone(), 64, 256, 1<<16).unwrap();
+
+        let mut writer: ShardWriter<SortingReadSetContainer> =
+            ShardWriter::new(filename.clone(),
+                             32,
+                             256,
+                             1 << 16).unwrap();
 
         // Get a handle to send data to the file
         let mut sender = writer.get_sender();
 
-        StreamSorter{
+        // now transform individual reads into sorting read set containers by the UMIconfiguration we're sorting on
+
+        StreamSorter {
+            shard_reader: (),
             shard_writer: writer,
             sender,
-            number_of_splits: 0,
             filename: filename,
         }
-    }
-
-
-    pub fn preprocess_reads(reads: &dyn Iterator<Item=ReadSetContainer>, sld: &SequenceLayoutDesign) { // -> HashMap<char,StringGraph> {
-        let hash_characters = sld.umi_configurations.iter().map(|(k,v)| (v.symbol,v.sort_type == UMISortType::DegenerateTag)).filter(|(c,isd)| *isd).collect::<Vec<(char,bool)>>();
-        let mut hashedvalues: HashMap::<char, StringGraph, BuildHasherDefault<NoHashHasher<u8>>> = HashMap::with_capacity_and_hasher(hash_characters.len(), BuildHasherDefault::default());
-
-
-
-    }
+    }*/
 
 
     /// sort the iterator of ReadSetContainers by a specific capture sequence
-    pub fn sort_level(reads: &dyn Iterator<Item=ReadSetContainer>, sort_on: UMIConfiguration) {
-
-
-    }
-
+    pub fn sort_level(reads: &dyn Iterator<Item=ReadSetContainer>, sort_on: UMIConfiguration) {}
 }
 
 #[cfg(test)]
@@ -105,26 +98,32 @@ mod tests {
 
     #[test]
     fn test_sorting_read_container() {
-        let key1 = vec![FASTA_N,FASTA_A];
-        let key2 = vec![FASTA_N,FASTA_N];
+        let key1 = ('$',vec![FASTA_N, FASTA_A]);
+        let key2 = ('#',vec![FASTA_N, FASTA_N]);
 
         let reads = fake_reads(10, 1);
+        let read_seq = reads.get(0).unwrap().read_one.seq().iter().map(|x| FastaBase::from(x.clone())).collect::<Vec<FastaBase>>();
+        let fake_read = SortedAlignment{
+            aligned_read: read_seq.clone(),
+            aligned_ref:  read_seq.clone(),
+            ref_name: "".to_string(),
+        };
 
-        let st1 = SortingReadSetContainer{ sorting_keys: vec![key1.clone()], reads: reads.get(0).unwrap().clone() };
-        let st2 = SortingReadSetContainer{ sorting_keys: vec![key2.clone()], reads: reads.get(1).unwrap().clone() };
+        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone()], ordered_unsorted_keys: VecDeque::new(), aligned_read: fake_read.clone() };
+        let st2 = SortingReadSetContainer { ordered_sorting_keys: vec![key2.clone()], ordered_unsorted_keys: VecDeque::new(), aligned_read: fake_read.clone() };
         assert!(st1 < st2);
 
-        let st1 = SortingReadSetContainer{ sorting_keys: vec![key2.clone()], reads: reads.get(0).unwrap().clone() };
-        let st2 = SortingReadSetContainer{ sorting_keys: vec![key1.clone()], reads: reads.get(1).unwrap().clone() };
+        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key2.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
+        let st2 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
         assert!(st1 > st2);
 
-        let st1 = SortingReadSetContainer{ sorting_keys: vec![key1.clone()], reads: reads.get(0).unwrap().clone() };
-        let st2 = SortingReadSetContainer{ sorting_keys: vec![key1.clone()], reads: reads.get(1).unwrap().clone() };
-        println!("{} {}",st1> st2, st1 < st2);
+        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
+        let st2 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
+        println!("{} {}", st1 > st2, st1 < st2);
         assert!(!(st1 > st2) & !(st2 > st1));
 
-        let st1 = SortingReadSetContainer{ sorting_keys: vec![key1.clone(),key2.clone()], reads: reads.get(0).unwrap().clone() };
-        let st2 = SortingReadSetContainer{ sorting_keys: vec![key1.clone(),key1.clone()], reads: reads.get(1).unwrap().clone() };
+        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone(), key2.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
+        let st2 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone(), key1.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
         assert!(st1 > st2);
     }
 }

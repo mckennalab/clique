@@ -1,25 +1,17 @@
-use std::borrow::Borrow;
 use std::cmp::Ordering::Less;
-use std::collections::{BTreeSet, HashMap};
-use std::convert::TryInto;
+use std::collections::{HashMap};
 use std::fs::File;
 use std::io;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead};
 use std::path::Path;
-use std::str;
 
-use flate2::bufread::GzDecoder;
-use petgraph::algo::{kosaraju_scc, tarjan_scc};
-use petgraph::dot::Dot;
+use petgraph::algo::{tarjan_scc};
 use petgraph::prelude::*;
-use rand::{Rng, seq};
-use rand::distributions::Standard;
+use rand::{Rng};
 use rand::prelude::*;
 
 use indicatif::ProgressBar;
 
-use crate::fasta_comparisons::*;
-use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::umis::bronkerbosch::BronKerbosch;
 use crate::utils::base_utils::*;
 
@@ -53,7 +45,6 @@ impl Clone for BestHits {
     }
 }
 
-
 pub fn average_dist(strings: &Vec<Vec<u8>>,compare: fn(&Vec<u8>, &Vec<u8>) -> u64) -> f64 {
     let mut dist : f64 = 0.0;
     let mut count: usize = 0;
@@ -72,12 +63,11 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     let mut string_to_node: HashMap<Vec<u8>, u32> = HashMap::new();
     let mut node_to_string: HashMap<u32, Vec<u8>> = HashMap::new();
 
-
     let mut current_index = 0;
 
-    let bar2: Option<ProgressBar> = if (progress) {
+    let bar2: Option<ProgressBar> = if progress {
         trace!("Processing input list into nodes (progress bar may end early due to duplicate IDs)");
-        Some(ProgressBar::new((input_list.strings.len() as u64)))
+        Some(ProgressBar::new(input_list.strings.len() as u64))
     } else {
         None
     };
@@ -208,6 +198,8 @@ pub fn split_subgroup(string_graph: &mut StringGraph) -> Option<Vec<Vec<Vec<u8>>
         None
     }
 }
+
+
 
 
 pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>> {
