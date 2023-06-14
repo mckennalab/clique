@@ -15,8 +15,9 @@ use crate::reference::fasta_reference::SuffixTableLookup;
 /// * `search_string` - a u8 Vec representing the search string
 /// * `reference` - a u8 Vec representing the reference string
 /// * `seeds` - a suffix array lookup object
-pub fn orient_by_longest_segment(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &SuffixTableLookup) -> (bool, SharedSegments, SharedSegments) {
-    let fwd_score_mp = find_greedy_non_overlapping_segments(search_string, reference, seeds);
+pub fn orient_by_longest_segment(search_string: &Vec<FastaBase>, reference: &Vec<u8>, seeds: &SuffixTableLookup) -> (bool, SharedSegments, SharedSegments) {
+    let search_string = FastaBase::to_vec_u8(search_string);
+    let fwd_score_mp = find_greedy_non_overlapping_segments(&search_string, reference, seeds);
     let fwd_score: usize = fwd_score_mp.alignment_segments.clone().into_iter().map(|p| p.length).sum();
 
     let rev_score_mp =  find_greedy_non_overlapping_segments(&bio::alphabets::dna::revcomp(search_string), reference, seeds);

@@ -41,6 +41,8 @@ shrinkwraprs = "*"
 nohash-hasher = "*"
 shardio = "*"
 astarpa = { git = "https://github.com/RagnarGrootKoerkamp/astar-pairwise-aligner", branch = "master" }
+anyhow = "1"
+rust-spoa = "*"
 
 
 rustc-hash = { version = "1.1", default-features = false }

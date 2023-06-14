@@ -27,6 +27,7 @@ extern crate serde_yaml;
 extern crate symspell;
 extern crate derive_more;
 extern crate shardio;
+extern crate anyhow;
 
 
 use ::std::io::Result;
@@ -52,8 +53,6 @@ mod linked_alignment;
 pub mod extractor;
 pub mod sequence_lookup;
 
-mod consensus {}
-
 mod read_strategies {
     pub mod read_set;
     pub mod sequence_layout;
@@ -70,7 +69,9 @@ mod umis {
     pub mod sequence_clustering;
     pub mod bronkerbosch;
 }
-
+mod consensus {
+    pub mod consensus_builders;
+}
 pub mod fasta_comparisons;
 
 mod utils {
@@ -95,16 +96,9 @@ enum Cmd {
         reference: String,
 
         #[clap(long)]
-        /// Name of the package to search
-        package_name: String,
-
-        #[clap(long)]
-        output_base: String,
-
-        #[clap(long)]
         output: String,
 
-        #[clap(long, default_value = "NONE")]
+        #[clap(long)]
         read_structure: String,
 
         #[clap(long, default_value = "1")]
@@ -129,6 +123,9 @@ enum Cmd {
     Align {
         #[clap(long)]
         use_capture_sequences: bool,
+
+        #[clap(long)]
+        read_structure: String,
 
         #[clap(long)]
         only_output_captured_ref: bool,
@@ -192,10 +189,8 @@ fn main() {
     match &parameters.cmd {
         Cmd::Collapse {
             reference,
-            package_name,
-            output_base,
             output,
-            read_structure: yaml_configuration,
+            read_structure,
             sorting_threads,
             temp_dir,
             read1,
@@ -203,12 +198,12 @@ fn main() {
             index1,
             index2,
         } => {
-            let my_yaml = SequenceLayoutDesign::from_yaml(yaml_configuration).unwrap();
+            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
 
-            let tmp = InstanceLivedTempDir::new().unwrap();
+            let mut tmp = InstanceLivedTempDir::new().unwrap();
             collapse(reference,
                      output,
-                     &tmp,
+                     &mut tmp,
                      &my_yaml,
                      &2,
                      &50,
@@ -222,6 +217,7 @@ fn main() {
 
         Cmd::Align {
             use_capture_sequences,
+            read_structure,
             only_output_captured_ref,
             to_fake_fastq,
             reference,
@@ -236,6 +232,7 @@ fn main() {
             find_inversions,
         } => {
 
+            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
 
             // load up the reference files
             let rm = ReferenceManager::from(&reference, 8);
@@ -243,6 +240,7 @@ fn main() {
             let output_path = Path::new(&output);
 
             align_reads(use_capture_sequences,
+                        &my_yaml,
                         only_output_captured_ref,
                         to_fake_fastq,
                         &rm,
@@ -320,6 +318,39 @@ pub struct RunSpecifications {
     pub processing_threads: usize,
     pub tmp_location: Arc<InstanceLivedTempDir>,
 }
+/*
+#[derive(Debug)]
+pub struct InstanceLivedTempDir{
+    temp_dir: Option<ActualTempDir>,
+    next_file_id: usize,
+}
+
+
+
+//Forward inherent methods to the tempdir crate.
+impl InstanceLivedTempDir {
+    pub fn new() -> Result<InstanceLivedTempDir>
+    { ActualTempDir::new().map(Some).map(InstanceLivedTempDir) }
+
+    pub fn temp_file(&mut self, name: &str) -> PathBuf
+    {
+        self.next_file_id += 1; // indexing will then start on one
+        self.temp_dir.as_ref().unwrap().path().join(self.next_file_id.to_string()).join(name.clone()).clone()
+    }
+
+    pub fn path(&self) -> &Path
+    { self.temp_dir.as_ref().unwrap().path() }
+
+}
+
+/// Leaks the inner TempDir if we are unwinding.
+impl Drop for InstanceLivedTempDir {
+    fn drop(&mut self) {
+        if ::std::thread::panicking() {
+            ::std::mem::forget(self.temp_dir.take())
+        }
+    }
+}*/
 
 #[derive(Debug)]
 pub struct InstanceLivedTempDir(Option<ActualTempDir>);
@@ -329,7 +360,7 @@ impl InstanceLivedTempDir {
     pub fn new() -> Result<InstanceLivedTempDir>
     { ActualTempDir::new().map(Some).map(InstanceLivedTempDir) }
 
-    pub fn temp_file(&self, name: &str) -> PathBuf
+    pub fn temp_file(&mut self, name: &str) -> PathBuf
     {
         self.0.as_ref().unwrap().path().join(name.clone()).clone()
     }
@@ -346,6 +377,7 @@ impl Drop for InstanceLivedTempDir {
         }
     }
 }
+
 
 impl RunSpecifications {
     pub fn create_temp_file(&self) -> PathBuf {

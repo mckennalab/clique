@@ -4,7 +4,7 @@ use std::io::Read;
 use serde::{Serialize,Deserialize};
 use std::collections::{BTreeMap};
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum UMISortType {
     /// This enum represents how we should extract molecular identifiers and known sequences from the
     /// stream of reads. It specifies the location (as aligned to the reference), the maximum distance
@@ -12,6 +12,15 @@ pub enum UMISortType {
     KnownTag,
     DegenerateTag,
 }
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub enum MergeStrategy {
+    /// This enum represents how we should extract molecular identifiers and known sequences from the
+    /// stream of reads. It specifies the location (as aligned to the reference), the maximum distance
+    /// you allow before not considering two sequences to be from the same source.
+    Align,
+    Concatenate,
+}
+
 
 impl SequenceLayoutDesign {
     /// Load up a YAML document describing the layout of specific sequences within the reads. This configuration is specific
@@ -19,7 +28,7 @@ impl SequenceLayoutDesign {
     ///
     /// # Supported base tags
     ///
-    /// *align*: (optional) * - contains one optional member, which can be _true_ or _false_
+    /// *merge*: (optional) * - contains one optional member, which can be _align_ or _concatenate_
     /// *reads* - contains the read positions that are required for this configuration. The values, on individual lines, are _READ1, _READ2_, _INDEX1_, _INDEX2_
     /// *umi_configurations* - contains one section per UMI, each with:
     /// - *name* - the base of each UMI section
@@ -42,7 +51,7 @@ impl SequenceLayoutDesign {
         let deserialized_map: SequenceLayoutDesign = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
         // validate that UMIConfigurations have orders and that they're sequential
-        let mut ordering = deserialized_map.umi_configurations.iter().map(|(name,umi_config)| {
+        let mut ordering = deserialized_map.umi_configurations.iter().map(|(_name,umi_config)| {
             umi_config.order.clone()
         }).collect::<Vec<usize>>();
         ordering.sort_by(|a,b| a.cmp(b));
@@ -63,18 +72,23 @@ impl SequenceLayoutDesign {
     pub fn validate_reference_sequence(&self, ref_bases: &Vec<u8>) -> bool {
         let existing_bases = ref_bases.iter().map(|base| (char::from(base.clone()), true)).collect::<BTreeMap<_, _>>();
 
-        self.umi_configurations.iter().map(|(name,umi_config)| {
+        self.umi_configurations.iter().map(|(_name,umi_config)| {
             existing_bases.contains_key(&umi_config.symbol)
         }).all(|x| x == true)
     }
 
 }
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum ReadPosition {
     READ1,
     READ2,
     INDEX1,
     INDEX2
+}
+impl ReadPosition {
+    pub fn position(&self) -> usize {
+        self.clone() as usize
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -87,15 +101,16 @@ pub struct UMIConfiguration {
     pub max_distance: usize,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct SequenceLayoutDesign {
+    pub merge: Option<MergeStrategy>,
     pub reads: Vec<ReadPosition>,
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 
 impl SequenceLayoutDesign {
     pub fn get_sorted_umi_configurations(&self) -> Vec<UMIConfiguration> {
-        let mut presorted = self.umi_configurations.iter().map(|(name,umi_config)| {
+        let mut presorted = self.umi_configurations.iter().map(|(_name,umi_config)| {
             umi_config.clone()
         }).collect::<Vec<UMIConfiguration>>();
         presorted.sort_by(|a,b| a.order.cmp(&b.order));

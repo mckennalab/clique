@@ -11,14 +11,17 @@ use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTa
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR, stretch_sequence_to_alignment};
 use crate::linked_alignment::{orient_by_longest_segment};
-use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
+use crate::read_strategies::read_set::{ReadIterator};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
 use std::time::{Instant};
 use ndarray::Ix3;
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, fasta_vec_to_vec_u8, FastaBase, reverse_complement, str_to_fasta_vec};
+use crate::merger::MergedReadSequence;
+use crate::read_strategies::sequence_layout::SequenceLayoutDesign;
 
 
 pub fn align_reads(use_capture_sequences: &bool,
+                   read_structure: &SequenceLayoutDesign,
                    only_output_captured_ref: &bool,
                    to_fake_fastq: &bool,
                    rm: &ReferenceManager,
@@ -39,6 +42,8 @@ pub fn align_reads(use_capture_sequences: &bool,
                                           Some(PathBuf::from(&read2)),
                                           Some(PathBuf::from(&index1)),
                                           Some(PathBuf::from(&index2)));
+
+    let read_iterator = MergedReadSequence::new(read_iterator, read_structure);
 
     let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
 
@@ -83,9 +88,9 @@ pub fn align_reads(use_capture_sequences: &bool,
                 STORE_CLONES.lock().unwrap().push(arc_mtx.clone());
             }
 
-            let name = &String::from(xx.read_one.id()).to_string();
+            let name = &String::from_utf8(xx.name).unwrap();
 
-            let aligned = best_reference(&xx,
+            let aligned = best_reference(&xx.seq,
                                          &rm.references,
                                          &mut local_alignment.as_mut().unwrap(),
                                          &my_aff_score,
@@ -96,11 +101,11 @@ pub fn align_reads(use_capture_sequences: &bool,
 
             match aligned {
                 None => {
-                    warn!("Unable to find alignment for read {}",xx.read_one.id());
+                    warn!("Unable to find alignment for read {}",name);
                 }
                 Some((results, orig_ref_seq, ref_name)) => {
                     match results {
-                        None => { warn!("Unable to find alignment for read {}",xx.read_one.id()); }
+                        None => { warn!("Unable to find alignment for read {}",name); }
                         Some(aln) => {
                             let output = Arc::clone(&output);
                             let mut read_count = read_count.lock().unwrap();
@@ -156,7 +161,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>, rev_comp_read2: &Vec<FastaB
         None)
 }
 
-pub fn best_reference(read: &ReadSetContainer,
+pub fn best_reference(read: &Vec<FastaBase>,
                       references: &Vec<Reference>,
                       alignment_mat: &mut Alignment<Ix3>,
                       my_aff_score: &AffineScoring,
@@ -167,7 +172,7 @@ pub fn best_reference(read: &ReadSetContainer,
 
     match references.len() {
         0 => {
-            warn!("Unable to align read {} as it has no candidate references",read.read_one.id());
+            warn!("Unable to align read {} as it has no candidate references",FastaBase::to_string(read));
             None
         }
         1 => {
@@ -198,7 +203,7 @@ pub fn best_reference(read: &ReadSetContainer,
 }
 
 // TODO bring back inversions
-pub fn alignment(x: &ReadSetContainer,
+pub fn alignment(x: &Vec<FastaBase>,
                  reference: &Reference,
                  alignment_mat: &mut Alignment<Ix3>,
                  my_aff_score: &AffineScoring,
@@ -208,11 +213,11 @@ pub fn alignment(x: &ReadSetContainer,
                  min_read_length: usize) -> Option<AlignmentResult> {
 
     // find the best reference(s)
-    let orientation = orient_by_longest_segment(&x.read_one.seq().to_vec(), &reference.sequence_u8, &reference.suffix_table).0;
+    let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
     let forward_oriented_seq = if orientation {
-        str_to_fasta_vec(String::from_utf8(x.read_one.seq().to_vec()).unwrap().as_str())
+        str_to_fasta_vec(FastaBase::to_string(x).as_str())
     } else {
-        reverse_complement(&str_to_fasta_vec(String::from_utf8(x.read_one.seq().to_vec()).unwrap().as_str()))
+        reverse_complement(&str_to_fasta_vec(FastaBase::to_string(x).as_str()))
     };
 
     if forward_oriented_seq.len() > reference.sequence.len() * max_reference_multiplier || forward_oriented_seq.len() < min_read_length {

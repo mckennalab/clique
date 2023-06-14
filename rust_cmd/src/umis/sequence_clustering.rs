@@ -1,9 +1,5 @@
 use std::cmp::Ordering::Less;
 use std::collections::{HashMap};
-use std::fs::File;
-use std::io;
-use std::io::{BufRead};
-use std::path::Path;
 
 use petgraph::algo::{tarjan_scc};
 use petgraph::prelude::*;
@@ -13,7 +9,6 @@ use rand::prelude::*;
 use indicatif::ProgressBar;
 
 use crate::umis::bronkerbosch::BronKerbosch;
-use crate::utils::base_utils::*;
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,

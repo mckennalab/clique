@@ -102,26 +102,6 @@ impl ReadIterator
     }
 
 }
-/// A helper function to manage unwrapping reads, which has a lot of layers
-pub fn unwrap_reader(read: &mut Option<Records<BufReader<Reader>>>) -> Option<Record> {
-    match read
-    {
-        Some(ref mut read_pointer) => {
-            let next = read_pointer.next();
-            match next {
-                Some(rp) => {
-                    match rp {
-                        Ok(x) => Some(x),
-                        Err(_) => None,
-                    }
-                }
-                None => None,
-            }
-        }
-        None => None,
-    }
-}
-
 impl Iterator for ReadIterator {
     type Item = ReadSetContainer;
 
@@ -147,4 +127,24 @@ impl Iterator for ReadIterator {
         }
     }
 
+}
+
+/// A helper function to manage unwrapping reads, which has a lot of layers
+pub fn unwrap_reader(read: &mut Option<Records<BufReader<Reader>>>) -> Option<Record> {
+    match read
+    {
+        Some(ref mut read_pointer) => {
+            let next = read_pointer.next();
+            match next {
+                Some(rp) => {
+                    match rp {
+                        Ok(x) => Some(x),
+                        Err(_) => None,
+                    }
+                }
+                None => None,
+            }
+        }
+        None => None,
+    }
 }

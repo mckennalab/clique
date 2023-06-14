@@ -3,8 +3,6 @@ use std::collections::HashSet;
 use petgraph::graphmap::{GraphMap, NodeTrait};
 use petgraph::Undirected;
 
-use petgraph::graphmap::UnGraphMap;
-
 /// Implementation according to "Algorithm 457: Finding All Cliques of an Undirected Graph"
 /// by Bronand Kerbosch; http://doi.acm.org/10.1145/362342.362367
 ///

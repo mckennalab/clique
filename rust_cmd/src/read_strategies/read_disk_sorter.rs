@@ -27,7 +27,7 @@ impl Eq for SortingReadSetContainer {}
 
 impl PartialEq<Self> for SortingReadSetContainer {
     fn eq(&self, other: &Self) -> bool {
-        assert_eq!(self.ordered_sorting_keys.len(), other.ordered_sorting_keys.len());
+        assert_eq!(self.ordered_sorting_keys.len(), other.ordered_sorting_keys.len(), "SortingReadSetContainer: mismatched number of sorting keys from {} and {}",self.ordered_sorting_keys.len(), other.ordered_sorting_keys.len());
         self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()).map(|(a, b)| a.0 == b.0 && a.1 == b.1).count() == 0
     }
 }

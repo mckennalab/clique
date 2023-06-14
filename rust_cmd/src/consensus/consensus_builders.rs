@@ -13,6 +13,7 @@ use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator};
 use rayon::prelude::*;
 use rust_htslib::bgzf::Writer;
 use rust_spoa::poa_consensus;
+use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 
 use crate::read_strategies::sequence_file_containers::*;
 use crate::read_strategies::sequence_layout::*;
@@ -21,7 +22,7 @@ use crate::sorters::known_list::KnownListBinSplit;
 use crate::umis::sequence_clustering::*;
 
 pub struct ConsensusCandidate {
-    pub reads: Vec<ReadSetContainer>,
+    pub reads: Vec<SortingReadSetContainer>,
     pub global_umi: Vec<u8>,
 }
 
