@@ -1,25 +1,14 @@
 extern crate rust_spoa;
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-
-use bio::io::fastq::Record;
-use flate2::{Compression, GzBuilder};
-use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator};
+use std::collections::VecDeque;
 use rayon::prelude::*;
-use rust_htslib::bgzf::Writer;
 use rust_spoa::poa_consensus;
-use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
+use shardio::{Range, ShardReader, ShardWriter};
+use crate::alignment::fasta_bit_encoding::FastaBase;
+use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
+use std::io::Write;
 
-use crate::read_strategies::sequence_file_containers::*;
-use crate::read_strategies::sequence_layout::*;
-use crate::RunSpecifications;
-use crate::sorters::known_list::KnownListBinSplit;
-use crate::umis::sequence_clustering::*;
 
 pub struct ConsensusCandidate {
     pub reads: Vec<SortingReadSetContainer>,
@@ -40,29 +29,58 @@ pub fn null_cap(strs: &[Vec<u8>]) -> Vec<Vec<u8>> {
     }).collect::<Vec<Vec<u8>>>()
 }
 
-pub fn threaded_write_consensus_reads(read_iterators: Vec<SuperClusterOnDiskIterator>, output_file_base: &String, pattern: &ReadPattern, run_spec: &RunSpecifications) {
-    let mut output_writer = OutputReadSetWriter::from_pattern(&PathBuf::from(output_file_base), pattern);
+pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>, output_file: &String, threads: usize) {
+    //let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&output_file, 32,
+    //                                                                                256,
+    //                                                                                1 << 16).unwrap();
+    //let mut sender = sharded_output.get_sender();
+    let mut output_fl = std::fs::File::create(output_file).expect("Unable to create file");
 
-    let output = Arc::new(Mutex::new(output_writer));
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(run_spec.processing_threads).build().unwrap();
-    let pooled_install = pool.install(|| {
-        //let iters = read_iterators.into_iter();
-        for read_iterator in read_iterators {
-            read_iterator.into_iter().par_bridge().for_each(|xx| { //.par_bridge()
-                let output = Arc::clone(&output);
-                output_poa_consensus(Box::new(xx.reads), output);
-            });
+    let mut last_read: Option<SortingReadSetContainer> = None;
+    let mut buffered_reads = VecDeque::new();
+
+
+    reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, x)| {
+        println!("processing read {}", i);
+        let x = x.unwrap();
+        if last_read.is_some() && &x == last_read.as_ref().unwrap() {
+            buffered_reads.push_back(x);
+        } else {
+            if buffered_reads.len() > 0 {
+                let mut consensus_reads = create_poa_consensus(&buffered_reads);
+                write!(output_fl,"{}\n{}\n",FastaBase::to_string(&consensus_reads.aligned_read.aligned_ref),FastaBase::to_string(&consensus_reads.aligned_read.aligned_read)).unwrap();
+                buffered_reads.clear();
+            }
+            buffered_reads.push_back(x.clone());
+            last_read = Some(x)
         }
     });
+    output_fl.flush();
+
+
+//                output_poa_consensus(Box::new(xx.reads), output);
 }
 
-pub fn create_poa_consensus(sequences: &Vec<Vec<u8>>) -> Vec<u8> {
-    let max_length_vec = &sequences.iter().map(|n| n.len()).collect::<Vec<usize>>();
-    let max_length = max_length_vec.iter().max().unwrap();
-    let consensus = poa_consensus(&sequences, *max_length, 1, 5, -4, -3, -1);
-    consensus
+pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>) -> SortingReadSetContainer {
+    let max_length = sequences.iter().map(|n| n.aligned_read.aligned_read.len()).collect::<Vec<usize>>();
+    let max_length = max_length.iter().max().unwrap();
+    let base_sequences = sequences.iter().map(|n| {
+        let mut y = FastaBase::to_vec_u8(&n.aligned_read.aligned_read);
+        y.push(b'\0');
+        y
+    }).collect::<Vec<Vec<u8>>>();
+    let consensus = poa_consensus(&base_sequences, max_length.clone(), 1, 5, -4, -3, -1);
+    SortingReadSetContainer {
+        ordered_sorting_keys: sequences[0].ordered_sorting_keys.clone(),
+        ordered_unsorted_keys: sequences[0].ordered_unsorted_keys.clone(),
+        aligned_read: SortedAlignment {
+            aligned_read: FastaBase::from_vec_u8(&consensus),
+            aligned_ref: sequences[0].aligned_read.aligned_ref.clone(),
+            ref_name: sequences[0].aligned_read.ref_name.clone(),
+        },
+    }
 }
-
+/*
 
 /// Create a consensus sequence from an input set of reads. We merge reads by their underlying
 /// sequence, not the ReadLayout we get from the transformed reads
@@ -83,23 +101,23 @@ pub fn output_poa_consensus(reads: Box<dyn Iterator<Item=ReadSetContainer>>, out
         read_count += 1;
     });
 
-    let mut read1_agg= if read1_agg.len() > 100 {
-        &read1_agg[read1_agg.len()-100..read1_agg.len()]
+    let mut read1_agg = if read1_agg.len() > 100 {
+        &read1_agg[read1_agg.len() - 100..read1_agg.len()]
     } else {
         &read1_agg
     };
-    let mut read2_agg= if read2_agg.len() > 100 {
-        &read2_agg[read2_agg.len()-100..read2_agg.len()]
+    let mut read2_agg = if read2_agg.len() > 100 {
+        &read2_agg[read2_agg.len() - 100..read2_agg.len()]
     } else {
         &read2_agg
     };
-    let mut read3_agg= if read3_agg.len() > 100 {
-        &read3_agg[read3_agg.len()-100..read3_agg.len()]
+    let mut read3_agg = if read3_agg.len() > 100 {
+        &read3_agg[read3_agg.len() - 100..read3_agg.len()]
     } else {
         &read3_agg
     };
-    let mut read4_agg= if read4_agg.len() > 100 {
-        &read4_agg[read4_agg.len()-100..read4_agg.len()]
+    let mut read4_agg = if read4_agg.len() > 100 {
+        &read4_agg[read4_agg.len() - 100..read4_agg.len()]
     } else {
         &read4_agg
     };
@@ -173,4 +191,4 @@ mod tests {
 
         assert_eq!(create_poa_consensus(&all), "TATGATAAGG".as_bytes().to_owned());
     }
-}
+}*/

@@ -102,7 +102,7 @@ enum Cmd {
         read_structure: String,
 
         #[clap(long, default_value = "1")]
-        sorting_threads: usize,
+        threads: usize,
 
         #[clap(long, default_value = "NONE")]
         temp_dir: String,
@@ -191,7 +191,7 @@ fn main() {
             reference,
             output,
             read_structure,
-            sorting_threads,
+            threads,
             temp_dir,
             read1,
             read2,
@@ -211,7 +211,7 @@ fn main() {
                      read2,
                      index1,
                      index2,
-                     &1,
+                     threads,
                      &false);
         }
 

@@ -12,6 +12,7 @@ use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
 use crate::sequence_lookup::KnownLookup;
 use rustc_hash::FxHashMap;
+use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::umis::sequence_clustering::{get_connected_components, input_list_to_graph, InputList, split_subgroup, string_distance};
 
 pub fn collapse(reference: &String,
@@ -76,9 +77,8 @@ pub fn collapse(reference: &String,
         }
     });
 
-    // collapse the final reads down to a single sequence
-
-    // write everything to the disk
+    // collapse the final reads down to a single sequence and write everything to the disk
+    write_consensus_reads(&sorted_input, final_output, 1);
 }
 
 
@@ -242,7 +242,7 @@ impl TagStrippingDiskBackedBuffer {
 pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir, reader: &ShardReader<SortingReadSetContainer>, tag: &UMIConfiguration) -> ShardReader<SortingReadSetContainer> {
     warn!("Sorting degenerate level {}",tag.symbol);
     // create a new output
-
+    let mut processed_reads = 0;
     let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
     let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&aligned_temp, 32,
                                                                                     256,
@@ -256,7 +256,10 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir, reader: 
 
     reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, x)| {
         let mut x = x.unwrap().clone();
-
+        processed_reads += 1;
+        if processed_reads % 10000 == 0 {
+            warn!("Processed {} reads", processed_reads);
+        }
         if !last_read.is_none() {
             if last_read.as_ref().unwrap().cmp(&&mut x) == Ordering::Equal {
                 current_sorting_bin.push(x);
@@ -278,7 +281,17 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir, reader: 
             current_sorting_bin.push(x);
         }
     });
+    let (file, correction) = current_sorting_bin.close();
+    let shard_reader: ShardReader<SortingReadSetContainer, DefaultSort> = ShardReader::open(file).unwrap();
+    for y in shard_reader.iter_range(&Range::all()).unwrap() {
+        let mut y: SortingReadSetContainer = y.unwrap().clone();
+        let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
+        let corrected = correction.get(&FastaBase::to_vec_u8(&key_value.1)).unwrap();
+        y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
+        sender.send(y).unwrap();
+    }
 
+    warn!("For degenerate tag {} we processed {} reads", &tag.symbol, processed_reads);
     sender.finished().unwrap();
 
     sharded_output.finish().unwrap();
@@ -291,6 +304,8 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
     // get the known lookup table
     warn!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
     let known_lookup = KnownLookup::from(tag);
+    let mut processed_reads = 0;
+    warn!("Sorting reads");
 
     // create a new output
     let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
@@ -301,6 +316,7 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
         let mut sender = sharded_output.get_sender();
         let mut dropped_reads = 0;
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
+            processed_reads += 1;
             let mut sorting_read_set_container = x.unwrap();
             assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), tag.order);
 
@@ -315,12 +331,18 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
                     sender.send(sorting_read_set_container).unwrap();
                 }
             }
+
+            if processed_reads % 10000 == 0 {
+                warn!("Processed {} reads", processed_reads);
+            }
         });
 
         warn!("Dropped {} where we coudn't match a known barcode",dropped_reads);
         sender.finished().unwrap();
         sharded_output.finish().unwrap();
     }
+    warn!("For known tag {} we processed {} reads", &tag.symbol, processed_reads);
+
     ShardReader::open(aligned_temp).unwrap()
 }
 

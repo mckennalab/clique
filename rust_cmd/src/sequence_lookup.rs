@@ -8,6 +8,10 @@ pub struct KnownLookup {
     corrector: SymSpell<AsciiStringStrategy>,
 }
 
+pub struct FastaStrategy {
+
+}
+
 impl KnownLookup {
     pub fn from(input_configuration: &UMIConfiguration) -> KnownLookup {
         let mut symspell: SymSpell<AsciiStringStrategy> = SymSpell::default();
