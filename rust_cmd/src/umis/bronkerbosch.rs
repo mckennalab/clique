@@ -63,6 +63,7 @@ impl<N: NodeTrait, E> BronKerbosch<N, E> {
 
 #[cfg(test)]
 mod tests {
+    use petgraph::graphmap::UnGraphMap;
     use super::*;
     #[test]
     fn simple_wikipedia_test() {

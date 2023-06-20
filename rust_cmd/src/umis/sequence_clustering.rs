@@ -5,11 +5,13 @@ use petgraph::algo::{tarjan_scc};
 use petgraph::prelude::*;
 use rand::{Rng};
 use rand::prelude::*;
-use utils::base_utils::simple_edit_distance;
 
 use indicatif::ProgressBar;
+use crate::alignment::fasta_bit_encoding::FastaBase;
 
 use crate::umis::bronkerbosch::BronKerbosch;
+use crate::umis::known_list::KnownList;
+use crate::utils::base_utils::simple_edit_distance;
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,
@@ -30,26 +32,26 @@ pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u64 {
 }
 
 
-pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance: usize) -> BestHits {
+pub fn correct_to_known_list(barcode: &Vec<FastaBase>, kl: &mut KnownList, max_distance: &usize) -> BestHits {
     let mut hits = Vec::new();
-    let mut distance = max_distance;
+    let mut distance = max_distance.clone();
     if kl.known_list_map.contains_key(barcode) {
         hits.push(barcode.clone());
         distance = 0;
         BestHits { hits, distance }
     } else {
-        let mut min_distance = max_distance;
+        let mut min_distance = max_distance.clone();
         let barcode_subslice = &barcode[0..kl.known_list_subset_key_size].to_vec();
 
         for candidate_key in kl.known_list_subset.keys() {
-            let key_dist = simple_edit_distance(barcode_subslice, &candidate_key);
+            let key_dist = FastaBase::edit_distance(barcode_subslice, &candidate_key);
 
             if key_dist <= min_distance {
                 let subset = kl.known_list_subset.get(candidate_key).unwrap();
 
                 for full_candidate in subset {
                     if full_candidate.len() == barcode.len() {
-                        let dist = simple_edit_distance(&full_candidate, barcode);
+                        let dist = FastaBase::edit_distance(&full_candidate, barcode);
                         if dist < min_distance {
                             hits.clear();
                             min_distance = dist;
@@ -66,7 +68,7 @@ pub fn correct_to_known_list(barcode: &Vec<u8>, kl: &mut KnownList, max_distance
     }
 }
 pub struct BestHits {
-    pub hits: Vec<Vec<u8>>,
+    pub hits: Vec<Vec<FastaBase>>,
     pub distance: usize,
 }
 
@@ -97,7 +99,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     let mut current_index = 0;
 
     let bar2: Option<ProgressBar> = if progress {
-        trace!("Processing input list into nodes (progress bar may end early due to duplicate IDs)");
+        warn!("Processing input list into nodes (progress bar may end early due to duplicate IDs)");
         Some(ProgressBar::new(input_list.strings.len() as u64))
     } else {
         None
@@ -116,7 +118,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     });
 
     let bar: Option<ProgressBar> = if progress {
-        trace!("processing barcode-barcode distances (this can take a long time)...");
+        warn!("processing barcode-barcode distances (this can take a long time)...");
         Some(ProgressBar::new((string_to_node.len() as u64 * string_to_node.len() as u64) / (2 as u64)))
     } else {
         None
@@ -199,10 +201,13 @@ pub fn split_subgroup(string_graph: &mut StringGraph) -> Option<Vec<Vec<Vec<u8>>
     let node_count = string_graph.graph.node_count() as f64;
     let mut best_left = Vec::new();
     let mut best_right = Vec::new();
-
+    if string_graph.graph.node_count() > 200 {
+        warn!("Processing connected components for {} nodes", string_graph.graph.node_count());
+    }
     for x in string_graph.graph.all_edges() {
         let mut new_graph = string_graph.graph.clone();
         new_graph.remove_edge(x.0, x.1);
+
         let comps = get_connected_components(&StringGraph {
             graph: new_graph,
             string_to_node: string_graph.string_to_node.clone(),
@@ -296,6 +301,11 @@ pub fn generate_simulated_data(length: usize, groups: usize, error_strings_per_s
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
+    use std::io;
+    use std::io::BufRead;
+    use std::path::Path;
+    use crate::utils::base_utils::edit_distance;
     use super::*;
 
     #[test]

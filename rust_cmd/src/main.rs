@@ -68,6 +68,7 @@ mod alignment {
 mod umis {
     pub mod sequence_clustering;
     pub mod bronkerbosch;
+    pub mod known_list;
 }
 mod consensus {
     pub mod consensus_builders;
@@ -181,7 +182,7 @@ fn main() {
         std::env::set_var("RUST_LOG", "warn");
     }
 
-    pretty_env_logger::init();
+    pretty_env_logger::init_timed();
 
     let parameters = Args::parse();
     trace!("{:?}", &parameters.cmd);

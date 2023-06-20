@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::string;
 use crate::alignment_functions::align_reads;
 use crate::InstanceLivedTempDir;
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration, UMISortType};
@@ -12,8 +13,10 @@ use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
 use crate::sequence_lookup::KnownLookup;
 use rustc_hash::FxHashMap;
+use typetag::__private::inventory::iter;
 use crate::consensus::consensus_builders::write_consensus_reads;
-use crate::umis::sequence_clustering::{get_connected_components, input_list_to_graph, InputList, split_subgroup, string_distance};
+use crate::umis::known_list::KnownList;
+use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, input_list_to_graph, InputList, split_subgroup, string_distance};
 
 pub fn collapse(reference: &String,
                 final_output: &String,
@@ -66,19 +69,22 @@ pub fn collapse(reference: &String,
     warn!("Sorting by read tags");
 
     // sort the reads by the tags
+    let mut levels = 0;
     read_structure.get_sorted_umi_configurations().iter().for_each(|tag| {
         match tag.sort_type {
             UMISortType::KnownTag => {
                 sorted_input = sort_known_level(temp_directory, &sorted_input, &tag);
             }
             UMISortType::DegenerateTag => {
-                sorted_input = sort_degenerate_level(temp_directory, &sorted_input, &tag);
+                sorted_input = sort_degenerate_level(temp_directory, &sorted_input, &tag, &levels);
             }
         }
+        levels += 1;
     });
+    warn!("writing consensus reads");
 
     // collapse the final reads down to a single sequence and write everything to the disk
-    write_consensus_reads(&sorted_input, final_output, 1);
+    write_consensus_reads(&sorted_input, final_output, &threads, levels);
 }
 
 
@@ -173,7 +179,7 @@ impl TagStrippingDiskBackedBuffer {
         let graph = input_list_to_graph(&collection, string_distance, false);
 
         let cc = get_connected_components(&graph);
-        println!("CC SIZE: {}", &cc.len());
+        //warn!("CC SIZE: {}", &cc.len());
 
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
@@ -239,7 +245,10 @@ impl TagStrippingDiskBackedBuffer {
 ///
 /// # Examples
 ///
-pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir, reader: &ShardReader<SortingReadSetContainer>, tag: &UMIConfiguration) -> ShardReader<SortingReadSetContainer> {
+pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
+                             reader: &ShardReader<SortingReadSetContainer>,
+                             tag: &UMIConfiguration,
+iteration: &usize) -> ShardReader<SortingReadSetContainer> {
     warn!("Sorting degenerate level {}",tag.symbol);
     // create a new output
     let mut processed_reads = 0;
@@ -254,32 +263,44 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir, reader: 
     let mut current_sorting_bin: TagStrippingDiskBackedBuffer =
         TagStrippingDiskBackedBuffer::new(temp_directory.temp_file(format!("{}_{}.fasta", 0, tag.order).as_str()), 10000, tag.clone());
 
-    reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, x)| {
-        let mut x = x.unwrap().clone();
+    let mut largest_group_size = 0;
+    let mut group_size = 0;
+
+    reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, y)| {
+        let mut x = y.as_ref().unwrap().clone();
+        let mut x2 = y.as_ref().unwrap().clone();
         processed_reads += 1;
-        if processed_reads % 10000 == 0 {
+        if processed_reads % 1000000 == 0 {
             warn!("Processed {} reads", processed_reads);
         }
         if !last_read.is_none() {
+            assert_eq!(x.ordered_sorting_keys.len(), *iteration);
             if last_read.as_ref().unwrap().cmp(&&mut x) == Ordering::Equal {
+                //warn!("NOT Dumping reads");
                 current_sorting_bin.push(x);
+                group_size += 1;
             } else {
                 let (file, correction) = current_sorting_bin.close();
+                if correction.len() > largest_group_size {
+                    largest_group_size = correction.len();
+                }
                 let shard_reader: ShardReader<SortingReadSetContainer, DefaultSort> = ShardReader::open(file).unwrap();
                 for y in shard_reader.iter_range(&Range::all()).unwrap() {
+
                     let mut y: SortingReadSetContainer = y.unwrap().clone();
                     let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
                     let corrected = correction.get(&FastaBase::to_vec_u8(&key_value.1)).unwrap();
                     y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
                     sender.send(y).unwrap();
                 }
-
+                group_size = 0;
                 current_sorting_bin = TagStrippingDiskBackedBuffer::new(temp_directory.temp_file(format!("{}_{}.fasta", i, tag.order).as_str()), 10000, tag.clone());
                 current_sorting_bin.push(x);
             }
         } else {
             current_sorting_bin.push(x);
         }
+        last_read = Some(x2);
     });
     let (file, correction) = current_sorting_bin.close();
     let shard_reader: ShardReader<SortingReadSetContainer, DefaultSort> = ShardReader::open(file).unwrap();
@@ -291,7 +312,7 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir, reader: 
         sender.send(y).unwrap();
     }
 
-    warn!("For degenerate tag {} we processed {} reads", &tag.symbol, processed_reads);
+    warn!("For degenerate tag {} we processed {} reads, largest group size {}", &tag.symbol, processed_reads, largest_group_size);
     sender.finished().unwrap();
 
     sharded_output.finish().unwrap();
@@ -303,7 +324,8 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
     warn!("Sorting known level {}",tag.symbol);
     // get the known lookup table
     warn!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
-    let known_lookup = KnownLookup::from(tag);
+    let mut known_lookup = KnownList::read_known_list_file(&tag,&tag.file.as_ref().unwrap(), &8);
+    warn!("Loaded the known lookup table for tag {}",tag.symbol);
     let mut processed_reads = 0;
     warn!("Sorting reads");
 
@@ -315,6 +337,8 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
                                                                                         1 << 16).unwrap();
         let mut sender = sharded_output.get_sender();
         let mut dropped_reads = 0;
+        let mut collided_reads = 0;
+
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
             processed_reads += 1;
             let mut sorting_read_set_container = x.unwrap();
@@ -323,16 +347,21 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
             let next_key = sorting_read_set_container.ordered_unsorted_keys.pop_front().unwrap();
             assert_eq!(next_key.0, tag.symbol);
 
-            match known_lookup.correct(&FastaBase::to_string(&next_key.1), &tag.max_distance, false) {
-                None => { dropped_reads += 1 }
-                Some(x) => {
-                    sorting_read_set_container.ordered_sorting_keys.push((next_key.0, FastaBase::from_string(&x)));
+
+            let corrected_hits = correct_to_known_list(&next_key.1, &mut known_lookup, &tag.max_distance);
+
+            match (corrected_hits.hits.len(),corrected_hits.distance) {
+                (x,_) if x == 0 => { dropped_reads += 1 }
+                (x,_) if x > 1 => { collided_reads + 1; dropped_reads += 1 }
+                (x,y) if y > tag.max_distance => { dropped_reads += 1 }
+                (x,y) => {
+                    sorting_read_set_container.ordered_sorting_keys.push((next_key.0, corrected_hits.hits.get(0).unwrap().clone()));
                     assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), &tag.order + 1);
                     sender.send(sorting_read_set_container).unwrap();
                 }
             }
 
-            if processed_reads % 10000 == 0 {
+            if processed_reads % 1000000 == 0 {
                 warn!("Processed {} reads", processed_reads);
             }
         });

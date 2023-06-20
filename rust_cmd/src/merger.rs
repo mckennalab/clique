@@ -112,6 +112,8 @@ impl MergedReadSequence {
                 }
             }
             ((true, true, false, false), Some(MergeStrategy::Concatenate)) => {
+                //println!("RIGHT PLACE {} {} ",String::from_utf8(it.read_one.seq().to_vec().clone()).unwrap(),String::from_utf8(it.read_two.as_ref().unwrap().seq().to_vec().clone()).unwrap());
+
                 NamedRead{
                     name: it.read_one.id().as_bytes().to_vec(),
                     seq: merge_reads_by_concatenation(&it.read_one, &it.read_two.unwrap(),0).read_bases
@@ -384,7 +386,7 @@ mod tests {
         let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
-        let fake_aligned = merge_reads_by_concatenation(&record1, &record2, &reference);
+        let fake_aligned = merge_reads_by_concatenation(&record1, &record2, reference.len());
         assert_eq!(fake_aligned.read_bases, reads_reference_aligned);
     }
 }

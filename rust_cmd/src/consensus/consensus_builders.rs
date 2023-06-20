@@ -1,6 +1,7 @@
 extern crate rust_spoa;
 
 use std::borrow::Borrow;
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use rayon::prelude::*;
 use rust_spoa::poa_consensus;
@@ -29,11 +30,12 @@ pub fn null_cap(strs: &[Vec<u8>]) -> Vec<Vec<u8>> {
     }).collect::<Vec<Vec<u8>>>()
 }
 
-pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>, output_file: &String, threads: usize) {
+pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>, output_file: &String, threads: &usize, levels: usize) {
     //let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&output_file, 32,
     //                                                                                256,
     //                                                                                1 << 16).unwrap();
     //let mut sender = sharded_output.get_sender();
+    warn!("Writing consensus reads to {}", output_file);
     let mut output_fl = std::fs::File::create(output_file).expect("Unable to create file");
 
     let mut last_read: Option<SortingReadSetContainer> = None;
@@ -41,14 +43,28 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>, outp
 
 
     reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, x)| {
-        println!("processing read {}", i);
+        if i % 100000 == 0 { println!("processing read {}", i); }
         let x = x.unwrap();
-        if last_read.is_some() && &x == last_read.as_ref().unwrap() {
-            buffered_reads.push_back(x);
+        assert_eq!(x.ordered_sorting_keys.len(), levels);
+        if last_read.is_some() && &x.cmp(last_read.as_ref().unwrap()) == &Ordering::Equal {
+            if i < 10000 { println!("processing read {}", FastaBase::to_string(&x.aligned_read.aligned_read)); }
+            buffered_reads.push_back(x.clone());
+            last_read = Some(x);
         } else {
+            if i < 50 && last_read.is_some() {
+                let tags = x.ordered_sorting_keys.iter().map(|x|FastaBase::to_string(&x.1)).collect::<Vec<String>>().join(",");
+                let tags2 = last_read.as_ref().unwrap().ordered_sorting_keys.iter().map(|x|FastaBase::to_string(&x.1)).collect::<Vec<String>>().join(",");
+
+                println!("processing read {} tags {} tags2 {} ", FastaBase::to_string(&x.aligned_read.aligned_read),tags,tags2);
+            }
             if buffered_reads.len() > 0 {
                 let mut consensus_reads = create_poa_consensus(&buffered_reads);
-                write!(output_fl,"{}\n{}\n",FastaBase::to_string(&consensus_reads.aligned_read.aligned_ref),FastaBase::to_string(&consensus_reads.aligned_read.aligned_read)).unwrap();
+                let ref_seq = FastaBase::to_string(&consensus_reads.aligned_read.aligned_ref);
+                let read_seq = FastaBase::to_string(&consensus_reads.aligned_read.aligned_read);
+                let count = buffered_reads.len();
+                let tags = buffered_reads.pop_front().unwrap().ordered_sorting_keys.iter().map(|x|FastaBase::to_string(&x.1)).collect::<Vec<String>>().join(",");
+
+                write!(output_fl, ">{};{}\n{}\n{}\n", tags, count, ref_seq, read_seq).unwrap(); ;
                 buffered_reads.clear();
             }
             buffered_reads.push_back(x.clone());

@@ -105,6 +105,7 @@ pub struct UMIConfiguration {
 pub struct SequenceLayoutDesign {
     pub merge: Option<MergeStrategy>,
     pub reads: Vec<ReadPosition>,
+    pub known_orientation: bool,
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 

@@ -10,7 +10,7 @@ use serde::{Serialize,Deserialize};
 /// our core Fasta base - representing a single fasta character in a u8 data store. We actually pack
 /// everything into a u4 (if that was a type) but FastaString below handles the more dense packing and
 /// unpacking into u64 structures
-#[derive(Clone, Copy, From, Add,Serialize, Deserialize)]
+#[derive(Clone, Copy, From, Add,Serialize, Deserialize, Hash)]
 pub struct FastaBase(u8);
 
 impl FastaBase {
@@ -33,6 +33,17 @@ impl FastaBase {
     pub fn to_vec_u8(bases: &Vec<FastaBase>) -> Vec<u8> {
         bases.iter().map(|b| b.0).collect()
     }
+
+    pub fn edit_distance(fasta_bases: &Vec<FastaBase>, other: &Vec<FastaBase>) -> usize {
+        assert_eq!(fasta_bases.len(), other.len());
+        let mut distance = 0;
+        for (base, other_base) in fasta_bases.iter().zip(other.iter()) {
+            if !base.identity(other_base) {
+                distance += 1;
+            }
+        }
+        distance
+    }
 }
 
 
@@ -48,7 +59,7 @@ impl fmt::Debug for FastaBase {
 /// bases that share any overlap in their base patterns. E.g. R == K, but R != C (and N == everything)
 impl PartialEq for FastaBase {
     fn eq(&self, other: &Self) -> bool {
-        self.0 & other.0 > (0 as u8)
+        self.0 & other.0 > 0
     }
 }
 
@@ -414,6 +425,8 @@ pub fn string_to_bit(input: &Vec<u8>) -> BitEncodedFasta {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::time::Instant;
+    use crate::fasta_comparisons::DEGENERATEBASES;
     use super::*;
 
     #[test]
@@ -601,6 +614,48 @@ mod tests {
         let bit_one = FASTA_V; // StringEncodingPair { bases: FASTA_A, mask: SINGLE_BIT_MASK };
         let bit_two = FASTA_T; // StringEncodingPair { bases: FASTA_R, mask: SINGLE_BIT_MASK };
         assert_ne!(bit_one, bit_two);
+    }
+
+    #[test]
+    fn test_many_u8s_vs_many_fasta_bases() {
+
+        let bases =  "CCAATCTACTACTGACCGATAGATATTTTAGAGCACACACACACATATAGAGAGTCTTGCA".as_bytes().to_vec();
+        let bases2 = "GGGGTCTACTACTGACCGATAGATATTTTAGAGCACACACACACATATAGAGAGTCTTGCA".as_bytes().to_vec();
+        let fbases = FastaBase::from_vec_u8(&bases);
+        let fbases2 = FastaBase::from_vec_u8(&bases2);
+
+        let start = Instant::now();
+        let mut not_equal = 0;
+        for i in 0..10000000 {
+            if bases != bases2 {
+                not_equal += 1;
+            }
+        }
+        let duration = start.elapsed();
+        println!("Time elapsed in aligning u8 reads is: {:?}", duration);
+
+        let start2 = Instant::now();
+        let mut not_equal = 0;
+        for i in 0..10000000 {
+            if fbases != fbases2 {
+                not_equal += 1;
+            }
+        }
+        let duration2 = start.elapsed();
+        println!("Time elapsed in aligning fasta is: {:?}", duration2);
+
+        /* DEGENERATEBASES
+        let start3 = Instant::now();
+        let mut not_equal = 0;
+        for i in 0..10000000 {
+            for j in 0..(bases.len()-1) {
+                if DEGENERATEBASES.get(&bases[j]).unwrap().contains_key(&bases2[j]) {
+                    not_equal += 1;
+                }
+            }
+        }
+        let duration3 = start.elapsed();
+        println!("Time elapsed in aligning fasta is: {:?}", duration2);*/
     }
 
 /*

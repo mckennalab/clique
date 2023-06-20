@@ -92,13 +92,14 @@ pub fn align_reads(use_capture_sequences: &bool,
 
             let aligned = best_reference(&xx.seq,
                                          &rm.references,
+                                         read_structure,
                                          &mut local_alignment.as_mut().unwrap(),
                                          &my_aff_score,
                                          &my_score,
                                          inversions,
                                          *max_reference_multiplier,
                                          *min_read_length);
-
+            //println!("Aligning read {}", FastaBase::to_string(&xx.seq));
             match aligned {
                 None => {
                     warn!("Unable to find alignment for read {}",name);
@@ -110,8 +111,9 @@ pub fn align_reads(use_capture_sequences: &bool,
                             let output = Arc::clone(&output);
                             let mut read_count = read_count.lock().unwrap();
                             *read_count += 1;
-                            if *read_count % 100000 == 0 {
+                            if *read_count % 1000000 == 0 {
                                 let duration = start.elapsed();
+                                //println!("Aligning read {} ({})", FastaBase::to_string(&aln.alignment_string1), FastaBase::to_string(&aln.alignment_string2));
                                 println!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count, duration);
                             }
 
@@ -163,6 +165,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>, rev_comp_read2: &Vec<FastaB
 
 pub fn best_reference(read: &Vec<FastaBase>,
                       references: &Vec<Reference>,
+                      read_structure: &SequenceLayoutDesign,
                       alignment_mat: &mut Alignment<Ix3>,
                       my_aff_score: &AffineScoring,
                       my_score: &InversionScoring,
@@ -176,12 +179,12 @@ pub fn best_reference(read: &Vec<FastaBase>,
             None
         }
         1 => {
-            let aln = alignment(read, &references[0], alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length);
+            let aln = alignment(read, &references[0], read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length);
             Some((aln, references[0].sequence_u8.clone(), references[0].name.clone()))
         }
         x if x > 1 => {
             let ranked_alignments = references.iter().map(|reference| {
-                match alignment(read, reference, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length) {
+                match alignment(read, reference, read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length) {
                     None => None,
                     Some(aln) => Some((aln, reference.sequence_u8.clone(), reference.name.clone())),
                 }
@@ -205,6 +208,7 @@ pub fn best_reference(read: &Vec<FastaBase>,
 // TODO bring back inversions
 pub fn alignment(x: &Vec<FastaBase>,
                  reference: &Reference,
+                 read_structure: &SequenceLayoutDesign,
                  alignment_mat: &mut Alignment<Ix3>,
                  my_aff_score: &AffineScoring,
                  _my_score: &InversionScoring,
@@ -213,11 +217,15 @@ pub fn alignment(x: &Vec<FastaBase>,
                  min_read_length: usize) -> Option<AlignmentResult> {
 
     // find the best reference(s)
-    let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
-    let forward_oriented_seq = if orientation {
-        str_to_fasta_vec(FastaBase::to_string(x).as_str())
+    let forward_oriented_seq = if !read_structure.known_orientation {
+        let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
+        if orientation {
+            str_to_fasta_vec(FastaBase::to_string(x).as_str())
+        } else {
+            reverse_complement(&str_to_fasta_vec(FastaBase::to_string(x).as_str()))
+        }
     } else {
-        reverse_complement(&str_to_fasta_vec(FastaBase::to_string(x).as_str()))
+        str_to_fasta_vec(FastaBase::to_string(x).as_str())
     };
 
     if forward_oriented_seq.len() > reference.sequence.len() * max_reference_multiplier || forward_oriented_seq.len() < min_read_length {

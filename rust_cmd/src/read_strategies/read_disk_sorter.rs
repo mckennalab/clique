@@ -43,6 +43,7 @@ impl PartialOrd for SortingReadSetContainer {
 impl Ord for SortingReadSetContainer {
     fn cmp(&self, other: &Self) -> Ordering {
         for (a, b) in self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()) {
+            assert_eq!(a.0, b.0, "SortingReadSetContainer: mismatched sorting keys");
             if a.1 > b.1 {
                 return Ordering::Greater;
             } else if a.1 < b.1 {
@@ -92,9 +93,84 @@ impl StreamSorter {
 
 #[cfg(test)]
 mod tests {
-    use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_N};
+    use bio::data_structures::bwt::Less;
+    use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_N, FASTA_T};
     use super::*;
     use crate::utils::read_utils::fake_reads;
+
+    #[test]
+    fn test_ordinal_nature() {
+        let srsc1 = SortingReadSetContainer{
+            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A])],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: SortedAlignment {
+                aligned_read: vec![],
+                aligned_ref: vec![],
+                ref_name: "".to_string(),
+            },
+        };
+        let srsc2 = SortingReadSetContainer{
+            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A])],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: SortedAlignment {
+                aligned_read: vec![],
+                aligned_ref: vec![],
+                ref_name: "".to_string(),
+            },
+        };
+
+        assert_eq!(srsc1.cmp(&srsc2), Ordering::Equal);
+
+        let srsc1 = SortingReadSetContainer{
+            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A]),('*', vec![FASTA_A, FASTA_A])],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: SortedAlignment {
+                aligned_read: vec![],
+                aligned_ref: vec![],
+                ref_name: "".to_string(),
+            },
+        };
+        let srsc2 = SortingReadSetContainer{
+            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A]),('*', vec![FASTA_A, FASTA_T])],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: SortedAlignment {
+                aligned_read: vec![],
+                aligned_ref: vec![],
+                ref_name: "".to_string(),
+            },
+        };
+
+        assert_eq!(srsc1.cmp(&srsc2), Ordering::Less);
+        assert_eq!(srsc2.cmp(&srsc1), Ordering::Greater);
+
+        let srsc1 = SortingReadSetContainer{
+            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A]),
+                                       ('*', vec![FASTA_A, FASTA_A]),
+                                       ('*', vec![FASTA_A, FASTA_A])],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: SortedAlignment {
+                aligned_read: vec![],
+                aligned_ref: vec![],
+                ref_name: "".to_string(),
+            },
+        };
+        let srsc2 = SortingReadSetContainer{
+            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A]),
+                                       ('*', vec![FASTA_A, FASTA_T]),
+                                       ('*', vec![FASTA_A, FASTA_A])],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: SortedAlignment {
+                aligned_read: vec![],
+                aligned_ref: vec![],
+                ref_name: "".to_string(),
+            },
+        };
+
+        assert_eq!(srsc1.cmp(&srsc2), Ordering::Less);
+        assert_eq!(srsc2.cmp(&srsc1), Ordering::Greater);
+
+
+    }
 
     #[test]
     fn test_sorting_read_container() {
