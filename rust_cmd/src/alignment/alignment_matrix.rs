@@ -873,7 +873,7 @@ mod tests {
     use crate::alignment::fasta_bit_encoding::{fasta_vec_to_string, reverse_complement};
 
     fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
-        FastaBase::from_vec_u8(&input.as_bytes().to_vec())
+        FastaBase::from_vec_u8_default_ns(&input.as_bytes().to_vec())
     }
 
     #[test]

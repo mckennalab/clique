@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn test_sorting_read_container() {
         let key1 = ('$',vec![FASTA_N, FASTA_A]);
-        let key2 = ('#',vec![FASTA_N, FASTA_N]);
+        let key2 = ('$',vec![FASTA_N, FASTA_N]);
 
         let reads = fake_reads(10, 1);
         let read_seq = reads.get(0).unwrap().read_one.seq().iter().map(|x| FastaBase::from(x.clone())).collect::<Vec<FastaBase>>();

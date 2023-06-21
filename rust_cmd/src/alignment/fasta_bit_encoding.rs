@@ -25,6 +25,9 @@ impl FastaBase {
     pub fn from_vec_u8(st: &Vec<u8>) -> Vec<FastaBase> {
         st.iter().map(|c| u8_to_encoding(c).unwrap()).collect()
     }
+    pub fn from_vec_u8_default_ns(st: &Vec<u8>) -> Vec<FastaBase> {
+        st.iter().map(|c| u8_to_encoding_defaulted_to_n(c)).collect()
+    }
 
     pub fn to_string(bases: &Vec<FastaBase>) -> String {
         String::from_utf8(FastaBase::to_vec_u8(bases)).unwrap()
@@ -260,7 +263,10 @@ pub fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
         b'V' | b'v' => Some(FASTA_V),
 
         b'N' | b'n' => Some(FASTA_N),
-        _ => None,
+        _ => {
+            println!("Unable to convert {}",base);
+            None
+        },
     }
 }
 

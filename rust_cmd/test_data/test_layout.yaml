@@ -1,5 +1,6 @@
 ---
-align: true
+known_orientation: true
+merge: "Concatenate"
 reads:
   - READ1
   - READ2
@@ -8,11 +9,17 @@ umi_configurations:
     symbol: '*'
     sort_type: "KnownTag"
     length: 16
+    order: 0
+    max_distance: 2
   cell_umi:
     symbol: '&'
     sort_type: "DegenerateTag"
     length: 12
+    order: 1
+    max_distance: 2
   static_id:
     symbol: '$'
     sort_type: "DegenerateTag"
     length: 12
+    order: 2
+    max_distance: 2
