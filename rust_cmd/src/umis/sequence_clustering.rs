@@ -33,30 +33,29 @@ pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u64 {
 
 
 pub fn correct_to_known_list(barcode: &Vec<FastaBase>, kl: &mut KnownList, max_distance: &usize) -> BestHits {
-    let mut hits = Vec::new();
-    let mut distance = max_distance.clone();
     if kl.known_list_map.contains_key(barcode) {
-        hits.push(barcode.clone());
-        distance = 0;
-        BestHits { hits, distance }
+        kl.known_list_map.get(barcode).unwrap().clone()
     } else {
-        let mut min_distance = max_distance.clone();
+        let mut hits = Vec::new();
+
+        let mut distance = max_distance.clone() + 1;
+
         let barcode_subslice = &barcode[0..kl.known_list_subset_key_size].to_vec();
 
         for candidate_key in kl.known_list_subset.keys() {
             let key_dist = FastaBase::edit_distance(barcode_subslice, &candidate_key);
 
-            if key_dist <= min_distance {
+            if key_dist <= distance {
                 let subset = kl.known_list_subset.get(candidate_key).unwrap();
 
                 for full_candidate in subset {
                     if full_candidate.len() == barcode.len() {
                         let dist = FastaBase::edit_distance(&full_candidate, barcode);
-                        if dist < min_distance {
+                        if dist < distance {
                             hits.clear();
-                            min_distance = dist;
+                            distance = dist;
                         }
-                        if dist == min_distance {
+                        if dist == distance {
                             hits.push(full_candidate.clone());
                         }
                     }
@@ -99,7 +98,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     let mut current_index = 0;
 
     let bar2: Option<ProgressBar> = if progress {
-        warn!("Processing input list into nodes (progress bar may end early due to duplicate IDs)");
+        info!("Processing input list into nodes (progress bar may end early due to duplicate IDs)");
         Some(ProgressBar::new(input_list.strings.len() as u64))
     } else {
         None
@@ -118,7 +117,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     });
 
     let bar: Option<ProgressBar> = if progress {
-        warn!("processing barcode-barcode distances (this can take a long time)...");
+        info!("processing barcode-barcode distances (this can take a long time)...");
         Some(ProgressBar::new((string_to_node.len() as u64 * string_to_node.len() as u64) / (2 as u64)))
     } else {
         None
@@ -202,7 +201,7 @@ pub fn split_subgroup(string_graph: &mut StringGraph) -> Option<Vec<Vec<Vec<u8>>
     let mut best_left = Vec::new();
     let mut best_right = Vec::new();
     if string_graph.graph.node_count() > 200 {
-        warn!("Processing connected components for {} nodes", string_graph.graph.node_count());
+        info!("Processing connected components for {} nodes", string_graph.graph.node_count());
     }
     for x in string_graph.graph.all_edges() {
         let mut new_graph = string_graph.graph.clone();

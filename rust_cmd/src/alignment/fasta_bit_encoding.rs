@@ -19,11 +19,11 @@ impl FastaBase {
     }
 
     pub fn from_string(st: &String) -> Vec<FastaBase> {
-        st.chars().map(|c| FastaBase::from(c as u8)).collect()
+        st.chars().map(|c| u8_to_encoding(&(c as u8)).unwrap()).collect()
     }
 
     pub fn from_vec_u8(st: &Vec<u8>) -> Vec<FastaBase> {
-        st.iter().map(|c| FastaBase::from(*c as u8)).collect()
+        st.iter().map(|c| u8_to_encoding(c).unwrap()).collect()
     }
 
     pub fn to_string(bases: &Vec<FastaBase>) -> String {
@@ -31,7 +31,7 @@ impl FastaBase {
     }
 
     pub fn to_vec_u8(bases: &Vec<FastaBase>) -> Vec<u8> {
-        bases.iter().map(|b| b.0).collect()
+        bases.iter().map(|b| encoding_to_u8(b)).collect()
     }
 
     pub fn edit_distance(fasta_bases: &Vec<FastaBase>, other: &Vec<FastaBase>) -> usize {
@@ -184,26 +184,26 @@ pub fn char_to_encoding(base: &char) -> Option<FastaBase> {
 #[allow(dead_code)]
 pub fn encoding_to_u8(base: &FastaBase) -> u8 {
     match base {
-        &x if x.identity(&FASTA_UNSET) => {b'-'},
-        &x if x.identity(&FASTA_A) => {b'A'},
-        &x if x.identity(&FASTA_C) => {b'C'},
-        &x if x.identity(&FASTA_G) => {b'G'},
-        &x if x.identity(&FASTA_T) => {b'T'},
+        x if x == &FASTA_UNSET => {b'-'},
+        x if x == &FASTA_A => {b'A'},
+        x if x == &FASTA_C => {b'C'},
+        x if x == &FASTA_G => {b'G'},
+        x if x == &FASTA_T => {b'T'},
 
-        &x if x.identity(&FASTA_R) => {b'R'},
-        &x if x.identity(&FASTA_Y) => {b'Y'},
-        &x if x.identity(&FASTA_K) => {b'K'},
-        &x if x.identity(&FASTA_M) => {b'M'},
+        x if x == &FASTA_R => {b'R'},
+        x if x == &FASTA_Y => {b'Y'},
+        x if x == &FASTA_K => {b'K'},
+        x if x == &FASTA_M => {b'M'},
 
-        &x if x.identity(&FASTA_S) => {b'S'},
-        &x if x.identity(&FASTA_W) => {b'W'},
-        &x if x.identity(&FASTA_B) => {b'B'},
-        &x if x.identity(&FASTA_D) => {b'D'},
+        x if x == &FASTA_S => {b'S'},
+        x if x == &FASTA_W => {b'W'},
+        x if x == &FASTA_B => {b'B'},
+        x if x == &FASTA_D => {b'D'},
 
-        &x if x.identity(&FASTA_H) => {b'H'},
-        &x if x.identity(&FASTA_V) => {b'V'},
-        &x if x.identity(&FASTA_N) => {b'N'},
-        _ => {panic!("Unable to convert {:?}",base)},
+        x if x == &FASTA_H => {b'H'},
+        x if x == &FASTA_V => {b'V'},
+        x if x == &FASTA_N => {b'N'},
+        _ => {println!("Unable to convert {}",base.0); panic!("Unable to convert {:?}",base)},
     }
 }
 
@@ -287,13 +287,6 @@ pub fn complement(base: &FastaBase) -> FastaBase {
     }
 }
 
-pub fn str_to_fasta_vec(st: &str) -> Vec<FastaBase> {
-    let mut ret_vec = Vec::with_capacity(st.len());
-    for b in st.as_bytes() {
-        ret_vec.push(u8_to_encoding_defaulted_to_n(b));
-    }
-    ret_vec
-}
 
 #[allow(dead_code)]
 pub fn fasta_vec_to_string(vc: &Vec<FastaBase>) -> String {
@@ -502,7 +495,7 @@ mod tests {
 
     #[test]
     fn bit_complement() {
-        let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCA");
+        let reference = FastaBase::from_vec_u8(&"CCAATCTACTACTGCTTGCA".as_bytes().to_vec());
         let ref_rev = reverse_complement(&reference);
         let ref_rev2 = reverse_complement(&ref_rev);
         assert_eq!(reference, ref_rev2);

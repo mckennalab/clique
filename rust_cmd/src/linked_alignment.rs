@@ -252,7 +252,6 @@ pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &V
 
 #[cfg(test)]
 mod tests {
-    use crate::alignment::fasta_bit_encoding::str_to_fasta_vec;
     use crate::reference::fasta_reference::ReferenceManager;
     use super::*;
 
@@ -284,6 +283,9 @@ mod tests {
         let aligned_string = extend_hit(&test_read, 0, &reference, 2);
         print!("BLAH {}", aligned_string);
         assert_eq!(aligned_string, 10);
+    }
+    fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
+        FastaBase::from_vec_u8(&input.as_bytes().to_vec())
     }
 
     #[test]

@@ -4,7 +4,7 @@ use bio::io::fasta::*;
 use itertools::Itertools;
 
 use suffix::SuffixTable;
-use crate::alignment::fasta_bit_encoding::{FastaBase, str_to_fasta_vec};
+use crate::alignment::fasta_bit_encoding::{FastaBase};
 use crate::read_strategies::read_set::ReadSetContainer;
 
 
@@ -20,7 +20,7 @@ pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> V
 
         let seeds = ReferenceManager::find_seeds(&ref_copy, kmer_size);
         references.push(Reference {
-            sequence: str_to_fasta_vec(&String::from_utf8(ref_entry.seq().to_vec()).unwrap().as_str()),
+            sequence: FastaBase::from_vec_u8(&ref_entry.seq().to_vec()),
             sequence_u8: ref_entry.seq().to_vec(),
             name: str::as_bytes(ref_entry.id()).to_vec(),
             suffix_table: seeds,

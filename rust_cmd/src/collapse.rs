@@ -7,6 +7,7 @@ use crate::InstanceLivedTempDir;
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
 use bio::io::fasta::*;
+use indicatif::ProgressBar;
 use itertools::Itertools;
 use shardio::{DefaultSort, Range, ShardReader, ShardSender, ShardWriter};
 use crate::alignment::fasta_bit_encoding::FastaBase;
@@ -44,7 +45,7 @@ pub fn collapse(reference: &String,
     // align whatever combination of reads to the reference, collapsing down to a single sequence
     let aligned_temp = temp_directory.temp_file("aligned_reads.fasta");
 
-    warn!("Aligning reads to reference in directory {}", aligned_temp.as_path().display());
+    info!("Aligning reads to reference in directory {}", aligned_temp.as_path().display());
 
     align_reads(&true,
                 read_structure,
@@ -61,30 +62,36 @@ pub fn collapse(reference: &String,
                 threads,
                 inversions);
 
-    warn!("Sorting the aligned reads");
+    info!("Sorting the aligned reads");
 
     // TODO: fix alignment to output as a sorted file and get rid of this rewrite step
-    let mut sorted_input = output_fasta_to_sorted_shard_reader(&aligned_temp.as_path(), temp_directory, read_structure);
+    let mut ret = output_fasta_to_sorted_shard_reader(&aligned_temp.as_path(), temp_directory, read_structure);
+    let mut read_count = ret.0;
+    let mut sorted_input = ret.1;
 
-    warn!("Sorting by read tags");
+    info!("Sorting by read tags");
 
     // sort the reads by the tags
     let mut levels = 0;
     read_structure.get_sorted_umi_configurations().iter().for_each(|tag| {
         match tag.sort_type {
             UMISortType::KnownTag => {
-                sorted_input = sort_known_level(temp_directory, &sorted_input, &tag);
+                let ret = sort_known_level(temp_directory, &sorted_input, &tag, &read_count);
+                sorted_input = ret.1;
+                read_count = ret.0;
             }
             UMISortType::DegenerateTag => {
-                sorted_input = sort_degenerate_level(temp_directory, &sorted_input, &tag, &levels);
+                let ret = sort_degenerate_level(temp_directory, &sorted_input, &tag, &levels, &read_count);
+                sorted_input = ret.1;
+                read_count = ret.0;
             }
         }
         levels += 1;
     });
-    warn!("writing consensus reads");
+    info!("writing consensus reads");
 
     // collapse the final reads down to a single sequence and write everything to the disk
-    write_consensus_reads(&sorted_input, final_output, &threads, levels);
+    write_consensus_reads(&sorted_input, final_output, &threads, levels, &read_count);
 }
 
 
@@ -208,16 +215,16 @@ impl TagStrippingDiskBackedBuffer {
         final_correction
     }
 
-    pub fn close(&mut self) -> (PathBuf, FxHashMap<Vec<u8>, Vec<u8>>) {
+    pub fn close(&mut self) -> (VecDeque<SortingReadSetContainer>, FxHashMap<Vec<u8>, Vec<u8>>) {
         let final_correction = self.correct_list();
-        let fl = self.output_file.clone();
-        if self.shard_writer.is_none() {
-            self.dump_buffer();
-        }
-        self.shard_sender.as_mut().unwrap().finished().unwrap();
-        self.shard_writer.as_mut().unwrap().finish().unwrap();
+        //std::mem::replace(&mut response.headers, hyper::header::Headers::new())
+        let ret = (std::mem::replace(&mut self.buffer, VecDeque::new()), final_correction);
+        self.buffer = VecDeque::new();
+        ret
+    }
 
-        (fl, final_correction)
+    pub fn clean(&mut self) {
+        self.buffer = VecDeque::new();
     }
 }
 
@@ -248,8 +255,8 @@ impl TagStrippingDiskBackedBuffer {
 pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                              reader: &ShardReader<SortingReadSetContainer>,
                              tag: &UMIConfiguration,
-iteration: &usize) -> ShardReader<SortingReadSetContainer> {
-    warn!("Sorting degenerate level {}",tag.symbol);
+                             iteration: &usize, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
+    info!("Sorting degenerate level {}",tag.symbol);
     // create a new output
     let mut processed_reads = 0;
     let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
@@ -258,21 +265,20 @@ iteration: &usize) -> ShardReader<SortingReadSetContainer> {
                                                                                     1 << 16).unwrap();
 
     let mut sender = sharded_output.get_sender();
+    let bar = ProgressBar::new(read_count.clone() as u64);
 
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut current_sorting_bin: TagStrippingDiskBackedBuffer =
-        TagStrippingDiskBackedBuffer::new(temp_directory.temp_file(format!("{}_{}.fasta", 0, tag.order).as_str()), 10000, tag.clone());
+        TagStrippingDiskBackedBuffer::new(temp_directory.temp_file(format!("{}_{}.fasta", 0, tag.order).as_str()), 1000000, tag.clone());
 
     let mut largest_group_size = 0;
     let mut group_size = 0;
 
     reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, y)| {
+        bar.inc(1);
         let mut x = y.as_ref().unwrap().clone();
         let mut x2 = y.as_ref().unwrap().clone();
         processed_reads += 1;
-        if processed_reads % 1000000 == 0 {
-            warn!("Processed {} reads", processed_reads);
-        }
         if !last_read.is_none() {
             assert_eq!(x.ordered_sorting_keys.len(), *iteration);
             if last_read.as_ref().unwrap().cmp(&&mut x) == Ordering::Equal {
@@ -280,54 +286,60 @@ iteration: &usize) -> ShardReader<SortingReadSetContainer> {
                 current_sorting_bin.push(x);
                 group_size += 1;
             } else {
-                let (file, correction) = current_sorting_bin.close();
-                if correction.len() > largest_group_size {
-                    largest_group_size = correction.len();
-                }
-                let shard_reader: ShardReader<SortingReadSetContainer, DefaultSort> = ShardReader::open(file).unwrap();
-                for y in shard_reader.iter_range(&Range::all()).unwrap() {
+                if (tag.maximum_subsequences.is_some() && tag.maximum_subsequences.unwrap() > current_sorting_bin.buffer.len()) || tag.maximum_subsequences.is_none() {
+                    let (buffer, correction) = current_sorting_bin.close();
+                    if correction.len() > largest_group_size {
+                        largest_group_size = correction.len();
+                    }
 
-                    let mut y: SortingReadSetContainer = y.unwrap().clone();
-                    let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
-                    let corrected = correction.get(&FastaBase::to_vec_u8(&key_value.1)).unwrap();
-                    y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
-                    sender.send(y).unwrap();
+                    //let shard_reader: ShardReader<SortingReadSetContainer, DefaultSort> = ShardReader::open(file).unwrap();
+                    for mut y in buffer {
+
+                        //let mut y: SortingReadSetContainer = y.unwrap().clone();
+                        let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
+                        let corrected = correction.get(&FastaBase::to_vec_u8(&key_value.1)).unwrap();
+                        y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
+                        sender.send(y).unwrap();
+                    }
+                    group_size = 0;
+                    current_sorting_bin = TagStrippingDiskBackedBuffer::new(temp_directory.temp_file(format!("{}_{}.fasta", i, tag.order).as_str()), 1000000, tag.clone());
+                    current_sorting_bin.push(x);
+                } else {
+                    warn!("Dropping read with buffer size {} and max size {}", current_sorting_bin.buffer.len(), tag.maximum_subsequences.unwrap());
+                    current_sorting_bin.clean();
                 }
-                group_size = 0;
-                current_sorting_bin = TagStrippingDiskBackedBuffer::new(temp_directory.temp_file(format!("{}_{}.fasta", i, tag.order).as_str()), 10000, tag.clone());
-                current_sorting_bin.push(x);
             }
         } else {
             current_sorting_bin.push(x);
         }
         last_read = Some(x2);
     });
-    let (file, correction) = current_sorting_bin.close();
-    let shard_reader: ShardReader<SortingReadSetContainer, DefaultSort> = ShardReader::open(file).unwrap();
-    for y in shard_reader.iter_range(&Range::all()).unwrap() {
-        let mut y: SortingReadSetContainer = y.unwrap().clone();
+    let (buffer, correction) = current_sorting_bin.close();
+    //let shard_reader: ShardReader<SortingReadSetContainer, DefaultSort> = ShardReader::open(file).unwrap();
+    for mut y in buffer {
+        //let mut y: SortingReadSetContainer = y.unwrap().clone();
         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
         let corrected = correction.get(&FastaBase::to_vec_u8(&key_value.1)).unwrap();
         y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
         sender.send(y).unwrap();
     }
 
-    warn!("For degenerate tag {} we processed {} reads, largest group size {}", &tag.symbol, processed_reads, largest_group_size);
+    info!("For degenerate tag {} we processed {} reads, largest group size {}", &tag.symbol, processed_reads, largest_group_size);
     sender.finished().unwrap();
 
     sharded_output.finish().unwrap();
 
-    ShardReader::open(aligned_temp).unwrap()
+    (processed_reads,ShardReader::open(aligned_temp).unwrap())
 }
 
-pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &ShardReader<SortingReadSetContainer>, tag: &UMIConfiguration) -> ShardReader<SortingReadSetContainer> {
-    warn!("Sorting known level {}",tag.symbol);
+pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &ShardReader<SortingReadSetContainer>, tag: &UMIConfiguration, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
+    info!("Sorting known level {}",tag.symbol);
     // get the known lookup table
-    warn!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
-    let mut known_lookup = KnownList::read_known_list_file(&tag,&tag.file.as_ref().unwrap(), &8);
-    warn!("Loaded the known lookup table for tag {}",tag.symbol);
+    info!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
+    let mut known_lookup = KnownList::read_known_list_file(&tag, &tag.file.as_ref().unwrap(), &8);
     let mut processed_reads = 0;
-    warn!("Sorting reads");
+    info!("Sorting reads");
+    let bar = ProgressBar::new(read_count.clone() as u64);
 
     // create a new output
     let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
@@ -340,45 +352,58 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
         let mut collided_reads = 0;
 
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
+            bar.inc(1);
             processed_reads += 1;
             let mut sorting_read_set_container = x.unwrap();
+            let sq = FastaBase::to_string(&sorting_read_set_container.aligned_read.aligned_read);
+            let sqref = FastaBase::to_string(&sorting_read_set_container.aligned_read.aligned_ref);
+
+            let sq2 = sorting_read_set_container.aligned_read.read_name.clone();
             assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), tag.order);
 
             let next_key = sorting_read_set_container.ordered_unsorted_keys.pop_front().unwrap();
-            assert_eq!(next_key.0, tag.symbol);
 
+            assert_eq!(next_key.0, tag.symbol);
 
             let corrected_hits = correct_to_known_list(&next_key.1, &mut known_lookup, &tag.max_distance);
 
-            match (corrected_hits.hits.len(),corrected_hits.distance) {
-                (x,_) if x == 0 => { dropped_reads += 1 }
-                (x,_) if x > 1 => { collided_reads + 1; dropped_reads += 1 }
-                (x,y) if y > tag.max_distance => { dropped_reads += 1 }
-                (x,y) => {
-                    sorting_read_set_container.ordered_sorting_keys.push((next_key.0, corrected_hits.hits.get(0).unwrap().clone()));
-                    assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), &tag.order + 1);
-                    sender.send(sorting_read_set_container).unwrap();
+            let is_matched = match (corrected_hits.hits.len(), corrected_hits.distance) {
+                (x, _) if x < 1 => {
+                    dropped_reads += 1;
+                    String::new()
                 }
-            }
-
-            if processed_reads % 1000000 == 0 {
-                warn!("Processed {} reads", processed_reads);
-            }
+                (x, _) if x > 1 => {
+                    collided_reads + 1;
+                    dropped_reads += 1;
+                    String::new()
+                }
+                (x, y) if y > tag.max_distance => {
+                    dropped_reads += 1;
+                    String::new()
+                }
+                (x, y) => {
+                    sorting_read_set_container.ordered_sorting_keys.push((next_key.0, corrected_hits.hits.get(0).unwrap().clone()));
+                    sender.send(sorting_read_set_container).unwrap();
+                    FastaBase::to_string(corrected_hits.hits.get(0).unwrap())
+                }
+            };
         });
 
-        warn!("Dropped {} where we coudn't match a known barcode",dropped_reads);
+        info!("Dropped {} reads where we couldn't match a known barcode",dropped_reads);
         sender.finished().unwrap();
         sharded_output.finish().unwrap();
     }
-    warn!("For known tag {} we processed {} reads", &tag.symbol, processed_reads);
+    info!("For known tag {} we processed {} reads", &tag.symbol, processed_reads);
 
-    ShardReader::open(aligned_temp).unwrap()
+    (processed_reads, ShardReader::open(aligned_temp).unwrap())
 }
 
 pub fn output_fasta_to_sorted_shard_reader(written_fasta_file: &Path,
                                            temp_directory: &mut InstanceLivedTempDir,
-                                           read_structure: &SequenceLayoutDesign) -> ShardReader<SortingReadSetContainer> {
+                                           read_structure: &SequenceLayoutDesign) -> (usize, ShardReader<SortingReadSetContainer>) {
     let aligned_temp = temp_directory.temp_file("first_pass_sorted.sharded");
+    let mut processed_reads = 0;
+
     {
         let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(aligned_temp.clone(), 32,
                                                                                         256,
@@ -387,7 +412,7 @@ pub fn output_fasta_to_sorted_shard_reader(written_fasta_file: &Path,
         let mut sender = sharded_output.get_sender();
 
         let input_fasta = Reader::from_file(&written_fasta_file).unwrap();
-        warn!("Reading fasta file {}",written_fasta_file.to_str().unwrap());
+        info!("Reading fasta file {}",written_fasta_file.to_str().unwrap());
         let mut sorting_order = read_structure.umi_configurations.iter().map(|x| x.1.clone()).collect::<Vec<UMIConfiguration>>();
         sorting_order.sort_by(|a, b| a.order.cmp(&b.order));
         let sorted_tags = sorting_order.iter().map(|x| x.symbol).collect::<Vec<char>>();
@@ -395,12 +420,13 @@ pub fn output_fasta_to_sorted_shard_reader(written_fasta_file: &Path,
         input_fasta.records().chunks(2).into_iter().for_each(|mut chunk| {
             let ref_record = chunk.nth(0).unwrap().unwrap();
             let read_record = chunk.nth(0).unwrap().unwrap();
+            processed_reads += 1;
             //warn!("Reading fasta rec {}",ref_record.id().to_string());
             //warn!("Reading fasta read {}",read_record.id().to_string());
 
             let read_tags = extract_output_tags(&read_record.id().to_string());
             let read_tags_ordered = VecDeque::from(sorted_tags.iter().
-                map(|x| (x.clone(), read_tags.get(x).unwrap().as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>())).collect::<Vec<(char, Vec<FastaBase>)>>());
+                map(|x| (x.clone(), read_tags.1.get(x).unwrap().as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>())).collect::<Vec<(char, Vec<FastaBase>)>>());
 
             let new_sorted_read_container = SortingReadSetContainer {
                 ordered_sorting_keys: vec![],
@@ -410,6 +436,7 @@ pub fn output_fasta_to_sorted_shard_reader(written_fasta_file: &Path,
                     aligned_read: read_record.seq().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>(),
                     aligned_ref: ref_record.seq().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>(),
                     ref_name: "".to_string(),
+                    read_name: read_tags.0,
                 },
             };
             assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
@@ -420,10 +447,10 @@ pub fn output_fasta_to_sorted_shard_reader(written_fasta_file: &Path,
         sharded_output.finish().unwrap();
     }
 
-    ShardReader::open(aligned_temp).unwrap()
+    (processed_reads, ShardReader::open(aligned_temp).unwrap())
 }
 
-pub fn extract_output_tags(header_string: &String) -> BTreeMap<char, String> {
+pub fn extract_output_tags(header_string: &String) -> (String, BTreeMap<char, String>) {
     //assert!(header_string.starts_with(">"), "The header string does not start with a > character");
     let tokens = header_string.split("_").collect::<Vec<&str>>();
     assert!(tokens.len() >= 2, "The header string does not contain any tags");
@@ -437,7 +464,7 @@ pub fn extract_output_tags(header_string: &String) -> BTreeMap<char, String> {
         //println!("{} -> {}", key, value);
         tags.insert(key, value);
     });
-    tags
+    (String::from(tokens.get(0).unwrap().clone()).clone(), tags)
 }
 
 //pub fn order_output_keys(header_string: &String, )
@@ -452,7 +479,7 @@ mod tests {
     fn test_extract_output_tags() {
         let test_string = String::from(">VH00708:168:AACK37GM5:1:1101:40992:1000_key=$:TCTCACGAGGTGGCTG;key=%:CGGTTCCGAAGT;key=^:AGGGTCTCGGCC");
         let tags = extract_output_tags(&test_string);
-        assert_eq!(tags.len(), 3);
+        assert_eq!(tags.1.len(), 3);
     }
 
     #[test]

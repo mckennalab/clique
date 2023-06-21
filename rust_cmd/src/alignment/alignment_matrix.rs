@@ -870,7 +870,11 @@ pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &Vec<u8>, s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alignment::fasta_bit_encoding::{fasta_vec_to_string, reverse_complement, str_to_fasta_vec};
+    use crate::alignment::fasta_bit_encoding::{fasta_vec_to_string, reverse_complement};
+
+    fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
+        FastaBase::from_vec_u8(&input.as_bytes().to_vec())
+    }
 
     #[test]
     fn waterman_eggart_affine_test_case_2nds() {
@@ -899,7 +903,7 @@ mod tests {
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(results.alignment_string1, str_to_fasta_vec("CTACTACTGCT"));
+        assert_eq!(results.alignment_string1, FastaBase::from_vec_u8(&"CTACTACTGCT".as_bytes().to_vec()));
         assert_eq!(results.alignment_string2, str_to_fasta_vec("CTACT-CTACT"));
     }
 

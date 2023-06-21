@@ -15,9 +15,10 @@ use crate::read_strategies::read_set::{ReadIterator};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
 use std::time::{Instant};
 use ndarray::Ix3;
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, fasta_vec_to_vec_u8, FastaBase, reverse_complement, str_to_fasta_vec};
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, fasta_vec_to_vec_u8, FastaBase, reverse_complement};
 use crate::merger::MergedReadSequence;
 use crate::read_strategies::sequence_layout::SequenceLayoutDesign;
+use edlib_rs::edlibrs::*;
 
 
 pub fn align_reads(use_capture_sequences: &bool,
@@ -220,18 +221,19 @@ pub fn alignment(x: &Vec<FastaBase>,
     let forward_oriented_seq = if !read_structure.known_orientation {
         let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
         if orientation {
-            str_to_fasta_vec(FastaBase::to_string(x).as_str())
+            x.clone()
         } else {
-            reverse_complement(&str_to_fasta_vec(FastaBase::to_string(x).as_str()))
+            reverse_complement(&x)
         }
     } else {
-        str_to_fasta_vec(FastaBase::to_string(x).as_str())
+        x.clone()
     };
 
     if forward_oriented_seq.len() > reference.sequence.len() * max_reference_multiplier || forward_oriented_seq.len() < min_read_length {
         warn!("Dropping read of length {}",forward_oriented_seq.len());
         None
     } else {
+
         perform_affine_alignment(
             alignment_mat,
             &reference.sequence,
@@ -248,6 +250,8 @@ pub fn alignment(x: &Vec<FastaBase>,
         Some(results)
     }
 }
+
+
 
 pub fn matching_read_bases_prop(read: &Vec<FastaBase>, reference: &Vec<FastaBase>) -> f32 {
     assert_eq!(read.len(), reference.len());
@@ -396,4 +400,22 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
     }
     new_cigar.reverse();
     new_cigar
+}
+
+
+#[cfg(test)]
+mod tests {
+    use edlib_rs::edlibrs::*;
+
+    #[test]
+    fn simple_edlib() {
+        let reference = String::from("AATGATACGG\0").as_bytes().to_owned();
+        let test_read = String::from("TATGATAAGG\0").as_bytes().to_owned();
+        let mut config = EdlibAlignConfigRs::default();
+        config.mode = EdlibAlignModeRs::EDLIB_MODE_NW;
+        let align_res = edlibAlignRs(test_read.as_slice(), reference.as_slice(), &config);
+
+
+
+    }
 }

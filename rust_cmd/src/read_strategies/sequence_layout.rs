@@ -99,6 +99,7 @@ pub struct UMIConfiguration {
     pub length: usize,
     pub order: usize,
     pub max_distance: usize,
+    pub maximum_subsequences: Option<usize>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -106,6 +107,7 @@ pub struct SequenceLayoutDesign {
     pub merge: Option<MergeStrategy>,
     pub reads: Vec<ReadPosition>,
     pub known_orientation: bool,
+    pub read_separator: Option<String>,
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 

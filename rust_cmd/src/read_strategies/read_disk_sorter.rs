@@ -21,6 +21,7 @@ pub struct SortedAlignment {
     pub aligned_read: Vec<FastaBase>,
     pub aligned_ref: Vec<FastaBase>,
     pub ref_name: String,
+    pub read_name: String,
 }
 
 impl Eq for SortingReadSetContainer {}
@@ -107,6 +108,7 @@ mod tests {
                 aligned_read: vec![],
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
+                read_name: "".to_string(),
             },
         };
         let srsc2 = SortingReadSetContainer{
@@ -116,6 +118,7 @@ mod tests {
                 aligned_read: vec![],
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
+                read_name: "".to_string(),
             },
         };
 
@@ -128,6 +131,7 @@ mod tests {
                 aligned_read: vec![],
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
+                read_name: "".to_string(),
             },
         };
         let srsc2 = SortingReadSetContainer{
@@ -137,6 +141,7 @@ mod tests {
                 aligned_read: vec![],
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
+                read_name: "".to_string(),
             },
         };
 
@@ -152,6 +157,7 @@ mod tests {
                 aligned_read: vec![],
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
+                read_name: "".to_string(),
             },
         };
         let srsc2 = SortingReadSetContainer{
@@ -163,6 +169,7 @@ mod tests {
                 aligned_read: vec![],
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
+                read_name: "".to_string(),
             },
         };
 
@@ -183,6 +190,7 @@ mod tests {
             aligned_read: read_seq.clone(),
             aligned_ref:  read_seq.clone(),
             ref_name: "".to_string(),
+            read_name: "".to_string(),
         };
 
         let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone()], ordered_unsorted_keys: VecDeque::new(), aligned_read: fake_read.clone() };

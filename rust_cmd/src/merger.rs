@@ -1,7 +1,7 @@
 use bio::io::fastq::Record;
 use needletail::Sequence;
 use serde::{Deserialize, Serialize};
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, str_to_fasta_vec};
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
 use crate::alignment_functions::align_two_strings;
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
@@ -35,23 +35,24 @@ use crate::utils::read_utils::combine_phred_scores;
 /// ```
 /// let merged_sequence = merge_reads_by_concatenation(&read1, &read2, &reference, &scoring);
 /// ```
-pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, reference_size: usize) -> MergedSequence {
+pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, spacer: &Option<String>, reference_size: usize) -> MergedSequence {
     let read1_seq = FastaBase::from_vec_u8(&read1.seq().to_vec());
     let rev_comp_read2 = FastaBase::from_vec_u8(&read2.seq().reverse_complement().to_vec());
-
-    // simply 'align' them to the ends
     match &reference_size {
         x if x > &0 => {
             let gap_size: i64 = reference_size as i64 - read1_seq.len() as i64 - rev_comp_read2.len() as i64;
+            println!("Gap size: {}", gap_size);
             if gap_size < 0 {
                 panic!("Our gap size cannot be less than 0 ({} here, ref length {}), for sequence {:?} and {:?}", gap_size, reference_size, read1_seq, rev_comp_read2);
             }
 
-            let mut ret_vec = Vec::with_capacity(*x);
+            let mut ret_vec = Vec::with_capacity(gap_size.clone() as usize + read1_seq.len()  + rev_comp_read2.len());
+
             ret_vec.extend(read1_seq);
-            ret_vec.extend(vec![FASTA_UNSET; gap_size.abs() as usize]);
+            ret_vec.extend(vec![FASTA_UNSET; gap_size.clone() as usize]);
             ret_vec.extend(rev_comp_read2);
-            let quals = vec![b'H'; *x];
+
+            let quals = vec![b'H'; ret_vec.len()];
 
             MergedSequence {
                 read_bases: ret_vec,
@@ -60,13 +61,26 @@ pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, reference_si
             }
         }
         _ => {
-            let mut ret_vec = Vec::with_capacity(read1_seq.len() + rev_comp_read2.len());
-            ret_vec.extend(read1_seq);
-            ret_vec.extend(rev_comp_read2);
-            let quals = vec![b'H'; ret_vec.len()];
+
+            let sq= match spacer {
+                None => {
+                    let mut ret_vec = Vec::with_capacity(read1_seq.len() + rev_comp_read2.len());
+                    ret_vec.extend(read1_seq);
+                    ret_vec.extend(rev_comp_read2);
+                    ret_vec
+                }
+                Some(x) => {
+                    let mut ret_vec = Vec::with_capacity(read1_seq.len() + rev_comp_read2.len());
+                    ret_vec.extend(read1_seq);
+                    ret_vec.extend(FastaBase::from_string(&x));
+                    ret_vec.extend(rev_comp_read2);
+                    ret_vec
+                }
+            };
+            let quals = vec![b'H'; sq.len()];
 
             MergedSequence {
-                read_bases: ret_vec,
+                read_bases: sq,
                 read_quals: quals,
                 mismatch_rate: 0.0,
             }
@@ -103,7 +117,7 @@ impl MergedReadSequence {
         }
     }
 
-    fn decision_tree(&self, it: ReadSetContainer) -> NamedRead {
+    fn decision_tree(&self, it: ReadSetContainer, padding: &Option<String>) -> NamedRead {
         match (&self.read_content, &self.read_structure.merge) {
             ((true, true, false, false), Some(MergeStrategy::Align)) => {
                 NamedRead{
@@ -116,7 +130,7 @@ impl MergedReadSequence {
 
                 NamedRead{
                     name: it.read_one.id().as_bytes().to_vec(),
-                    seq: merge_reads_by_concatenation(&it.read_one, &it.read_two.unwrap(),0).read_bases
+                    seq: merge_reads_by_concatenation(&it.read_one, &it.read_two.unwrap(),padding, 0).read_bases
                 }
             }
             ((true, false, false, false), _) => {
@@ -145,7 +159,7 @@ impl Iterator for MergedReadSequence {
         let reads = self.underlying_iterator.next();
         match reads {
             Some(reads) => {
-                Some(self.decision_tree(reads))
+                Some(self.decision_tree(reads, &self.read_structure.read_separator))
             }
             None => None,
         }
@@ -183,8 +197,8 @@ pub fn merged_iterator(iterator: ReadIterator, read_structure: &SequenceLayoutDe
 /// let merged_sequence = read_merger(&read1, &read2);
 /// ```
 pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_scoring: &dyn AffineScoringFunction) -> MergedSequence {
-    let read1_seq = str_to_fasta_vec(String::from_utf8(read1.seq().to_vec()).unwrap().as_str());
-    let rev_comp_read2 = str_to_fasta_vec(String::from_utf8(read2.seq().reverse_complement().to_vec()).unwrap().as_str());
+    let read1_seq = FastaBase::from_vec_u8(&read1.seq().to_vec());
+    let rev_comp_read2 = FastaBase::from_vec_u8(&read2.seq().reverse_complement().to_vec());
     let mut rev_comp_read2_qual = read2.qual().to_vec();
     rev_comp_read2_qual.reverse();
 
@@ -280,8 +294,11 @@ pub fn alignment_rate_and_consensus(alignment_1: &Vec<FastaBase>, qual_scores1: 
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Ordering;
     use super::*;
-
+    fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
+        FastaBase::from_vec_u8(&input.as_bytes().to_vec())
+    }
     fn get_scoring_scheme() -> AffineScoring {
         AffineScoring {
             match_score: 10.0,
@@ -376,8 +393,9 @@ mod tests {
 
     #[test]
     fn space_to_reference_tester() {
-        let reference = str_to_fasta_vec("TTACAAAATTTGTGAAAGATTGACTGGTATTCTTAACTATGTTGCTCCTTTTACGCTATGTGGATACGCTGCTTTAATGCCTTTGTATCATGCGTT");
-        let reads_reference_aligned = str_to_fasta_vec("TTACAAAATTTGTGAAAGATTGACTGGTATTCTTAACTATGTTGCTCCTTTT---------------------TTAATGCCTTTGTATCATGCGTT");
+        let reference = FastaBase::from_vec_u8(&"TTACAAAATTTGTGAAAGATTGACTGGTATTCTTAACTATGTTGCTCCTTTTACGCTATGTGGATACGCTGCTTTAATGCCTTTGTATCATGCGTT".as_bytes().to_vec());
+        let reads_reference_aligned = FastaBase::from_vec_u8(&"TTACAAAATTTGTGAAAGATTGACTGGTATTCTTAACTATGTTGCTCCTTTT---------------------TTAATGCCTTTGTATCATGCGTT".as_bytes().to_vec());
+        println!("HERE");
         let read1_fwd = "TTACAAAATTTGTGAAAGATTGACTGGTATTCTTAACTATGTTGCTCCTTTT".as_bytes();
         let read1_qls = "FFFFFFFFFFAFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF/FFAFFFFFFF".as_bytes();
         let read2_fwd = "AACGCATGATACAAAGGCATTAA".as_bytes();
@@ -385,8 +403,11 @@ mod tests {
 
         let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
+        println!("HERE2");
 
-        let fake_aligned = merge_reads_by_concatenation(&record1, &record2, reference.len());
-        assert_eq!(fake_aligned.read_bases, reads_reference_aligned);
+        let fake_aligned = merge_reads_by_concatenation(&record1, &record2, &None, reference.len());
+        println!("HERE3");
+        println!("fake_aligned: {}", FastaBase::to_string(&fake_aligned.read_bases));
+        assert_eq!(fake_aligned.read_bases.cmp(&reads_reference_aligned)==Ordering::Equal, true);
     }
 }

@@ -64,6 +64,7 @@ mod tests {
             length: 16,
             order: 0,
             max_distance: 2,
+            maximum_subsequences: None,
         };
 
         println!("loading file...");
@@ -127,6 +128,7 @@ mod tests {
             length: 16,
             order: 0,
             max_distance: 2,
+            maximum_subsequences: None,
         };
 
         let kf = KnownLookup::from(&configuration);

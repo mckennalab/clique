@@ -9,6 +9,7 @@ use shardio::{Range, ShardReader, ShardWriter};
 use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
 use std::io::Write;
+use indicatif::ProgressBar;
 
 
 pub struct ConsensusCandidate {
@@ -30,41 +31,41 @@ pub fn null_cap(strs: &[Vec<u8>]) -> Vec<Vec<u8>> {
     }).collect::<Vec<Vec<u8>>>()
 }
 
-pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>, output_file: &String, threads: &usize, levels: usize) {
+pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>, output_file: &String, threads: &usize, levels: usize, read_counts: &usize) {
     //let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&output_file, 32,
     //                                                                                256,
     //                                                                                1 << 16).unwrap();
     //let mut sender = sharded_output.get_sender();
-    warn!("Writing consensus reads to {}", output_file);
+    info!("Writing consensus reads to {}", output_file);
     let mut output_fl = std::fs::File::create(output_file).expect("Unable to create file");
 
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
-
+    let bar = ProgressBar::new(read_counts.clone() as u64);
 
     reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, x)| {
-        if i % 100000 == 0 { println!("processing read {}", i); }
+        bar.inc(1);
         let x = x.unwrap();
         assert_eq!(x.ordered_sorting_keys.len(), levels);
         if last_read.is_some() && &x.cmp(last_read.as_ref().unwrap()) == &Ordering::Equal {
-            if i < 10000 { println!("processing read {}", FastaBase::to_string(&x.aligned_read.aligned_read)); }
             buffered_reads.push_back(x.clone());
             last_read = Some(x);
         } else {
-            if i < 50 && last_read.is_some() {
+            /*if i < 50 && last_read.is_some() {
                 let tags = x.ordered_sorting_keys.iter().map(|x|FastaBase::to_string(&x.1)).collect::<Vec<String>>().join(",");
                 let tags2 = last_read.as_ref().unwrap().ordered_sorting_keys.iter().map(|x|FastaBase::to_string(&x.1)).collect::<Vec<String>>().join(",");
 
                 println!("processing read {} tags {} tags2 {} ", FastaBase::to_string(&x.aligned_read.aligned_read),tags,tags2);
-            }
+            }*/
             if buffered_reads.len() > 0 {
                 let mut consensus_reads = create_poa_consensus(&buffered_reads);
                 let ref_seq = FastaBase::to_string(&consensus_reads.aligned_read.aligned_ref);
                 let read_seq = FastaBase::to_string(&consensus_reads.aligned_read.aligned_read);
                 let count = buffered_reads.len();
+                let read_names = buffered_reads.iter().map(|x|x.aligned_read.read_name.clone()).collect::<Vec<String>>().join(",");
                 let tags = buffered_reads.pop_front().unwrap().ordered_sorting_keys.iter().map(|x|FastaBase::to_string(&x.1)).collect::<Vec<String>>().join(",");
 
-                write!(output_fl, ">{};{}\n{}\n{}\n", tags, count, ref_seq, read_seq).unwrap(); ;
+                write!(output_fl, ">{};{};names={}\n{}\n{}\n", tags, count, read_names, ref_seq, read_seq).unwrap(); ;
                 buffered_reads.clear();
             }
             buffered_reads.push_back(x.clone());
@@ -80,6 +81,11 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>, outp
 pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>) -> SortingReadSetContainer {
     let max_length = sequences.iter().map(|n| n.aligned_read.aligned_read.len()).collect::<Vec<usize>>();
     let max_length = max_length.iter().max().unwrap();
+    let first_name = match sequences.iter().next() {
+        Some(x) => x.aligned_read.read_name.clone(),
+        None => "UNKNOWN".to_string(),
+    };
+
     let base_sequences = sequences.iter().map(|n| {
         let mut y = FastaBase::to_vec_u8(&n.aligned_read.aligned_read);
         y.push(b'\0');
@@ -93,6 +99,7 @@ pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>) -> So
             aligned_read: FastaBase::from_vec_u8(&consensus),
             aligned_ref: sequences[0].aligned_read.aligned_ref.clone(),
             ref_name: sequences[0].aligned_read.ref_name.clone(),
+            read_name: first_name,
         },
     }
 }
