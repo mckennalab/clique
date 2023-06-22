@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::{hash::BuildHasherDefault};
 use nohash_hasher::NoHashHasher;
+use crate::alignment::fasta_bit_encoding::FastaBase;
 
 use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::fasta_comparisons::KNOWNBASES;
-use crate::alignment::fasta_bit_encoding::{u8_to_encoding};
 
 
 pub const REFERENCE_CHAR: u8 = b'R';
@@ -59,7 +59,7 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
     let mut in_extractor = false;
 
     for (reference_base, read_base) in std::iter::zip(aligned_ref, aligned_read) {
-        match (u8_to_encoding(reference_base).is_some(), reference_base.is_ascii_uppercase() || (*reference_base == b'-' && in_extractor), in_extractor) {
+        match (FastaBase::valid(reference_base), reference_base.is_ascii_uppercase() || (*reference_base == b'-' && in_extractor), in_extractor) {
             (_x, true, _z) => {
                 in_extractor = true;
                 special_values.entry(REFERENCE_CHAR).or_insert_with(Vec::new).push(reference_base.clone());

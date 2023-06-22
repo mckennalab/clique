@@ -179,7 +179,7 @@ fn main() {
     PrettyTrace::new().ctrlc().on();
 
     if let Err(_) = std::env::var("RUST_LOG") {
-        std::env::set_var("RUST_LOG", "warn");
+        std::env::set_var("RUST_LOG", "info");
     }
 
     pretty_env_logger::init_timed();

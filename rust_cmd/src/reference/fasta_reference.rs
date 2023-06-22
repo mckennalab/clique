@@ -20,7 +20,7 @@ pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> V
 
         let seeds = ReferenceManager::find_seeds(&ref_copy, kmer_size);
         references.push(Reference {
-            sequence: FastaBase::from_vec_u8(&ref_entry.seq().to_vec()),
+            sequence: FastaBase::from_vec_u8_default_ns(&ref_entry.seq().to_vec()),
             sequence_u8: ref_entry.seq().to_vec(),
             name: str::as_bytes(ref_entry.id()).to_vec(),
             suffix_table: seeds,

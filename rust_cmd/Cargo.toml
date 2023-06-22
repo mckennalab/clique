@@ -42,9 +42,8 @@ nohash-hasher = "*"
 shardio = "*"
 anyhow = "1"
 rust-spoa = "*"
-edlib_rs = {git = "https://github.com/aaronmck/edlib-rs.git"}
 rustc-hash = "*"
-
+libwfa = {git = "https://github.com/cschin/rs-wfa.git"}
 
 [profile.release]
 lto = true

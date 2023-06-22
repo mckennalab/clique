@@ -10,10 +10,14 @@ use serde::{Serialize,Deserialize};
 /// our core Fasta base - representing a single fasta character in a u8 data store. We actually pack
 /// everything into a u4 (if that was a type) but FastaString below handles the more dense packing and
 /// unpacking into u64 structures
-#[derive(Clone, Copy, From, Add,Serialize, Deserialize, Hash)]
+#[derive(Clone, Copy, Add,Serialize, Deserialize, Hash)]
 pub struct FastaBase(u8);
 
 impl FastaBase {
+    pub fn valid(ch: &u8) -> bool {
+        u8_to_encoding(ch).is_some()
+    }
+
     pub fn identity(&self, other: &FastaBase) -> bool {
         (*self ^ *other).0 == 0
     }
@@ -48,7 +52,19 @@ impl FastaBase {
         distance
     }
 }
+impl From<u8> for FastaBase {
+    fn from(ch: u8) -> Self {
+        u8_to_encoding(&ch).unwrap()
+    }
+}
 
+/// TODO: Should this exist?
+impl From<char> for FastaBase {
+    fn from(ch: char) -> Self {
+        assert_eq!(ch.len_utf8(), 1); // trying to be a bit safer
+        u8_to_encoding(&(ch as u8)).unwrap()
+    }
+}
 
 impl fmt::Debug for FastaBase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -156,64 +172,37 @@ pub const FASTA_D: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_
 pub const FASTA_H: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_T));
 pub const FASTA_V: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_G));
 
-#[allow(dead_code)]
-pub fn char_to_encoding(base: &char) -> Option<FastaBase> {
+
+fn encoding_to_u8(base: &FastaBase) -> u8 {
     match base {
-        '-' => Some(FASTA_UNSET),
+        x if x.0 == FASTA_UNSET.0 => {b'-'},
+        x if x.0 == FASTA_A.0 => {b'A'},
+        x if x.0 == FASTA_C.0 => {b'C'},
+        x if x.0 == FASTA_G.0 => {b'G'},
+        x if x.0 == FASTA_T.0 => {b'T'},
 
-        'A' | 'a' => Some(FASTA_A),
-        'C' | 'c' => Some(FASTA_C),
-        'G' | 'g' => Some(FASTA_G),
-        'T' | 't' => Some(FASTA_T),
+        x if x.0 == FASTA_R.0 => {b'R'},
+        x if x.0 == FASTA_Y.0 => {b'Y'},
+        x if x.0 == FASTA_K.0 => {b'K'},
+        x if x.0 == FASTA_M.0 => {b'M'},
 
-        'R' | 'r' => Some(FASTA_R),
-        'Y' | 'y' => Some(FASTA_Y),
-        'K' | 'k' => Some(FASTA_K),
-        'M' | 'm' => Some(FASTA_M),
+        x if x.0 == FASTA_S.0 => {b'S'},
+        x if x.0 == FASTA_W.0 => {b'W'},
+        x if x.0 == FASTA_B.0 => {b'B'},
+        x if x.0 == FASTA_D.0 => {b'D'},
 
-        'S' | 's' => Some(FASTA_S),
-        'W' | 'w' => Some(FASTA_W),
-        'B' | 'b' => Some(FASTA_B),
-        'D' | 'd' => Some(FASTA_D),
-
-        'H' | 'h' => Some(FASTA_H),
-        'V' | 'v' => Some(FASTA_V),
-
-        'N' | 'n' => Some(FASTA_N),
-        _ => None,
-    }
-}
-
-#[allow(dead_code)]
-pub fn encoding_to_u8(base: &FastaBase) -> u8 {
-    match base {
-        x if x == &FASTA_UNSET => {b'-'},
-        x if x == &FASTA_A => {b'A'},
-        x if x == &FASTA_C => {b'C'},
-        x if x == &FASTA_G => {b'G'},
-        x if x == &FASTA_T => {b'T'},
-
-        x if x == &FASTA_R => {b'R'},
-        x if x == &FASTA_Y => {b'Y'},
-        x if x == &FASTA_K => {b'K'},
-        x if x == &FASTA_M => {b'M'},
-
-        x if x == &FASTA_S => {b'S'},
-        x if x == &FASTA_W => {b'W'},
-        x if x == &FASTA_B => {b'B'},
-        x if x == &FASTA_D => {b'D'},
-
-        x if x == &FASTA_H => {b'H'},
-        x if x == &FASTA_V => {b'V'},
-        x if x == &FASTA_N => {b'N'},
+        x if x.0 == FASTA_H.0 => {b'H'},
+        x if x.0 == FASTA_V.0 => {b'V'},
+        x if x.0 == FASTA_N.0 => {b'N'},
         _ => {println!("Unable to convert {}",base.0); panic!("Unable to convert {:?}",base)},
     }
 }
 
-//pub fn compare_fasta_vec(vec1: &[FastaBase], vec2: &[FastaBase]) ->
 
-#[allow(dead_code)]
-pub fn u8_to_encoding_defaulted_to_n(base: &u8) -> FastaBase {
+fn char_to_encoding(base: &char) -> Option<FastaBase> {
+    Some(FastaBase::from(base.clone()))
+}
+fn u8_to_encoding_defaulted_to_n(base: &u8) -> FastaBase {
     match base {
         b'-' => FASTA_UNSET,
 
@@ -240,7 +229,7 @@ pub fn u8_to_encoding_defaulted_to_n(base: &u8) -> FastaBase {
 }
 
 #[allow(dead_code)]
-pub fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
+fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
     match base {
         b'-' => Some(FASTA_UNSET),
 
@@ -264,14 +253,13 @@ pub fn u8_to_encoding(base: &u8) -> Option<FastaBase> {
 
         b'N' | b'n' => Some(FASTA_N),
         _ => {
-            println!("Unable to convert {}",base);
             None
         },
     }
 }
 
 // see this RFC about why we have to do the match guard approach: https://rust-lang.github.io/rfcs/1445-restrict-constants-in-patterns.html
-pub fn complement(base: &FastaBase) -> FastaBase {
+fn complement(base: &FastaBase) -> FastaBase {
     match base {
         &x if x.identity(&FASTA_UNSET) => FASTA_UNSET,
         &x if x.identity(&FASTA_N) => FASTA_N,
@@ -293,21 +281,6 @@ pub fn complement(base: &FastaBase) -> FastaBase {
     }
 }
 
-
-#[allow(dead_code)]
-pub fn fasta_vec_to_string(vc: &Vec<FastaBase>) -> String {
-    String::from_utf8(fasta_vec_to_vec_u8(vc)).unwrap()
-}
-
-pub fn fasta_vec_to_vec_u8(vc: &Vec<FastaBase>) -> Vec<u8> {
-    let mut ret_vec = Vec::with_capacity(vc.len());
-    for b in vc {
-        ret_vec.push(encoding_to_u8(b));
-    }
-    ret_vec
-}
-
-
 pub(crate) fn reverse_complement(bases: &Vec<FastaBase>) -> Vec<FastaBase> {
     let mut new_bases = bases.clone().iter().map(|b| {
         complement(b)
@@ -316,109 +289,6 @@ pub(crate) fn reverse_complement(bases: &Vec<FastaBase>) -> Vec<FastaBase> {
     new_bases
 }
 
-#[derive(Clone, From, Debug, PartialEq, Eq)]
-pub struct FastaString {
-    packed_bases: Vec<u64>,
-    character_length: usize,
-}
-/*
-impl FastaString {
-    const fasta_base_per_u64: usize = 64 / 4;
-    const FULL_SHIFT: u64 = 0xFFFFFFFFFFFFFFFF;
-    const OFFSET_POSITIONS: [u64; 16] = [60,56,52,48,44,40,36,32,28,24,20,16,12,8,4,0];
-    const OFFSET_SHIFT: [u64; 16] = [
-        ((0xF as u64) << 60) as u64, ((0xF as u64) << 56) as u64, ((0xF as u64) << 52) as u64, ((0xF as u64) << 48) as u64,
-        ((0xF as u64) << 44) as u64, ((0xF as u64) << 40) as u64, ((0xF as u64) << 36) as u64, ((0xF as u64) << 32) as u64,
-        (0xF << 28) as u64, (0xF << 24) as u64, (0xF << 20) as u64, (0xF << 16) as u64,
-        (0xF << 12) as u64, (0xF << 8) as u64, (0xF << 4) as u64, (0xF) as u64];
-
-    pub fn index(&self, index: usize) -> FastaBase {
-        let u64_index = (index / FastaString::fasta_base_per_u64) as usize;
-        let u64_internal_offset = (index % FastaString::fasta_base_per_u64) as usize;
-
-        u8_to_encoding_defaulted_to_N(&u8::try_from((((*(&self.packed_bases.get(u64_index).unwrap()) & (0xF << &u64_internal_offset) as u64) >> &u64_internal_offset))).unwrap())
-    }
-
-    pub fn from(string: &str) -> FastaString {
-        let mut final_bases: Vec<u64> = vec![0; (string.len() as f64 / FastaString::fasta_base_per_u64 as f64).ceil() as usize];
-
-        string.chars().enumerate().for_each(|(index, s)| {
-            let final_base_index = (index / FastaString::fasta_base_per_u64) as usize;
-
-            match char_to_encoding(&s) {
-                None => { panic!("unable to convert char {} to a FastaBase within string {}", s, string) }
-                Some(t) => {
-                    let offset = (FastaString::fasta_base_per_u64 - (index % FastaString::fasta_base_per_u64)) - 1;
-
-                    final_bases[final_base_index] =
-                        (u64::from(t.0) << (offset * 4)) as u64 | final_bases[final_base_index];
-                }
-            }
-        });
-
-        FastaString { packed_bases: final_bases, character_length: string.len() }
-    }
-
-    #[allow(dead_code)]
-    pub fn reverse_complement(&self) { //-> FastaString {
-        /*let final_bases: Vec<u64> = Vec::with_capacity((string.len() as f64 / FastaString::fasta_base_per_u64 as f64).ceil() as usize);
-        // bases are laid out in order, we want to swap the order and switch to complement bases
-        let mut forward_position = 0;
-        let mut reverse_position = self.character_length - 1;
-        while forward_index <= reverse_index {
-            let forward_offset  = (FastaString::fasta_base_per_u64 - (forward_position % FastaString::fasta_base_per_u64)) - 1;
-            let forward_index =  (forward_position / FastaString::fasta_base_per_u64) as usize;
-            let reverse_offset  = (FastaString::fasta_base_per_u64 - (reverse_position % FastaString::fasta_base_per_u64)) - 1;
-            let reverse_index =  (reverse_position / FastaString::fasta_base_per_u64) as usize;
-
-
-        }*/
-
-    }
-
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.packed_bases.len()
-    }
-}
-*/
-
-
-/*
-pub fn hamming_bit_strings(a: &BitEncodedFasta, b: &BitEncodedFasta, width: usize) -> u64 {
-    assert_eq!(a.string.len(), b.string.len());
-    assert_eq!(a.length, b.length);
-    assert!(width <= CHAR_PER_ENCODING);
-
-    a.string.iter().zip(b.string.iter()).map(|(base_a, base_b)|
-        (0..width).map(|i| {
-            let mask = SINGLE_BIT_MASK << (((CHAR_PER_ENCODING - i) -1) * BIT_WIDTH);
-            let and = base_a & base_b;
-            let result_and = and & mask;
-            if result_and > 0 {0} else {1}
-        }).sum::<u64>()
-    ).sum()
-}
-
-
-pub fn string_to_bit(input: &Vec<u8>) -> BitEncodedFasta {
-    let mut string = Vec::new();
-
-    for chunk in input.chunks(CHAR_PER_ENCODING) {
-        let mut current_encoding: u64 = 0x0;
-        for index in 0..chunk.len() {
-
-            let converted_base = base_to_encoding(&chunk[index]);
-            current_encoding = current_encoding + (converted_base << ((CHAR_PER_ENCODING - index) -1) * BIT_WIDTH);
-        }
-        // pad the remainder
-        for index in chunk.len()..CHAR_PER_ENCODING {
-            current_encoding = current_encoding + (SINGLE_BIT_MASK << ((CHAR_PER_ENCODING - index) -1) * BIT_WIDTH);
-        }
-        string.push(current_encoding);
-    }
-    BitEncodedFasta { string, length: input.len() }
-}*/
 
 
 #[cfg(test)]
@@ -513,10 +383,21 @@ mod tests {
         assert!(FASTA_A < FASTA_N);
     }
 
+    #[test]
     fn bit_ordering_vec() {
         let str1 = vec![FASTA_N,FASTA_N,FASTA_N,FASTA_N,FASTA_N];
         let str2 = vec![FASTA_A,FASTA_C,FASTA_G,FASTA_N,FASTA_N];
         assert!(str1 > str2);
+    }
+
+    #[test]
+    fn test_string_conversion() {
+        let str1 = String::from_utf8("NNNNNNNNNNNNNNNNNNNNNNNNNNNNTTACGTTNNNNNNNNNNNNGATGTACCTGTCATCTTAGCTAAGATGACAGGACATGTCCAGGAAGTACTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT".as_bytes().to_vec()).unwrap();
+        let str2_partial = &FastaBase::from_string(&str1);
+        assert_eq!(str2_partial.get(0).unwrap().clone(),FASTA_N);
+        let str2 = FastaBase::to_string(&str2_partial);
+        assert_eq!(str1,str2);
+
     }
 
 

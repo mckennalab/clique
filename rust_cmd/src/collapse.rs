@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::string;
-use crate::alignment_functions::align_reads;
+use crate::alignment_functions::{align_reads, fast_align_reads};
 use crate::InstanceLivedTempDir;
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
@@ -47,7 +47,7 @@ pub fn collapse(reference: &String,
 
     info!("Aligning reads to reference in directory {}", aligned_temp.as_path().display());
 
-    align_reads(&true,
+    let ret = fast_align_reads(&true,
                 read_structure,
                 &false,
                 &false,
@@ -65,7 +65,7 @@ pub fn collapse(reference: &String,
     info!("Sorting the aligned reads");
 
     // TODO: fix alignment to output as a sorted file and get rid of this rewrite step
-    let mut ret = output_fasta_to_sorted_shard_reader(&aligned_temp.as_path(), temp_directory, read_structure);
+    //let mut ret = output_fasta_to_sorted_shard_reader(&aligned_temp.as_path(), temp_directory, read_structure);
     let mut read_count = ret.0;
     let mut sorted_input = ret.1;
 
@@ -306,6 +306,12 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                     current_sorting_bin.push(x);
                 } else {
                     warn!("Dropping read with buffer size {} and max size {}", current_sorting_bin.buffer.len(), tag.maximum_subsequences.unwrap());
+                    for i in 0..current_sorting_bin.buffer.len() {
+                        let mut y = current_sorting_bin.buffer.pop_front().unwrap();
+                        let key_value = y.ordered_sorting_keys.iter().map(|x| FastaBase::to_string(&x.1)).join("_");
+                        let key_value2 = y.ordered_unsorted_keys.iter().map(|x| FastaBase::to_string(&x.1)).join("_");
+                        warn!("{}{}", key_value, key_value2);
+                    }
                     current_sorting_bin.clean();
                 }
             }
@@ -338,6 +344,8 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
     info!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
     let mut known_lookup = KnownList::read_known_list_file(&tag, &tag.file.as_ref().unwrap(), &8);
     let mut processed_reads = 0;
+    let mut dropped_reads = 0;
+    let mut collided_reads = 0;
     info!("Sorting reads");
     let bar = ProgressBar::new(read_count.clone() as u64);
 
@@ -348,8 +356,6 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
                                                                                         256,
                                                                                         1 << 16).unwrap();
         let mut sender = sharded_output.get_sender();
-        let mut dropped_reads = 0;
-        let mut collided_reads = 0;
 
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
             bar.inc(1);
@@ -362,6 +368,9 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
             assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), tag.order);
 
             let next_key = sorting_read_set_container.ordered_unsorted_keys.pop_front().unwrap();
+            if processed_reads < 100 {
+                println!("{} {} {} {}", sq, sqref, sorting_read_set_container.aligned_read.read_name, FastaBase::to_string(&next_key.1));
+            }
 
             assert_eq!(next_key.0, tag.symbol);
 
@@ -395,7 +404,7 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
     }
     info!("For known tag {} we processed {} reads", &tag.symbol, processed_reads);
 
-    (processed_reads, ShardReader::open(aligned_temp).unwrap())
+    (processed_reads-dropped_reads, ShardReader::open(aligned_temp).unwrap())
 }
 
 pub fn output_fasta_to_sorted_shard_reader(written_fasta_file: &Path,

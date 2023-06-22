@@ -42,7 +42,16 @@ pub enum AlignmentTag {
     InversionOpen,
     InversionClose,
 }
-
+impl From<u8> for AlignmentTag {
+    fn from(value: u8) -> Self {
+        match value {
+            b'X' | b'M' => AlignmentTag::MatchMismatch(1),
+            b'D' => AlignmentTag::Del(1),
+            b'I' => AlignmentTag::Ins(1),
+            _ => {panic!("Cannot convert {} to AlignmentTag",value)}
+        }
+    }
+}
 
 impl fmt::Display for AlignmentTag {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -870,10 +879,14 @@ pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &Vec<u8>, s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alignment::fasta_bit_encoding::{fasta_vec_to_string, reverse_complement};
+    use crate::alignment::fasta_bit_encoding::{reverse_complement};
 
     fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
         FastaBase::from_vec_u8_default_ns(&input.as_bytes().to_vec())
+    }
+
+    fn fasta_vec_to_string(input: &Vec<FastaBase>) -> String {
+        FastaBase::to_string(input)
     }
 
     #[test]
