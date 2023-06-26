@@ -216,12 +216,6 @@ pub fn fast_align_reads(use_capture_sequences: &bool,
             let duration = start.elapsed();
             println!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
         }
-        if *read_count.lock().unwrap() < 100 {
-            println!("Read: {:?}", xx);
-            println!("ref: {:?}", ref_al);
-            println!("read: {:?}", read_al);
-            println!("Extracted tags: {:?}", ets);
-        }
     });
 
     sender.lock().unwrap().finished().unwrap();
