@@ -14,16 +14,16 @@ lazy_static! {
 
     pub static ref SPECIAL_CHARACTERS: HashMap::<u8, bool, BuildHasherDefault<NoHashHasher<u8>>> = {
         let mut hashedvalues : HashMap::<u8, bool, BuildHasherDefault<NoHashHasher<u8>>> = HashMap::with_capacity_and_hasher(10, BuildHasherDefault::default());
-        hashedvalues.insert(b'!',true);
-        hashedvalues.insert(b'@',true);
-        hashedvalues.insert(b'#',true);
-        hashedvalues.insert(b'$',true);
-        hashedvalues.insert(b'%',true);
-        hashedvalues.insert(b'^',true);
-        hashedvalues.insert(b'&',true);
-        hashedvalues.insert(b'*',true);
-        hashedvalues.insert(b'(',true);
-        hashedvalues.insert(b')',true);
+        hashedvalues.insert(b'0',true);
+        hashedvalues.insert(b'1',true);
+        hashedvalues.insert(b'2',true);
+        hashedvalues.insert(b'3',true);
+        hashedvalues.insert(b'4',true);
+        hashedvalues.insert(b'5',true);
+        hashedvalues.insert(b'6',true);
+        hashedvalues.insert(b'7',true);
+        hashedvalues.insert(b'8',true);
+        hashedvalues.insert(b'9',true);
         hashedvalues
         };
 }
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn tagged_sequence_test() {
-        let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC##########ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN##########CTGTAGGTAGTTTGTC").as_bytes().to_owned();
+        let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC0000000000ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN1111111111CTGTAGGTAGTTTGTC").as_bytes().to_owned();
         let test_read = String::from("AATGATACGGCGACCAGATCTACACACCCCTTTGCACACTCTTTCCCTACACGACGCTCTTCCGATCTAAAAAAAATTTTTTTTTTCTGTAGGTAGTTTGTC").as_bytes().to_owned();
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);
@@ -114,28 +114,28 @@ mod tests {
 
     #[test]
     fn tagged_sequence_test_space() {
-        let reference = String::from("AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--CAGTTCGATCTA").as_bytes().to_owned();
+        let reference = String::from("AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT111111111GAGTACC------TTA--CAGTTCGATCTA").as_bytes().to_owned();
         let test_read = String::from("-------------------------------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC-----------").as_bytes().to_owned();
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);
 
-        assert_eq!(keyvalues.get(&b'*').unwrap(), "CACCGTAAG");
+        assert_eq!(keyvalues.get(&b'1').unwrap(), "CACCGTAAG");
     }
 
     #[test]
     fn test_real_example() {
-        let reference = String::from("tcgtcggcagcgtcagatgtgtataagagacagctagcagATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACACATCAAAAGGATCTTTAATGAGATGGATCGCATACTAGACAGTTGCCANNNNNNNNNNNNgcttgcactgtactctacgcgactc############agatcg").as_bytes().to_owned();
+        let reference = String::from("tcgtcggcagcgtcagatgtgtataagagacagctagcagATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACACATCAAAAGGATCTTTAATGAGATGGATCGCATACTAGACAGTTGCCANNNNNNNNNNNNgcttgcactgtactctacgcgactc111111111111agatcg").as_bytes().to_owned();
         let test_read = String::from("-----------------------------------AGCAGATCACCGTAAGGACTACCAGACGTTTAGCTGCCGGCGGAATGCTATTACTGCATTTAATGGAAGACGTTTCCGCTAAGCTCTATTTAATGTCGGGAGCCGCTTTGTAACCTGATTTACAGTCTGAGTTCATGCGAGAGAACTCTTTAATGAGTGGCCTCTCGAATCACTGAGATTTAGAGTTATCCGACA-------AGGATCTTTAATGAGATG--------------------CCACCTAGTCTCCAGGCTTGCACTGTACTCTACGCGACTCTCACCAACCGAAA----").as_bytes().to_owned();
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);
 
         println!("{:?}", &keyvalues);
-        assert_eq!(keyvalues.get(&b'#').unwrap(), "TCACCAACCGAA");
+        assert_eq!(keyvalues.get(&b'1').unwrap(), "TCACCAACCGAA");
     }
 
     #[test]
     fn lower_and_uppercase_test() {
-        let reference = String::from("aaatacttgtacttcgttcaGTTACGTATTGCTAAGCAGTGGTAT*********GAGTACC------TTA--caaaaaaaaaaa").as_bytes().to_owned();
+        let reference = String::from("aaatacttgtacttcgttcaGTTACGTATTGCTAAGCAGTGGTAT111111111GAGTACC------TTA--caaaaaaaaaaa").as_bytes().to_owned();
         let test_read = String::from("AAATACTTGTACTTCGTTCA-----------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC-----------").as_bytes().to_owned();
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);

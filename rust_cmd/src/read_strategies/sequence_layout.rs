@@ -104,6 +104,7 @@ pub struct UMIConfiguration {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct SequenceLayoutDesign {
+    pub aligner: Option<String>,
     pub merge: Option<MergeStrategy>,
     pub reads: Vec<ReadPosition>,
     pub known_orientation: bool,

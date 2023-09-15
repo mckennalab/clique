@@ -9,6 +9,7 @@ use crate::reference::fasta_reference::ReferenceManager;
 use bio::io::fasta::*;
 use indicatif::ProgressBar;
 use itertools::Itertools;
+use log::Level::Warn;
 use shardio::{DefaultSort, Range, ShardReader, ShardSender, ShardWriter};
 use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
@@ -23,14 +24,13 @@ pub fn collapse(reference: &String,
                 final_output: &String,
                 temp_directory: &mut InstanceLivedTempDir,
                 read_structure: &SequenceLayoutDesign,
-                max_reference_multiplier: &usize,
+                max_reference_multiplier: &f64,
                 min_read_length: &usize,
                 read1: &String,
                 read2: &String,
                 index1: &String,
                 index2: &String,
-                threads: &usize,
-                inversions: &bool) {
+                threads: &usize) {
 
 
     // load up the reference files
@@ -38,7 +38,7 @@ pub fn collapse(reference: &String,
 
     // validate that each reference has the specified capture groups
     let validated_references = rm.references.iter().
-        map(|rf| read_structure.validate_reference_sequence(&rf.sequence_u8)).all(|x| x == true);
+        map(|rf| read_structure.validate_reference_sequence(&rf.1.sequence_u8)).all(|x| x == true);
 
     assert!(validated_references, "The reference sequences do not match the capture groups specified in the read structure file.");
 
@@ -59,13 +59,10 @@ pub fn collapse(reference: &String,
                                read2,
                                index1,
                                index2,
-                               threads,
-                               inversions);
+                               threads);
 
     info!("Sorting the aligned reads");
 
-    // TODO: fix alignment to output as a sorted file and get rid of this rewrite step
-    //let mut ret = output_fasta_to_sorted_shard_reader(&aligned_temp.as_path(), temp_directory, read_structure);
     let mut read_count = ret.0;
     let mut sorted_input = ret.1;
 
@@ -91,7 +88,7 @@ pub fn collapse(reference: &String,
     info!("writing consensus reads");
 
     // collapse the final reads down to a single sequence and write everything to the disk
-    write_consensus_reads(&sorted_input, final_output, &threads, levels, &read_count);
+    write_consensus_reads(&sorted_input, final_output, &threads, levels, &read_count, &rm, &40);
 }
 
 
@@ -183,25 +180,27 @@ impl TagStrippingDiskBackedBuffer {
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
         let string_set = Vec::from_iter(self.hash_map.keys()).iter().map(|s| s.as_bytes().to_vec()).collect::<Vec<Vec<u8>>>();
         let collection = InputList { strings: string_set, max_dist: u64::try_from(self.tag.max_distance).unwrap() };
-        let graph = input_list_to_graph(&collection, string_distance, false);
+        let progress_bar = self.hash_map.len() > 50000;
+        let graph = input_list_to_graph(&collection, string_distance, progress_bar);
 
+        info!("creating connected components for degenerate sequences");
         let cc = get_connected_components(&graph);
-        //warn!("CC SIZE: {}", &cc.len());
-
+        info!("raw connected components has {} components",cc.len());
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {
             let minilist = InputList { strings: group, max_dist: u64::try_from(self.tag.max_distance.clone()).unwrap() };
-            let mut minigraph = input_list_to_graph(&minilist, string_distance, false);
+            /*let mut minigraph = input_list_to_graph(&minilist, string_distance, false);
 
             let is_subgroups = split_subgroup(&mut minigraph);
 
             match is_subgroups {
-                None => {
+                None => {*/
                     let group = minilist.strings.clone();
                     for s in minilist.strings {
                         final_correction.insert(s.clone(), consensus(&group));
-                    }
+                    };
+            /*
                 }
                 Some(x) => {
                     for sgroup in &x {
@@ -210,7 +209,7 @@ impl TagStrippingDiskBackedBuffer {
                         }
                     }
                 }
-            }
+            }*/
         }
         final_correction
     }
@@ -261,6 +260,10 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
     info!("Sorting degenerate level {}",tag.symbol);
     // create a new output
     let mut processed_reads = 0;
+    let mut added_to_group = 0;
+    let mut sent_reads = 0;
+    let mut dropped_collection = 0;
+
     let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
     let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&aligned_temp, 32,
                                                                                     256,
@@ -280,27 +283,30 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
         bar.inc(1);
         let mut x = y.as_ref().unwrap().clone();
         let mut x2 = y.as_ref().unwrap().clone();
+
         processed_reads += 1;
+
         if !last_read.is_none() {
             assert_eq!(x.ordered_sorting_keys.len(), *iteration);
             if last_read.as_ref().unwrap().cmp(&mut x) == Ordering::Equal {
-                //warn!("NOT Dumping reads");
                 current_sorting_bin.push(x);
                 group_size += 1;
+                added_to_group += 1;
             } else {
                 if (tag.maximum_subsequences.is_some() && tag.maximum_subsequences.unwrap() > current_sorting_bin.buffer.len()) || tag.maximum_subsequences.is_none() {
                     let (buffer, correction) = current_sorting_bin.close();
                     if correction.len() > largest_group_size {
                         largest_group_size = correction.len();
                     }
-
-                    //let shard_reader: ShardReader<SortingReadSetContainer, DefaultSort> = ShardReader::open(file).unwrap();
                     for mut y in buffer {
                         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
                         let corrected = correction.get(&FastaBase::to_vec_u8(&key_value.1)).unwrap();
                         y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
                         sender.send(y).unwrap();
+                        sent_reads += 1;
                     }
+                } else {
+                    dropped_collection += 1;
                 }
                 group_size = 0;
                 current_sorting_bin.clean();
@@ -312,6 +318,9 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
     });
 
     if (tag.maximum_subsequences.is_some() && tag.maximum_subsequences.unwrap() > current_sorting_bin.buffer.len()) || tag.maximum_subsequences.is_none() {
+        if current_sorting_bin.buffer.len() > 10000 {
+            warn!("We have a large buffer of {} reads for tag {} at iteration {}, this could take a long while...", current_sorting_bin.buffer.len(), tag.symbol, iteration);
+        }
         let (buffer, correction) = current_sorting_bin.close();
         if correction.len() > largest_group_size {
             largest_group_size = correction.len();
@@ -326,12 +335,12 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
         }
     }
 
-    info!("For degenerate tag {} we processed {} reads, largest group size {}", &tag.symbol, processed_reads, largest_group_size);
+    info!("For degenerate tag {} we processed {} reads, largest group size {}, we dispatched {} reads to the next level, dropped {} read collections and {} added to groups", &tag.symbol, processed_reads, largest_group_size, sent_reads, dropped_collection,added_to_group);
     sender.finished().unwrap();
 
     sharded_output.finish().unwrap();
 
-    (processed_reads, ShardReader::open(aligned_temp).unwrap())
+    (sent_reads, ShardReader::open(aligned_temp).unwrap())
 }
 
 pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &ShardReader<SortingReadSetContainer>, tag: &UMIConfiguration, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
@@ -353,7 +362,7 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
                                                                                         1 << 16).unwrap();
         let mut sender = sharded_output.get_sender();
 
-        reader.iter_range(&Range::all()).unwrap().for_each(|x| {
+        reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i,x)| {
             bar.inc(1);
             processed_reads += 1;
             let mut sorting_read_set_container = x.unwrap();
@@ -386,7 +395,7 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
             };
         });
 
-        info!("Dropped {} reads where we couldn't match a known barcode",dropped_reads);
+        info!("Dropped {} reads where we couldn't match a known barcode, {} collided reads, {} total reads",dropped_reads, collided_reads, processed_reads);
         sender.finished().unwrap();
         sharded_output.finish().unwrap();
     }

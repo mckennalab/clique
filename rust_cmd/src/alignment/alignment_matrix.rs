@@ -6,10 +6,13 @@ use ndarray::Array;
 use ndarray::prelude::*;
 use num_traits::identities::Zero;
 use log::{trace};
+use rust_htslib::bam::Record;
+use rust_htslib::bam::record::{Aux, CigarString};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 
 use crate::alignment::scoring_functions::*;
-use crate::alignment_functions::simplify_cigar_string;
+use crate::alignment_functions::{simplify_cigar_string, tags_to_output};
+use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR, stretch_sequence_to_alignment};
 
 
 pub const MAX_NEG_SCORE: f64 = -100000.0;
@@ -498,8 +501,8 @@ impl PartialEq for AlignmentLocation {
 
 #[derive(Clone)]
 pub struct AlignmentResult {
-    pub alignment_string1: Vec<FastaBase>,
-    pub alignment_string2: Vec<FastaBase>,
+    pub reference_aligned: Vec<FastaBase>,
+    pub read_aligned: Vec<FastaBase>,
     pub cigar_string: Vec<AlignmentTag>,
     pub path: Vec<AlignmentLocation>,
     pub score: f64,
@@ -513,8 +516,8 @@ impl AlignmentResult {
         let score = str1.iter().zip(str2.iter()).map(|(xb, yb)| af_score.match_mismatch(xb, yb)).sum();
 
         AlignmentResult {
-            alignment_string1: str1.clone(),
-            alignment_string2: str1.clone(),
+            reference_aligned: str1.clone(),
+            read_aligned: str1.clone(),
             cigar_string,
             path,
             score,
@@ -522,6 +525,28 @@ impl AlignmentResult {
         }
     }
 
+    pub fn to_sam_record(&self, read_name: &str, reference_number: &usize, original_reference: &Vec<u8>, extract_capture_tags: &bool) -> Record {
+        let mut record = Record::new();
+        let seq = FastaBase::to_vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>());
+        let cigar = CigarString::try_from(
+            self.cigar_string.iter().map(|m|format!("{}",m)).collect::<Vec<String>>().join("").as_bytes()).
+            expect("Unable to parse cigar string.");
+
+        // we don't currently calculate real quality scores
+        let quals = vec![ 255 as u8; seq.len()];
+
+        record.set(read_name.as_bytes(), Some(&cigar), &seq.as_slice(), &quals.as_slice());
+
+        if *extract_capture_tags {
+            let full_ref = stretch_sequence_to_alignment(&FastaBase::to_vec_u8(&self.reference_aligned), original_reference);
+            let ets = extract_tagged_sequences(&FastaBase::to_vec_u8(&self.read_aligned), &full_ref);
+
+            ets.iter().for_each(|(tag, seq)| {
+                record.push_aux(vec![b'e' *tag].as_slice(), Aux::String(seq)).unwrap();
+            });
+        }
+        record
+    }
 
     #[allow(dead_code)]
     fn slice_out_inversions(&self) -> Vec<AlignmentResult> {
@@ -537,8 +562,8 @@ impl AlignmentResult {
         for cigar in &self.cigar_string {
             match cigar {
                 AlignmentTag::MatchMismatch(size) | AlignmentTag::Ins(size) | AlignmentTag::Del(size) => {
-                    alignment_string1.extend(self.alignment_string1[position..(position + size)].iter());
-                    alignment_string2.extend(self.alignment_string2[position..(position + size)].iter());
+                    alignment_string1.extend(self.reference_aligned[position..(position + size)].iter());
+                    alignment_string2.extend(self.read_aligned[position..(position + size)].iter());
                     cigar_string.push(*cigar);
                     path.extend_from_slice(&self.path[position..(position + size)]);
                     score = -1.0;
@@ -547,8 +572,8 @@ impl AlignmentResult {
                 AlignmentTag::InversionOpen => {
                     if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
                         return_vec.push(AlignmentResult {
-                            alignment_string1,
-                            alignment_string2,
+                            reference_aligned: alignment_string1,
+                            read_aligned: alignment_string2,
                             cigar_string,
                             path,
                             score,
@@ -564,8 +589,8 @@ impl AlignmentResult {
                 AlignmentTag::InversionClose => {
                     if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
                         return_vec.push(AlignmentResult {
-                            alignment_string1,
-                            alignment_string2,
+                            reference_aligned: alignment_string1,
+                            read_aligned: alignment_string2,
                             cigar_string,
                             path,
                             score,
@@ -582,8 +607,8 @@ impl AlignmentResult {
         }
         if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
             return_vec.push(AlignmentResult {
-                alignment_string1,
-                alignment_string2,
+                reference_aligned: alignment_string1,
+                read_aligned: alignment_string2,
                 cigar_string,
                 path,
                 score,
@@ -608,8 +633,8 @@ impl AlignmentResult {
             AlignmentLocation { x: new_path[new_path.len() - 1].x, y: new_path[0].y },
             AlignmentLocation { x: new_path[0].x, y: new_path[new_path.len() - 1].y });
         AlignmentResult {
-            alignment_string1: self.alignment_string1.clone(),
-            alignment_string2: self.alignment_string2.clone(),
+            reference_aligned: self.reference_aligned.clone(),
+            read_aligned: self.read_aligned.clone(),
             cigar_string: self.cigar_string.clone(),
             path: new_path,
             score: self.score,
@@ -753,9 +778,9 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 }
 
                 //println!("INVERSOIN adding {} and {}", String::from_utf8(inversion_alignment.alignment_result.alignment_string1.clone()).unwrap(),String::from_utf8(inversion_alignment.alignment_result.alignment_string2.clone()).unwrap());
-                let mut a1_rev = inversion_alignment.alignment_result.alignment_string1.clone();
+                let mut a1_rev = inversion_alignment.alignment_result.reference_aligned.clone();
                 a1_rev.reverse();
-                let mut a2_rev = inversion_alignment.alignment_result.alignment_string2.clone();
+                let mut a2_rev = inversion_alignment.alignment_result.read_aligned.clone();
                 a2_rev.reverse();
 
                 //println!("pushing -----> {} and {} ", String::from_utf8(a1_rev.clone()).unwrap(),String::from_utf8(a2_rev.clone()).unwrap());
@@ -827,8 +852,8 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
     path.reverse();
 
     AlignmentResult {
-        alignment_string1: alignment1,
-        alignment_string2: alignment2,
+        reference_aligned: alignment1,
+        read_aligned: alignment2,
         cigar_string: simplify_cigar_string(&cigars),
         path,
         score,
@@ -909,15 +934,15 @@ mod tests {
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
 
-        assert_eq!(results.alignment_string1, str_to_fasta_vec("CCAATCTACT"));
-        assert_eq!(results.alignment_string2, str_to_fasta_vec("CTACTCTACT"));
+        assert_eq!(results.reference_aligned, str_to_fasta_vec("CCAATCTACT"));
+        assert_eq!(results.read_aligned, str_to_fasta_vec("CTACTCTACT"));
 
         clean_and_find_next_best_match_3d(&mut alignment_mat, &reference, &test_read, &my_score, &results);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(results.alignment_string1, FastaBase::from_vec_u8(&"CTACTACTGCT".as_bytes().to_vec()));
-        assert_eq!(results.alignment_string2, str_to_fasta_vec("CTACT-CTACT"));
+        assert_eq!(results.reference_aligned, FastaBase::from_vec_u8(&"CTACTACTGCT".as_bytes().to_vec()));
+        assert_eq!(results.read_aligned, str_to_fasta_vec("CTACT-CTACT"));
     }
 
     #[test]
@@ -938,8 +963,8 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(results.alignment_string1, str_to_fasta_vec("CCAATCTACT"));
-        assert_eq!(results.alignment_string2, str_to_fasta_vec("CTACTCTACT"));
+        assert_eq!(results.reference_aligned, str_to_fasta_vec("CCAATCTACT"));
+        assert_eq!(results.read_aligned, str_to_fasta_vec("CTACTCTACT"));
     }
     #[test]
     fn affine_special_scoring_test() {
@@ -959,8 +984,8 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(results.alignment_string1, str_to_fasta_vec("AAAANAAAA"));
-        assert_eq!(results.alignment_string2, str_to_fasta_vec("AAAA-AAAA"));
+        assert_eq!(results.reference_aligned, str_to_fasta_vec("AAAANAAAA"));
+        assert_eq!(results.read_aligned, str_to_fasta_vec("AAAA-AAAA"));
     }
 
     #[test]
@@ -981,8 +1006,8 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(results.alignment_string1, str_to_fasta_vec("----------------AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
-        assert_eq!(results.alignment_string2, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
+        assert_eq!(results.reference_aligned, str_to_fasta_vec("----------------AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
+        assert_eq!(results.read_aligned, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
     }
 
     #[test]
@@ -1003,8 +1028,8 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(results.alignment_string1, str_to_fasta_vec("AA-AA"));
-        assert_eq!(results.alignment_string2, str_to_fasta_vec("AATAA"));
+        assert_eq!(results.reference_aligned, str_to_fasta_vec("AA-AA"));
+        assert_eq!(results.read_aligned, str_to_fasta_vec("AATAA"));
     }
 
     #[test]
@@ -1025,8 +1050,8 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
-        assert_eq!(results.alignment_string1, str_to_fasta_vec("AA-AA"));
-        assert_eq!(results.alignment_string2, str_to_fasta_vec("AATAA"));
+        assert_eq!(results.reference_aligned, str_to_fasta_vec("AA-AA"));
+        assert_eq!(results.read_aligned, str_to_fasta_vec("AATAA"));
 
         println!("CIGAR : {:?}", results.cigar_string);
     }
@@ -1055,12 +1080,12 @@ mod tests {
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
         println!("Aligned {} and {}; from {} and {}",
-                 fasta_vec_to_string(&results.alignment_string1),
-                 fasta_vec_to_string(&results.alignment_string2),
+                 fasta_vec_to_string(&results.reference_aligned),
+                 fasta_vec_to_string(&results.read_aligned),
                  fasta_vec_to_string(&reference),
                  fasta_vec_to_string(&test_read));
-        assert_eq!(fasta_vec_to_string(&results.alignment_string1), "TACTGC");
-        assert_eq!(fasta_vec_to_string(&results.alignment_string2), "TACAGC");
+        assert_eq!(fasta_vec_to_string(&results.reference_aligned), "TACTGC");
+        assert_eq!(fasta_vec_to_string(&results.read_aligned), "TACAGC");
     }
 
     #[test]
@@ -1085,8 +1110,8 @@ mod tests {
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
 
-        assert_eq!(fasta_vec_to_string(&results.alignment_string1), "TACTGC");
-        assert_eq!(fasta_vec_to_string(&results.alignment_string2), "TACAGC");
+        assert_eq!(fasta_vec_to_string(&results.reference_aligned), "TACTGC");
+        assert_eq!(fasta_vec_to_string(&results.read_aligned), "TACAGC");
     }
 
     #[test]
@@ -1117,14 +1142,14 @@ mod tests {
         let results = inversion_alignment(&reference, &test_read, &my_score, &my_aff_score, true);
 
         println!("Aligned {} and {} from {} and {}",
-                 fasta_vec_to_string(&results.alignment_string1),
-                 fasta_vec_to_string(&results.alignment_string2),
+                 fasta_vec_to_string(&results.reference_aligned),
+                 fasta_vec_to_string(&results.read_aligned),
                  fasta_vec_to_string(&reference),
                  fasta_vec_to_string(&test_read));
         //                                                                  CCAATCTACtactgcTTG
         //                                                                  CCACTCT-CTCTCGCCTG
-        assert_eq!(fasta_vec_to_string(&results.alignment_string1), "CCAATCTACTACTGCTTG");
-        assert_eq!(fasta_vec_to_string(&results.alignment_string2), "CCACTCT-CTACAGCCTG");
+        assert_eq!(fasta_vec_to_string(&results.reference_aligned), "CCAATCTACTACTGCTTG");
+        assert_eq!(fasta_vec_to_string(&results.read_aligned), "CCACTCT-CTACAGCCTG");
     }
 
     #[test]
@@ -1156,14 +1181,14 @@ mod tests {
 
 
         println!("Aligned {} and {} from {} and {}",
-                 fasta_vec_to_string(&results.alignment_string1),
-                 fasta_vec_to_string(&results.alignment_string2),
+                 fasta_vec_to_string(&results.reference_aligned),
+                 fasta_vec_to_string(&results.read_aligned),
                  fasta_vec_to_string(&reference),
                  fasta_vec_to_string(&test_read));
         //                                                                  CCAATCTACtactgcTTG
         //                                                                  CCACTCT-CTCTCGCCTG
-        assert_eq!(fasta_vec_to_string(&results.alignment_string1), "CCAATCTACTACTGCTTGCA");
-        assert_eq!(fasta_vec_to_string(&results.alignment_string2), "CCAATCTACTACTGCTTGCA");
+        assert_eq!(fasta_vec_to_string(&results.reference_aligned), "CCAATCTACTACTGCTTGCA");
+        assert_eq!(fasta_vec_to_string(&results.read_aligned), "CCAATCTACTACTGCTTGCA");
     }
 
     #[test]
@@ -1194,12 +1219,28 @@ mod tests {
         let results = inversion_alignment(&reference, &test_read, &my_score, &my_aff_score, false);
 
         println!("Aligned {} and {} from {} and {}",
-                 fasta_vec_to_string(&results.alignment_string1),
-                 fasta_vec_to_string(&results.alignment_string2),
+                 fasta_vec_to_string(&results.reference_aligned),
+                 fasta_vec_to_string(&results.read_aligned),
                  fasta_vec_to_string(&reference),
                  fasta_vec_to_string(&test_read));
 
         println!("CIGAR: {:?}", results.cigar_string);
     }
+
+    #[test]
+    fn to_sam_record_test() {
+        let alignment_record = AlignmentResult{
+            reference_aligned: FastaBase::from_string(&"CCAATCTACTACTGCTTGCA".to_string()),
+            read_aligned: FastaBase::from_string(&"CCAATCTACTACTGCTTGCA".to_string()),
+            cigar_string: vec![AlignmentTag::MatchMismatch(20)],
+            path: vec![],
+            score: 0.0,
+            bounding_box: None,
+        };
+
+        alignment_record.to_sam_record("test", &0, &vec![], &false);
+    }
+
+
 }
 

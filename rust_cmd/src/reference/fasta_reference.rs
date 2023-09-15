@@ -53,7 +53,8 @@ impl Hash for Reference<'_, '_> {
 
 #[allow(dead_code)]
 pub struct ReferenceManager<'a, 's, 't> {
-    pub references: Vec<Reference<'a, 'a>>,
+    pub references: HashMap<usize, Reference<'a, 'a>>,
+    pub reference_name_to_ref: HashMap<Vec<u8>, usize>,
     pub unique_kmers: UniqueKmerLookup<'s, 't>,
     pub kmer_size: usize,
     pub longest_ref: usize,
@@ -75,7 +76,9 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         let references = reference_file_to_structs(fasta, kmer_size);
         let longest_ref = references.iter().map(|r| r.sequence.len()).max().unwrap_or(0);
         let unique_kmers = ReferenceManager::unique_kmers(&references, kmer_size);
-        ReferenceManager{ references, unique_kmers, kmer_size, longest_ref }
+        let references = references.into_iter().enumerate().collect::<HashMap<usize,Reference>>();
+        let reference_name_to_ref = references.iter().map(|(i,r)| (r.name.clone(),*i)).collect();
+        ReferenceManager{ references, reference_name_to_ref, unique_kmers, kmer_size, longest_ref }
     }
 
     /// Find the suffix array 'seeds' given a reference sequence

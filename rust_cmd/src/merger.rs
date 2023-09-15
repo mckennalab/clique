@@ -126,8 +126,6 @@ impl MergedReadSequence {
                 }
             }
             ((true, true, false, false), Some(MergeStrategy::Concatenate)) => {
-                //println!("RIGHT PLACE {} {} ",String::from_utf8(it.read_one.seq().to_vec().clone()).unwrap(),String::from_utf8(it.read_two.as_ref().unwrap().seq().to_vec().clone()).unwrap());
-
                 NamedRead{
                     name: it.read_one.id().as_bytes().to_vec(),
                     seq: merge_reads_by_concatenation(&it.read_one, &it.read_two.unwrap(),padding, 0).read_bases
@@ -205,9 +203,9 @@ pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_sc
     let results = align_two_strings(&read1_seq, &rev_comp_read2, merge_initial_scoring, false);
 
     alignment_rate_and_consensus(
-        &results.alignment_string1,
+        &results.reference_aligned,
         read1.qual(),
-        &results.alignment_string2,
+        &results.read_aligned,
         rev_comp_read2_qual.as_slice())
 }
 

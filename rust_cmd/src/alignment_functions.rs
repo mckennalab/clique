@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::cell::Ref;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::io::Write;
@@ -8,20 +9,26 @@ use std::str;
 use crate::itertools::Itertools;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
-use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
+use crate::alignment::alignment_matrix::{Alignment, AlignmentCigar, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR, stretch_sequence_to_alignment};
 use crate::linked_alignment::{orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
 use std::time::{Instant};
+use bio::alignment::AlignmentOperation;
 use ndarray::Ix3;
 use shardio::{ShardReader, ShardWriter};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
-use crate::merger::MergedReadSequence;
+use crate::merger::{MergedReadSequence, NamedRead};
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration};
 use libwfa::{affine_wavefront::*, bindings::*, mm_allocator::*, penalties::*};
+use rust_htslib::bam;
+use rust_htslib::bam::{Record, Writer};
+use rust_htslib::bam::record::{Aux, CigarString};
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
+use bio::alignment::distance::simd::{bounded_levenshtein, levenshtein};
+use bio::alignment::pairwise::Aligner;
 
 
 pub fn align_reads(use_capture_sequences: &bool,
@@ -115,15 +122,15 @@ pub fn align_reads(use_capture_sequences: &bool,
                             *read_count += 1;
                             if *read_count % 1000000 == 0 {
                                 let duration = start.elapsed();
-                                //println!("Aligning read {} ({})", FastaBase::to_string(&aln.alignment_string1), FastaBase::to_string(&aln.alignment_string2));
-                                println!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count, duration);
+                                info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count, duration);
                             }
-                            assert_eq!(aln.alignment_string1.len(), aln.alignment_string2.len());
+                            assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
                             let cigar_string = format!("{}", "");
 
-                            output_alignment(&FastaBase::to_vec_u8(&aln.alignment_string2),
+
+                            output_alignment(&FastaBase::to_vec_u8(&aln.read_aligned),
                                              name,
-                                             &FastaBase::to_vec_u8(&aln.alignment_string1),
+                                             &FastaBase::to_vec_u8(&aln.reference_aligned),
                                              &orig_ref_seq,
                                              &ref_name,
                                              use_capture_sequences,
@@ -146,15 +153,13 @@ pub fn fast_align_reads(use_capture_sequences: &bool,
                         to_fake_fastq: &bool,
                         rm: &ReferenceManager,
                         output: &Path,
-                        max_reference_multiplier: &usize,
+                        max_reference_multiplier: &f64,
                         min_read_length: &usize,
                         read1: &String,
                         read2: &String,
                         index1: &String,
                         index2: &String,
-                        threads: &usize,
-                        inversions: &bool) -> (usize,ShardReader<SortingReadSetContainer>) {
-    let output_file = File::create(&output).unwrap();
+                        threads: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
 
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
                                           Some(PathBuf::from(&read2)),
@@ -180,37 +185,53 @@ pub fn fast_align_reads(use_capture_sequences: &bool,
 
     assert_eq!(rm.references.len(), 1);
     let reference_seq = rm.references.iter().next().unwrap();
-    let reference_bases = FastaBase::from_vec_u8_default_ns(&reference_seq.sequence_u8);
-    let reference_name = String::from_utf8(reference_seq.name.clone()).unwrap();
+    let reference_bases = FastaBase::from_vec_u8_default_ns(&reference_seq.1.sequence_u8);
+    let reference_name = String::from_utf8(reference_seq.1.name.clone()).unwrap();
     let mut read_count = Arc::new(Mutex::new(0 as usize));
+    let mut skipped_count = Arc::new(Mutex::new(0 as usize));
+
     read_iterator.par_bridge().for_each(|xx| {
-        let name = &String::from_utf8(xx.name.clone()).unwrap();
-        let alignment = perform_wavefront_alignment(&reference_bases, &xx.seq);
-        let ref_al = FastaBase::to_vec_u8(&alignment.alignment_string1);
-        let read_al = FastaBase::to_vec_u8(&alignment.alignment_string2);
-        let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.sequence_u8);
-        let ets = extract_tagged_sequences(&read_al, &full_ref);
+        if (xx.seq.len() as f64) < ((*max_reference_multiplier) * reference_bases.len() as f64) {
+            let name = &String::from_utf8(xx.name.clone()).unwrap();
+            let forward_oriented_seq = if !read_structure.known_orientation {
+                let orientation = orient_by_longest_segment(&xx.seq, &reference_seq.1.sequence_u8, &reference_seq.1.suffix_table).0;
+                if orientation {
+                    xx.seq.clone()
+                } else {
+                    reverse_complement(&xx.seq)
+                }
+            } else {
+                xx.seq.clone()
+            };
+            let alignment = align_using_selected_aligner(read_structure, &reference_bases,&forward_oriented_seq);
 
+            let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
+            let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
+            let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.1.sequence_u8);
+            let ets = extract_tagged_sequences(&read_al, &full_ref);
 
-        let read_tags_ordered = VecDeque::from(sorted_tags.iter().
-            map(|x| (x.clone(), ets.get(&x.to_string().as_bytes()[0]).unwrap().as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>())).collect::<Vec<(char, Vec<FastaBase>)>>());
+            let read_tags_ordered = VecDeque::from(sorted_tags.iter().
+                map(|x| (x.clone(), ets.get(&x.to_string().as_bytes()[0]).unwrap().as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>())).collect::<Vec<(char, Vec<FastaBase>)>>());
 
-        let new_sorted_read_container = SortingReadSetContainer {
-            ordered_sorting_keys: vec![],
-            ordered_unsorted_keys: read_tags_ordered,
+            let new_sorted_read_container = SortingReadSetContainer {
+                ordered_sorting_keys: vec![],
+                ordered_unsorted_keys: read_tags_ordered,
 
-            aligned_read: SortedAlignment {
-                aligned_read: alignment.alignment_string1,
-                aligned_ref: alignment.alignment_string2,
-                ref_name: reference_name.clone(),
-                read_name: String::from_utf8(xx.name.clone()).unwrap(),
-            },
-        };
-        assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
+                aligned_read: SortedAlignment {
+                    aligned_read: alignment.read_aligned.clone(),
+                    aligned_ref: alignment.reference_aligned,
+                    ref_name: reference_name.clone(),
+                    read_name: String::from_utf8(xx.name.clone()).unwrap(),
+                },
+            };
+            assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
 
-        let sender = Arc::clone(&sender);
+            let sender = Arc::clone(&sender);
 
-        sender.lock().unwrap().send(new_sorted_read_container).unwrap();
+            sender.lock().unwrap().send(new_sorted_read_container).unwrap();
+        } else {
+            *skipped_count.lock().unwrap() += 1;
+        }
         *read_count.lock().unwrap() += 1;
         if *read_count.lock().unwrap() % 1000000 == 0 {
             let duration = start.elapsed();
@@ -218,11 +239,35 @@ pub fn fast_align_reads(use_capture_sequences: &bool,
         }
     });
 
+    warn!("Skipped {} reads since their length was greater than {}, which is {} times the reference length; processed {} reads",
+        skipped_count.lock().unwrap(),
+        (*max_reference_multiplier) * reference_bases.len() as f64,
+        max_reference_multiplier,
+        *read_count.lock().unwrap());
     sender.lock().unwrap().finished().unwrap();
     sharded_output.finish().unwrap();
 
-    let final_count = read_count.lock().unwrap();
-    (final_count.clone(),ShardReader::open(output).unwrap())
+    let final_count = read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone();
+    (final_count, ShardReader::open(output).unwrap())
+}
+
+pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
+                                    reference_bases: &Vec<FastaBase>,
+                                    xx: &Vec<FastaBase>) -> AlignmentResult {
+    match &read_structure.aligner {
+        None => {
+            perform_rust_bio_alignment(&reference_bases, &xx) // current default
+        }
+        Some(x) => {
+            match x.as_str() {
+                "wavefront" => {perform_wavefront_alignment(&reference_bases, &xx)}
+                "rustbio" => {perform_rust_bio_alignment(&reference_bases, &xx)}
+                //"inversion_aware" => {perform_inversion_aware_alignment(&reference_bases, &xx.seq)}
+                //"degenerate" => {perform_degenerate_alignment(&reference_bases, &xx.seq)}
+                _ => {panic!("Unknown alignment method {}", x)}
+            }
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -248,7 +293,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>, rev_comp_read2: &Vec<FastaB
 }
 
 pub fn best_reference(read: &Vec<FastaBase>,
-                      references: &Vec<Reference>,
+                      references: &HashMap<usize, Reference>,
                       read_structure: &SequenceLayoutDesign,
                       alignment_mat: &mut Alignment<Ix3>,
                       my_aff_score: &AffineScoring,
@@ -262,20 +307,20 @@ pub fn best_reference(read: &Vec<FastaBase>,
             None
         }
         1 => {
-            let aln = alignment(read, &references[0], read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length);
-            Some((aln, references[0].sequence_u8.clone(), references[0].name.clone()))
+            let aln = alignment(read, &references.get(&0).unwrap(), read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length);
+            Some((aln, references.get(&0).unwrap().sequence_u8.clone(), references.get(&0).unwrap().name.clone()))
         }
         x if x > 1 => {
             let ranked_alignments = references.iter().map(|reference| {
-                match alignment(read, reference, read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length) {
+                match alignment(read, reference.1, read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length) {
                     None => None,
-                    Some(aln) => Some((aln, reference.sequence_u8.clone(), reference.name.clone())),
+                    Some(aln) => Some((aln, reference.1.sequence_u8.clone(), reference.1.name.clone())),
                 }
             }).filter(|x| x.is_some()).map(|c| c.unwrap());
 
             let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2|
-                matching_read_bases_prop(&al.1.0.alignment_string2, &al.1.0.alignment_string1).
-                    partial_cmp(&matching_read_bases_prop(&al2.1.0.alignment_string2, &al2.1.0.alignment_string1)).unwrap());
+                matching_read_bases_prop(&al.1.0.read_aligned, &al.1.0.reference_aligned).
+                    partial_cmp(&matching_read_bases_prop(&al2.1.0.read_aligned, &al2.1.0.reference_aligned)).unwrap());
 
             match ranked_alignments.iter().next() {
                 None => { None }
@@ -298,18 +343,16 @@ pub fn alignment(x: &Vec<FastaBase>,
                  _use_inversions: &bool,
                  max_reference_multiplier: usize,
                  min_read_length: usize) -> Option<AlignmentResult> {
-
-    // find the best reference(s)
-    let forward_oriented_seq = //if !read_structure.known_orientation {
-        /*let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
-        if orientation {*/
-        x.clone();
-    /*} else {
-        reverse_complement(&x)
-    }
-} else {
-    x.clone()
-};*/
+    let forward_oriented_seq = if !read_structure.known_orientation {
+        let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
+        if orientation {
+            x.clone()
+        } else {
+            reverse_complement(&x)
+        }
+    } else {
+        x.clone()
+    };
 
     if forward_oriented_seq.len() > reference.sequence.len() * max_reference_multiplier || forward_oriented_seq.len() < min_read_length {
         warn!("Dropping read of length {}",forward_oriented_seq.len());
@@ -328,6 +371,7 @@ pub fn alignment(x: &Vec<FastaBase>,
             &forward_oriented_seq,
             None);
         Some(results)*/
+        // TODO: allow the users to pick which aligner to use
         Some(perform_wavefront_alignment(&reference.sequence,
                                          &forward_oriented_seq))
     }
@@ -365,8 +409,80 @@ fn cigar_to_alignment(reference: &Vec<FastaBase>,
     (alignment_string1, alignment_string2)
 }
 
-fn perform_wavefront_alignment(reference: &Vec<FastaBase>,
-                               read: &Vec<FastaBase>) -> AlignmentResult {
+pub fn perform_rust_bio_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
+    let score = |a: u8, b: u8| if a == b || a == b'N' || b == b'N' { 1i32 } else { -1i32 };
+
+    let mut aligner = Aligner::new(-5, -1, &score);
+    let x = FastaBase::to_vec_u8(&reference);
+    let y = FastaBase::to_vec_u8(&read);
+    let alignment = aligner.global(y.as_slice(), x.as_slice());
+    bio_to_alignment_result(alignment, reference, read)
+}
+
+pub fn bio_to_alignment_result(alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
+    let mut aligned_ref = Vec::new();
+    let mut aligned_read = Vec::new();
+    let mut ref_pos = alignment.xstart;
+    let mut read_pos = alignment.ystart;
+    let mut resulting_cigar = Vec::new();
+    for al in alignment.operations {
+        match al {
+            AlignmentOperation::Match => {
+                aligned_ref.push(reference.get(ref_pos).unwrap().clone());
+                aligned_read.push(read.get(read_pos).unwrap().clone());
+                ref_pos += 1;
+                read_pos += 1;
+                resulting_cigar.push(AlignmentTag::MatchMismatch(1));
+            }
+            AlignmentOperation::Subst => {
+                aligned_ref.push(reference.get(ref_pos).unwrap().clone());
+                aligned_read.push(read.get(read_pos).unwrap().clone());
+                ref_pos += 1;
+                read_pos += 1;
+                resulting_cigar.push(AlignmentTag::MatchMismatch(1));
+
+            }
+            AlignmentOperation::Del => {
+                aligned_ref.push(reference.get(ref_pos).unwrap().clone());
+                aligned_read.push(FASTA_UNSET);
+                ref_pos += 1;
+                resulting_cigar.push(AlignmentTag::Del(1));
+
+            }
+            AlignmentOperation::Ins => {
+                aligned_ref.push(FASTA_UNSET);
+                aligned_read.push(read.get(read_pos).unwrap().clone());
+                read_pos += 1;
+                resulting_cigar.push(AlignmentTag::Ins(1));
+
+            }
+            AlignmentOperation::Xclip(x) => {
+                aligned_ref.extend(reference[ref_pos..ref_pos + x].iter());
+                aligned_read.extend(FastaBase::from_vec_u8(&vec![b'-';x]).iter());
+                ref_pos += x.clone();
+                resulting_cigar.push(AlignmentTag::Ins(x));
+
+            }
+            AlignmentOperation::Yclip(y) => {
+                aligned_read.extend(read[read_pos..read_pos + y].iter());
+                aligned_ref.extend(FastaBase::from_vec_u8(&vec![b'-';y]).iter());
+                read_pos += y.clone();
+                resulting_cigar.push(AlignmentTag::Del(y));
+
+            }
+        }
+    }
+    AlignmentResult{
+        reference_aligned: aligned_ref,
+        read_aligned: aligned_read,
+        cigar_string: simplify_cigar_string(&resulting_cigar),
+        path: vec![],
+        score: alignment.score as f64,
+        bounding_box: None,
+    }
+}
+
+pub fn perform_wavefront_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     let alloc = MMAllocator::new(BUFFER_SIZE_8M as u64);
 
     let mut penalties = AffinePenalties {
@@ -380,15 +496,17 @@ fn perform_wavefront_alignment(reference: &Vec<FastaBase>,
     let text_len = reference.len();
 
     let mut wavefronts = AffineWavefronts::new_complete(
-        pat_len,
         text_len,
+        pat_len,
         &mut penalties,
         &alloc,
     );
 
-    wavefronts
-        .align(FastaBase::to_vec_u8(reference).as_slice(), FastaBase::to_vec_u8(read).as_slice())
-        .unwrap();
+    match wavefronts
+        .align(FastaBase::to_vec_u8(reference).as_slice(), FastaBase::to_vec_u8(read).as_slice()) {
+        Ok(_) => {}
+        Err(x) => { panic!("Failed to align reference: {} and read: {} with error {:?}", FastaBase::to_string(&reference), FastaBase::to_string(&read), x) }
+    }
 
     let cigar = wavefronts.cigar_bytes_raw();
     let score = wavefronts.edit_cigar_score(&mut penalties);
@@ -396,8 +514,8 @@ fn perform_wavefront_alignment(reference: &Vec<FastaBase>,
 
 
     AlignmentResult {
-        alignment_string1: ref_read.0,
-        alignment_string2: ref_read.1,
+        reference_aligned: ref_read.0,
+        read_aligned: ref_read.1,
         cigar_string: cigar.iter().map(|x| AlignmentTag::from(x.clone())).collect::<Vec<AlignmentTag>>(),
         path: vec![],
         score: score as f64,
@@ -429,6 +547,61 @@ pub fn tags_to_output(tags: &BTreeMap<u8, String>) -> String {
     tags.iter().filter(|(k, _v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", String::from_utf8(vec![*k]).unwrap(), v)).join(";")
 }
 
+
+pub fn write_alignment(alignment: &AlignmentResult,
+                       read_name: &String,
+                       original_ref: &Vec<u8>,
+                       use_capture_sequences: &bool,
+                       output: Arc<Mutex<bam::Writer>>) {
+    let mut output = output.lock().unwrap();
+    output.write(&alignment.to_sam_record(read_name, &0, original_ref, use_capture_sequences)).unwrap();
+}
+
+pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) -> Result<bam::Writer, rust_htslib::errors::Error> {
+    let mut header = bam::Header::new();
+    reference_manger.references.iter().for_each(|(reference)| {
+        let mut header_record = bam::header::HeaderRecord::new(b"SQ");
+        header_record.push_tag(b"SN", String::from_utf8(reference.1.name.clone()).unwrap());
+        header_record.push_tag(b"LN", &reference.1.sequence.len());
+        header.push_record(&header_record);
+    });
+
+    bam::Writer::from_path(&filename, &header, bam::Format::Bam)
+}
+
+
+pub fn create_sam_record(
+    read_name: &str,
+    read_seq: &Vec<FastaBase>,
+    reference_aligned_seq: &Vec<FastaBase>,
+    reference_original_seq: &Vec<u8>,
+    cigar_string: &CigarString,
+    extract_capture_tags: &bool,
+    additional_tags: HashMap<(u8, u8), String>) -> Record {
+    let mut record = Record::new();
+    let seq = FastaBase::to_vec_u8(
+        &read_seq.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>());
+
+    // we don't currently calculate real quality scores
+    let quals = vec![255 as u8; seq.len()];
+
+    record.set(read_name.as_bytes(), Some(&cigar_string), &seq.as_slice(), &quals.as_slice());
+
+    additional_tags.iter().for_each(|(x, y)| {
+        record.push_aux(vec![x.0, x.1].as_slice(), Aux::String(y)).unwrap();
+    });
+
+
+    if *extract_capture_tags {
+        let full_ref = stretch_sequence_to_alignment(&FastaBase::to_vec_u8(&reference_aligned_seq), reference_original_seq);
+        let ets = extract_tagged_sequences(&FastaBase::to_vec_u8(&read_seq), &full_ref);
+
+        ets.iter().for_each(|(tag, seq)| {
+            record.push_aux(vec![b'e', (*tag)].as_slice(), Aux::String(seq)).unwrap();
+        });
+    }
+    record
+}
 
 /// Handle output of the alignment results based on the requested output formats
 ///
@@ -555,6 +728,10 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
 #[cfg(test)]
 mod tests {
     use libwfa::{affine_wavefront::*, bindings::*, mm_allocator::*, penalties::*};
+    use rust_htslib::bam;
+    use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
+    use crate::alignment::fasta_bit_encoding::FastaBase;
+    use crate::alignment_functions::{perform_wavefront_alignment, simplify_cigar_string};
 
     #[test]
     fn simple_libwfa() {
@@ -574,7 +751,7 @@ mod tests {
         let text_len = text.as_bytes().len();
 
 
-        for i in 0..1000000 {
+        for i in 0..1000 {
             let mut wavefronts = AffineWavefronts::new_complete(
                 pat_len,
                 text_len,
@@ -603,6 +780,63 @@ mod tests {
                 let cg_str = std::str::from_utf8(&cigar).unwrap();
                 println!("cigar: {}", cg_str);
             }
+        }
+    }
+
+    #[test]
+    fn wavefront() {
+        let alloc = MMAllocator::new(BUFFER_SIZE_8M as u64);
+
+        let pattern = FastaBase::from_string(&String::from("AAACGCTTCTGCACTTCGCGTGATATCATTACGTTTTGTCCCTCTACGATGTACCTGTCATCTTAGCTAAGACGACAGGACATGTCCAGGAAGTGCTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT"));
+        let text = FastaBase::from_string(&String::from("NNNNNNNNNNNNNNNNNNNNNNNNNNNNTTACGTTNNNNNNNNNNNNGATGTACCTGTCATCTTAGCTAAGATGACAGGACATGTCCAGGAAGTACTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT"));
+
+        let alignment = perform_wavefront_alignment(&text, &pattern, false);
+
+        assert_eq!(alignment.read_aligned, pattern);
+        assert_eq!(alignment.reference_aligned, text);
+
+        let pattern = FastaBase::from_string(&String::from("AAACGCTTCTGCACGTGATATCATT")); // AAACGCTTCTGCACTTCGCGTGATATCATT
+        let aligned_pattern = FastaBase::from_string(&String::from("AAACGCTTCTGCAC-----GTGATATCATT"));
+        let text = FastaBase::from_string(&String::from("AAACGCTTCTGCACTTCGCGTGATATCATT"));         // AAACGCTTCTGCAC-----GTGATATCATT
+
+        let alignment = perform_wavefront_alignment(&text, &pattern, false);
+
+        assert_eq!(alignment.read_aligned, aligned_pattern);
+        assert_eq!(alignment.reference_aligned, text);
+        assert_eq!("11M5D14M", simplify_cigar_string(&alignment.cigar_string).iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(""));
+
+        // invert the alignment
+        let alignment = perform_wavefront_alignment(&pattern, &text, false);
+
+        assert_eq!(alignment.read_aligned, text);
+        assert_eq!(alignment.reference_aligned, aligned_pattern);
+        assert_eq!("11M5I14M", simplify_cigar_string(&alignment.cigar_string).iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(""));
+    }
+
+    #[test]
+    fn writing_sam_file() {
+        let sam_file = std::fs::File::create("test_data/test.sam").unwrap();
+        let mut header_record = bam::header::HeaderRecord::new(b"SQ");
+        header_record.push_tag(b"SN", &"chr1");
+        header_record.push_tag(b"LN", &"150");
+        let mut header = bam::Header::new();
+        header.push_record(&header_record);
+
+        let mut out = bam::Writer::from_path(&"test_data/out.bam", &header, bam::Format::Bam).unwrap();
+        let alignment_record = AlignmentResult {
+            reference_aligned: FastaBase::from_string(&"CCAATCTACTACTGCTTGCA".to_string()),
+            read_aligned: FastaBase::from_string(&"CCAATCTACTACTGCTTGCA".to_string()),
+            cigar_string: vec![AlignmentTag::MatchMismatch(20)],
+            path: vec![],
+            score: 0.0,
+            bounding_box: None,
+        };
+
+        for i in 0..1000 {
+            out.write(&alignment_record.to_sam_record("test",
+                                                      &0,
+                                                      &"CCAATCTACTACTGCTTGCA".to_string().into_bytes(),
+                                                      &false)).unwrap();
         }
     }
 }

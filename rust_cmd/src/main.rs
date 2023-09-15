@@ -97,7 +97,7 @@ enum Cmd {
         reference: String,
 
         #[clap(long)]
-        output: String,
+        outbam: String,
 
         #[clap(long)]
         read_structure: String,
@@ -190,7 +190,7 @@ fn main() {
     match &parameters.cmd {
         Cmd::Collapse {
             reference,
-            output,
+            outbam,
             read_structure,
             threads,
             temp_dir,
@@ -203,17 +203,16 @@ fn main() {
 
             let mut tmp = InstanceLivedTempDir::new().unwrap();
             collapse(reference,
-                     output,
+                     outbam,
                      &mut tmp,
                      &my_yaml,
-                     &2,
+                     &1.2,
                      &50,
                      read1,
                      read2,
                      index1,
                      index2,
-                     threads,
-                     &false);
+                     threads);
         }
 
         Cmd::Align {

@@ -99,6 +99,7 @@ mod tests {
     use super::*;
     use crate::utils::read_utils::fake_reads;
 
+
     #[test]
     fn test_ordinal_nature() {
         let srsc1 = SortingReadSetContainer{

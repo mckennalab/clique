@@ -117,7 +117,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     });
 
     let bar: Option<ProgressBar> = if progress {
-        info!("processing barcode-barcode distances (this can take a long time)...");
+        info!("processing barcode-barcode distances. This can take a long time, large sets will get a progress bar...");
         Some(ProgressBar::new((string_to_node.len() as u64 * string_to_node.len() as u64) / (2 as u64)))
     } else {
         None

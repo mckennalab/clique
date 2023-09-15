@@ -172,8 +172,8 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
         read_alignment_last_position += read_slice.len();
         ref_alignment_last_position += ref_slice.len();
 
-        alignment_ref.extend(alignment.alignment_string1);
-        alignment_read.extend(alignment.alignment_string2);
+        alignment_ref.extend(alignment.reference_aligned);
+        alignment_read.extend(alignment.read_aligned);
         alignment_cigar.extend(alignment.cigar_string);
 
         alignment_ref.extend_from_slice(&reference[overlap.ref_start..overlap.ref_start+overlap.length]);
@@ -203,15 +203,15 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
                     perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, None)
                 }
             };
-            alignment_ref.extend(alignment.alignment_string1);
-            alignment_read.extend(alignment.alignment_string2);
+            alignment_ref.extend(alignment.reference_aligned);
+            alignment_read.extend(alignment.read_aligned);
             alignment_cigar.extend(alignment.cigar_string);
         }
     } else {
         let alignment = inversion_alignment(&reference, &search_string, my_score, my_aff_score,true);
 
-        alignment_ref.extend(alignment.alignment_string1);
-        alignment_read.extend(alignment.alignment_string2);
+        alignment_ref.extend(alignment.reference_aligned);
+        alignment_read.extend(alignment.read_aligned);
         alignment_cigar.extend(alignment.cigar_string);
     }
     AlignmentResults {

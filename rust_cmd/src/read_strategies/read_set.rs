@@ -95,8 +95,10 @@ impl ReadIterator
 
     fn open_reader(check_path: &Option<&PathBuf>) -> Option<Records<BufReader<Reader>>> {
         if check_path.is_some() && check_path.as_ref().unwrap().exists() {
+            info!("Opening file: {:?}", check_path);
             Some(FqReader::new(Reader::from_path(&check_path.unwrap()).unwrap()).records())
         } else {
+            info!("Unable to open file: {:?}", check_path);
             None
         }
     }
@@ -123,6 +125,7 @@ impl Iterator for ReadIterator {
                 }
             }
         } else {
+            info!("Done processing reads");
             None
         }
     }
