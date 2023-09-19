@@ -54,6 +54,22 @@ pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: 
     native_result
 }
 
+pub fn gap_proportion_per_tag(tags: &BTreeMap<u8, String>) -> Vec<f64> {
+    let mut gap_proportions = Vec::new();
+    for (key, value) in tags {
+        let mut gap_count = 0;
+        let mut total_count = 0;
+        for base in value.as_bytes() {
+            if base == &b'-' {
+                gap_count += 1;
+            }
+            total_count += 1;
+        }
+        gap_proportions.push(gap_count as f64 / total_count as f64);
+    }
+    gap_proportions
+}
+
 pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -> BTreeMap<u8, String> {
     let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let mut in_extractor = false;
@@ -101,6 +117,19 @@ pub fn custom_umi_score(a: u8, b: u8) -> i32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn gap_proportion_per_tag_test() {
+        let mut tags = BTreeMap::new();
+        tags.insert(0, String::from("ACGT"));
+        tags.insert(1, String::from("ACGT"));
+        assert_eq!(gap_proportion_per_tag(&tags).iter().max_by(|a, b| a.total_cmp(b)).unwrap(),&0.0);
+
+        tags.insert(1, String::from("AC--"));
+        assert_eq!(gap_proportion_per_tag(&tags).iter().max_by(|a, b| a.total_cmp(b)).unwrap(),&0.5);
+
+        tags.insert(1, String::from("----"));
+        assert_eq!(gap_proportion_per_tag(&tags).iter().max_by(|a, b| a.total_cmp(b)).unwrap(),&1.0);
+    }
     #[test]
     fn tagged_sequence_test() {
         let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC0000000000ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN1111111111CTGTAGGTAGTTTGTC").as_bytes().to_owned();

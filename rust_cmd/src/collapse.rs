@@ -32,7 +32,6 @@ pub fn collapse(reference: &String,
                 index2: &String,
                 threads: &usize) {
 
-
     // load up the reference files
     let rm = ReferenceManager::from(&reference, 8);
 
@@ -59,6 +58,7 @@ pub fn collapse(reference: &String,
                                read2,
                                index1,
                                index2,
+                               &0.2,
                                threads);
 
     info!("Sorting the aligned reads");
@@ -183,23 +183,24 @@ impl TagStrippingDiskBackedBuffer {
         let progress_bar = self.hash_map.len() > 50000;
         let graph = input_list_to_graph(&collection, string_distance, progress_bar);
 
-        info!("creating connected components for degenerate sequences");
         let cc = get_connected_components(&graph);
-        info!("raw connected components has {} components",cc.len());
+        //info!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {
             let minilist = InputList { strings: group, max_dist: u64::try_from(self.tag.max_distance.clone()).unwrap() };
+
+            // TODO this is a hack to get around the fact that the graph is not being split correctly -- need to fix this
             /*let mut minigraph = input_list_to_graph(&minilist, string_distance, false);
 
             let is_subgroups = split_subgroup(&mut minigraph);
 
             match is_subgroups {
                 None => {*/
-                    let group = minilist.strings.clone();
-                    for s in minilist.strings {
-                        final_correction.insert(s.clone(), consensus(&group));
-                    };
+            let group = minilist.strings.clone();
+            for s in minilist.strings {
+                final_correction.insert(s.clone(), consensus(&group));
+            };
             /*
                 }
                 Some(x) => {
@@ -285,8 +286,11 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
         let mut x2 = y.as_ref().unwrap().clone();
 
         processed_reads += 1;
-
-        if !last_read.is_none() {
+        //info!("processing read {} with {:?} tags", processed_reads, x.ordered_sorting_keys);
+        if last_read.is_none() {
+            // we're the first read! just add it to our current bin
+            current_sorting_bin.push(x);
+        } else {
             assert_eq!(x.ordered_sorting_keys.len(), *iteration);
             if last_read.as_ref().unwrap().cmp(&mut x) == Ordering::Equal {
                 current_sorting_bin.push(x);
@@ -294,6 +298,7 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                 added_to_group += 1;
             } else {
                 if (tag.maximum_subsequences.is_some() && tag.maximum_subsequences.unwrap() > current_sorting_bin.buffer.len()) || tag.maximum_subsequences.is_none() {
+                    //info!("closing bin with {} reads", current_sorting_bin.buffer.len());
                     let (buffer, correction) = current_sorting_bin.close();
                     if correction.len() > largest_group_size {
                         largest_group_size = correction.len();
@@ -308,11 +313,10 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                 } else {
                     dropped_collection += 1;
                 }
-                group_size = 0;
+                group_size = 1;
                 current_sorting_bin.clean();
+                current_sorting_bin.push(x);
             }
-        } else {
-            current_sorting_bin.push(x);
         }
         last_read = Some(x2);
     });
@@ -362,7 +366,7 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
                                                                                         1 << 16).unwrap();
         let mut sender = sharded_output.get_sender();
 
-        reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i,x)| {
+        reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, x)| {
             bar.inc(1);
             processed_reads += 1;
             let mut sorting_read_set_container = x.unwrap();
@@ -404,89 +408,11 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
     (processed_reads - dropped_reads, ShardReader::open(aligned_temp).unwrap())
 }
 
-pub fn output_fasta_to_sorted_shard_reader(written_fasta_file: &Path,
-                                           temp_directory: &mut InstanceLivedTempDir,
-                                           read_structure: &SequenceLayoutDesign) -> (usize, ShardReader<SortingReadSetContainer>) {
-    let aligned_temp = temp_directory.temp_file("first_pass_sorted.sharded");
-    let mut processed_reads = 0;
-
-    {
-        let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(aligned_temp.clone(), 32,
-                                                                                        256,
-                                                                                        1 << 16).unwrap();
-
-        let mut sender = sharded_output.get_sender();
-
-        let input_fasta = Reader::from_file(&written_fasta_file).unwrap();
-        info!("Reading fasta file {}",written_fasta_file.to_str().unwrap());
-        let mut sorting_order = read_structure.umi_configurations.iter().map(|x| x.1.clone()).collect::<Vec<UMIConfiguration>>();
-        sorting_order.sort_by(|a, b| a.order.cmp(&b.order));
-        let sorted_tags = sorting_order.iter().map(|x| x.symbol).collect::<Vec<char>>();
-
-        input_fasta.records().chunks(2).into_iter().for_each(|mut chunk| {
-            let ref_record = chunk.nth(0).unwrap().unwrap();
-            let read_record = chunk.nth(0).unwrap().unwrap();
-            processed_reads += 1;
-            //warn!("Reading fasta rec {}",ref_record.id().to_string());
-            //warn!("Reading fasta read {}",read_record.id().to_string());
-
-            let read_tags = extract_output_tags(&read_record.id().to_string());
-            let read_tags_ordered = VecDeque::from(sorted_tags.iter().
-                map(|x| (x.clone(), read_tags.1.get(x).unwrap().as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>())).collect::<Vec<(char, Vec<FastaBase>)>>());
-
-            let new_sorted_read_container = SortingReadSetContainer {
-                ordered_sorting_keys: vec![],
-                ordered_unsorted_keys: read_tags_ordered,
-
-                aligned_read: SortedAlignment {
-                    aligned_read: read_record.seq().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>(),
-                    aligned_ref: ref_record.seq().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>(),
-                    ref_name: "".to_string(),
-                    read_name: read_tags.0,
-                },
-            };
-            assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
-
-            sender.send(new_sorted_read_container).unwrap();
-        });
-        sender.finished().unwrap();
-        sharded_output.finish().unwrap();
-    }
-
-    (processed_reads, ShardReader::open(aligned_temp).unwrap())
-}
-
-pub fn extract_output_tags(header_string: &String) -> (String, BTreeMap<char, String>) {
-    //assert!(header_string.starts_with(">"), "The header string does not start with a > character");
-    let tokens = header_string.split("_").collect::<Vec<&str>>();
-    assert!(tokens.len() >= 2, "The header string does not contain any tags");
-
-    let mut tags: BTreeMap<char, String> = BTreeMap::new();
-    tokens.get(1).unwrap().split(";").for_each(|tag| {
-        let tag_tokens = tag.split("=").last().unwrap().split(":").collect::<Vec<&str>>();
-        assert!(tag_tokens.len() == 2, "The tag {} does not contain a key and value", tag);
-        let key = char::from(tag_tokens.get(0).unwrap().as_bytes()[0].clone());
-        let value = tag_tokens.get(1).unwrap().to_string();
-        //println!("{} -> {}", key, value);
-        tags.insert(key, value);
-    });
-    (String::from(tokens.get(0).unwrap().clone()).clone(), tags)
-}
-
-//pub fn order_output_keys(header_string: &String, )
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
     use super::*;
     use crate::read_strategies::read_set::ReadIterator;
-
-    #[test]
-    fn test_extract_output_tags() {
-        let test_string = String::from(">VH00708:168:AACK37GM5:1:1101:40992:1000_key=$:TCTCACGAGGTGGCTG;key=%:CGGTTCCGAAGT;key=^:AGGGTCTCGGCC");
-        let tags = extract_output_tags(&test_string);
-        assert_eq!(tags.1.len(), 3);
-    }
 
     #[test]
     fn test_consensus() {
