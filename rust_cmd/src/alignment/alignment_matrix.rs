@@ -11,8 +11,8 @@ use rust_htslib::bam::record::{Aux, CigarString};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 
 use crate::alignment::scoring_functions::*;
-use crate::alignment_functions::{simplify_cigar_string, tags_to_output};
-use crate::extractor::{extract_tagged_sequences, READ_CHAR, REFERENCE_CHAR, stretch_sequence_to_alignment};
+use crate::alignment_functions::{simplify_cigar_string, };
+use crate::extractor::{extract_tagged_sequences, stretch_sequence_to_alignment};
 
 
 pub const MAX_NEG_SCORE: f64 = -100000.0;
@@ -525,7 +525,7 @@ impl AlignmentResult {
         }
     }
 
-    pub fn to_sam_record(&self, read_name: &str, reference_number: &usize, original_reference: &Vec<u8>, extract_capture_tags: &bool) -> Record {
+    pub fn to_sam_record(&self, read_name: &str, original_reference: &Vec<u8>, extract_capture_tags: &bool) -> Record {
         let mut record = Record::new();
         let seq = FastaBase::to_vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>());
         let cigar = CigarString::try_from(
@@ -1238,7 +1238,7 @@ mod tests {
             bounding_box: None,
         };
 
-        alignment_record.to_sam_record("test", &0, &vec![], &false);
+        alignment_record.to_sam_record("test",  &vec![], &false);
     }
 
 

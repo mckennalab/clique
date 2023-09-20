@@ -74,7 +74,7 @@ mod tests {
         println!("Elapsed: {:.2?}", elapsed);
         println!("Searching...");
         let now = Instant::now();
-        for x in 0..1000000 {
+        for _x in 0..1000000 {
             let result = kf.corrector.lookup("AAACCCAAGAACCCGG", Verbosity::Top, 2);
             assert_eq!(result.len(),1);
         }

@@ -11,11 +11,10 @@ use crate::alignment::fasta_bit_encoding::FastaBase;
 
 use crate::umis::bronkerbosch::BronKerbosch;
 use crate::umis::known_list::KnownList;
-use crate::utils::base_utils::simple_edit_distance;
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,
-    pub max_dist: u64, // the minimum distance to consider for creating an edge
+    pub max_dist: usize, // the minimum distance to consider for creating an edge
 }
 
 pub struct StringGraph {
@@ -26,9 +25,25 @@ pub struct StringGraph {
 }
 
 
-pub fn string_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> u64 {
-    assert_eq!(str1.len(), str2.len());
+
+
+pub fn string_distance_no_break(str1: &Vec<u8>, str2: &Vec<u8>, _max_dist: &usize) -> usize {
+    //assert_eq!(str1.len(), str2.len());
     str1.iter().zip(str2.iter()).map(|(c1, c2)| if c1 == c2 { 0 } else { 1 }).sum()
+}
+
+pub fn string_distance_break(str1: &Vec<u8>, str2: &Vec<u8>, max_dist: &usize) -> usize {
+    //assert_eq!(str1.len(), str2.len());
+    let mut dist: usize = 0;
+    for (c1, c2) in str1.iter().zip(str2.iter()) {
+        if c1 != c2 {
+            dist += 1;
+            if &dist > max_dist {
+                return dist;
+            }
+        }
+    }
+    dist
 }
 
 
@@ -77,6 +92,7 @@ impl Clone for BestHits {
     }
 }
 
+#[allow(dead_code)]
 pub fn average_dist(strings: &Vec<Vec<u8>>,compare: fn(&Vec<u8>, &Vec<u8>) -> u64) -> f64 {
     let mut dist : f64 = 0.0;
     let mut count: usize = 0;
@@ -90,7 +106,7 @@ pub fn average_dist(strings: &Vec<Vec<u8>>,compare: fn(&Vec<u8>, &Vec<u8>) -> u6
     dist / (count as f64)
 }
 
-pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8>) -> u64, progress: bool) -> StringGraph {
+pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8>, &usize) -> usize, progress: bool) -> StringGraph {
     let mut graph = GraphMap::<u32, u32, Undirected>::new();
     let mut string_to_node: HashMap<Vec<u8>, u32> = HashMap::new();
     let mut node_to_string: HashMap<u32, Vec<u8>> = HashMap::new();
@@ -126,7 +142,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     string_to_node.clone().into_iter().for_each(|(key1, node1)| {
         string_to_node.clone().into_iter().for_each(|(key2, node2)| {
             if key1 != key2 && key1.cmp(&key2) == Less {
-                let dist = compare(&key1, &key2);
+                let dist = compare(&key1, &key2, &input_list.max_dist);
                 if dist <= input_list.max_dist {
                     graph.add_edge(node1, node2, dist as u32);
                 }
@@ -153,36 +169,40 @@ pub fn max_set_distance(set: &Vec<Vec<u8>>) -> u64 {
     let mut max = 0;
     set.iter().for_each(|l1| {
         set.iter().for_each(|l2| {
-            max = u64::max(string_distance(l1, l2) as u64, max);
+            max = u64::max(string_distance_no_break(l1, l2, &l1.len()) as u64, max);
         });
     });
     max
 }
 
+#[allow(dead_code)]
 pub fn average_set_distance(set: &Vec<Vec<u8>>) -> f64 {
     let mut dist = 0.0;
     set.iter().for_each(|l1| {
         set.iter().for_each(|l2| {
-            dist += string_distance(l1, l2) as f64;
+            dist += string_distance_no_break(l1, l2, &l1.len()) as f64;
         });
     });
     dist / ((set.len() * set.len()) as f64)
 }
 
+#[allow(dead_code)]
 pub fn interset_distance(left: &Vec<Vec<u8>>, right: &Vec<Vec<u8>>) -> f64 {
     let mut dist = 0.0;
     left.iter().for_each(|l1| {
         right.iter().for_each(|r1| {
-            dist += string_distance(l1, r1) as f64;
+            dist += string_distance_no_break(l1, r1, &l1.len()) as f64;
         });
     });
     dist / ((left.len() * right.len()) as f64)
 }
 
+#[allow(dead_code)]
 pub fn set_distances(left: &Vec<Vec<u8>>, right: &Vec<Vec<u8>>) -> (u64, u64, f64) {
     (max_set_distance(left), max_set_distance(right), interset_distance(left, right))
 }
 
+#[allow(dead_code)]
 pub fn max_graph_set_differences(string_graph: &StringGraph) -> u64 {
     max_set_distance(&string_graph.node_to_string.values().map(|c| c.clone()).collect::<Vec<Vec<u8>>>())
 }
@@ -194,9 +214,7 @@ pub fn split_subgroup(string_graph: &mut StringGraph) -> Option<Vec<Vec<Vec<u8>>
     if max_set_distance(&string_graph.string_to_node.keys().map(|k| k.clone()).collect::<Vec<Vec<u8>>>()) <= string_graph.max_distance * 2 {
         return None
     }
-    let mut best_edge: Option<(u32, u32, &u32)> = None;
     let mut best_balance: f64 = 1.0;
-    let mut best_left_right = (0, 0);
     let node_count = string_graph.graph.node_count() as f64;
     let mut best_left = Vec::new();
     let mut best_right = Vec::new();
@@ -219,9 +237,7 @@ pub fn split_subgroup(string_graph: &mut StringGraph) -> Option<Vec<Vec<Vec<u8>>
             let right_set_max_dist = max_set_distance(&comps[1]);
 
             if balance < best_balance && left_set_max_dist < (string_graph.max_distance * 2) && right_set_max_dist < (string_graph.max_distance * 2) {
-                best_left_right = (comps[0].len(), comps[1].len());
                 best_balance = balance;
-                best_edge = Some(x);
                 best_left = comps[0].clone();
                 best_right = comps[1].clone();
             }
@@ -234,9 +250,6 @@ pub fn split_subgroup(string_graph: &mut StringGraph) -> Option<Vec<Vec<Vec<u8>>
     }
 }
 
-
-
-
 pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>> {
     let graph_nodes: Vec<Vec<u32>> = tarjan_scc(&string_graph.graph);
     graph_nodes.into_iter().map(|nodes| {
@@ -246,7 +259,6 @@ pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>>
 
 pub fn generate_random_string(length: usize) -> Vec<u8> {
     let bases = vec![b'A', b'C', b'G', b'T'];
-    let mut rng = rand::thread_rng();
     let mut results = Vec::new();
     for _i in 0..length { results.push(bases.choose(&mut rand::thread_rng()).unwrap().to_owned()) }
     results
@@ -312,20 +324,20 @@ mod tests {
         let str1 = vec![b'A', b'A', b'A', b'A'];
         let str2 = vec![b'A', b'A', b'A', b'T'];
 
-        let str_dist = string_distance(&str1, &str2);
+        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
         assert_eq!(1, str_dist);
 
         let str1 = vec![b'A', b'A', b'A', b'A'];
         let str2 = vec![b'A', b'A', b'A', b'A'];
 
-        let str_dist = string_distance(&str1, &str2);
+        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
         assert_eq!(0, str_dist);
 
         let str1 = vec![b'T', b'T', b'T', b'T'];
         let str2 = vec![b'A', b'A', b'A', b'A'];
 
 
-        let str_dist = string_distance(&str1, &str2);
+        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
         assert_eq!(4, str_dist);
     }
 
@@ -333,32 +345,31 @@ mod tests {
     fn test_graph_creation() {
         let vec_of_vecs = vec![vec![b'A', b'A', b'A', b'A'], vec![b'C', b'C', b'C', b'C'], vec![b'G', b'A', b'A', b'A'], vec![b'C', b'A', b'A', b'A']];
         let collection = InputList { strings: vec_of_vecs, max_dist: 6 };
-        let graph = input_list_to_graph(&collection, string_distance, false);
+        let graph = input_list_to_graph(&collection, string_distance_no_break, false);
         //println!("{}", Dot::new(&graph.graph));
         assert_eq!(6, graph.graph.edge_count()); // paths are
     }
 
 
-    // #[test] dont run for now
+    /* #[test] dont run for now
     fn test_four_set_count() {
-        let test_set = generate_simulated_data(10, 10, 10, 0.1);
         let mut group1 = create_one_off_errors(&generate_random_string(10));
         println!("Group 1 {}", group1.len());
         group1.extend(create_one_off_errors(&generate_random_string(10)));
         group1.extend(create_one_off_errors(&generate_random_string(10)));
         group1.extend(create_one_off_errors(&generate_random_string(10)));
         println!("Group 1 {}", group1.len());
-        let graph = input_list_to_graph(&InputList { strings: group1, max_dist: 4 }, string_distance, false);
+        let graph = input_list_to_graph(&InputList { strings: group1, max_dist: 4 }, string_distance_no_break, false);
         println!("Graphing!");
         process_cliques(&graph);
-    }
+    }*/
 
 
     #[test]
     fn test_larger_clique_count() {
         let test_set = generate_simulated_data(10, 10, 10, 0.1);
         println!("TEST SIZE {}", test_set.len());
-        let graph = input_list_to_graph(&InputList { strings: test_set, max_dist: 4 }, string_distance, false);
+        let graph = input_list_to_graph(&InputList { strings: test_set, max_dist: 4 }, string_distance_no_break, false);
         process_cliques(&graph);
     }
 
@@ -375,7 +386,7 @@ mod tests {
             }
         }
         println!("TEST SIZE {}", test_set.len());
-        let graph = input_list_to_graph(&InputList { strings: test_set, max_dist: 1 }, string_distance, false);
+        let graph = input_list_to_graph(&InputList { strings: test_set, max_dist: 1 }, string_distance_no_break, false);
         println!("Making clique");
         process_cliques(&graph);
     }
@@ -410,14 +421,13 @@ mod tests {
     fn test_cc() {
         let barcode_length = 8;
 
-        let test_set = generate_simulated_data(barcode_length, 10, 10, 0.1);
         let mut group1 = create_one_off_errors(&generate_random_string(barcode_length));
         println!("Group 1 {}", group1.len());
         group1.extend(create_one_off_errors(&generate_random_string(barcode_length)));
         group1.extend(create_one_off_errors(&generate_random_string(barcode_length)));
         group1.extend(create_one_off_errors(&generate_random_string(barcode_length)));
         println!("Group 1 {}", group1.len());
-        let graph = input_list_to_graph(&InputList { strings: group1, max_dist: 1 }, string_distance, false);
+        let graph = input_list_to_graph(&InputList { strings: group1, max_dist: 1 }, string_distance_no_break, false);
         println!("Graphing!");
         let cn = get_connected_components(&graph);
         println!("Graphing! {} ", cn.len());
@@ -428,10 +438,73 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn test_sift4_vs_string_dist() {
+        let low_match = "AAAAAAAA";
+        let low_match_bytes = low_match.to_string().into_bytes();
+        let high_match = "TTTTTTTT";
+        let high_match_bytes = high_match.to_string().into_bytes();
+        let close_match = "AATAAAAA";
+        let close_match_bytes = close_match.to_string().into_bytes();
+
+        use std::time::Instant;
+        let iterations = 1000000;
+        for _i in 0..4 {
+            let now = Instant::now();
+            for _x in 0..iterations {
+                let _ = sift4::simple(&low_match, &high_match);
+            }
+            println!("Sift4 high/low {}", now.elapsed().as_millis());
+
+        }
+        for _i in 0..4 {
+
+            let now = Instant::now();
+            for _x in 0..iterations {
+                let _ = sift4::simple(&low_match, &close_match);
+            }
+            println!("Sift4 close/low {}", now.elapsed().as_millis());
+
+        }
+        for _i in 0..4 {
+            let now = Instant::now();
+            for _x in 0..iterations {
+                let _ = string_distance_no_break(&low_match_bytes, &high_match_bytes, &2);
+            }
+            println!("string_distance high/low {}", now.elapsed().as_millis());
+
+        }
+        for _i in 0..4 {
+
+            let now = Instant::now();
+            for _x in 0..iterations {
+                let _ = string_distance_no_break(&low_match_bytes, &close_match_bytes, &2);
+            }
+            println!("string_distance close/low {}", now.elapsed().as_millis());
+
+        }
+        for _i in 0..4 {
+
+            let now = Instant::now();
+            for _x in 0..iterations {
+                let _ = string_distance_break(&low_match_bytes, &high_match_bytes, &2);
+            }
+            println!("string_distance_break high/low {}", now.elapsed().as_millis());
+
+        }
+        for _i in 0..4 {
+
+            let now = Instant::now();
+            for _x in 0..iterations {
+                let _ = string_distance_break(&low_match_bytes, &close_match_bytes, &2);
+            }
+            println!("string_distance_break close/low {}", now.elapsed().as_millis());
+        }
+    }
+
 
     #[test]
     fn test_cc_group_size() {
-        let barcode_length = 8;
         let mut set1 = Vec::new();
         set1.push(vec![b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', ]);
         set1.push(vec![b'T', b'T', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', ]);
@@ -440,21 +513,21 @@ mod tests {
 
         set1.push(vec![b'T', b'T', b'A', b'A', b'A', b'A', b'T', b'T', b'T', b'T', ]);
         set1.push(vec![b'T', b'T', b'A', b'A', b'T', b'T', b'T', b'T', b'T', b'T', ]);
-        let mut graph = input_list_to_graph(&InputList { strings: set1, max_dist: 2 }, string_distance, false);
+        let mut graph = input_list_to_graph(&InputList { strings: set1, max_dist: 2 }, string_distance_no_break, false);
         assert!(!split_subgroup(&mut graph).is_some());
 
         let mut set2 = Vec::new();
         set2.push(vec![b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', ]);
         set2.push(vec![b'T', b'T', b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', ]);
         set2.push(vec![b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'C', b'T', b'T', ]);
-        let mut graph = input_list_to_graph(&InputList { strings: set2, max_dist: 2 }, string_distance, false);
+        let mut graph = input_list_to_graph(&InputList { strings: set2, max_dist: 2 }, string_distance_no_break, false);
         assert!(!split_subgroup(&mut graph).is_some());
 
         let mut set3 = Vec::new();
         set3.push(vec![b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', ]);
         set3.push(vec![b'T', b'T', b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', ]);
         set3.push(vec![b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'G', b'T', b'T', ]);
-        let mut graph = input_list_to_graph(&InputList { strings: set3, max_dist: 2 }, string_distance, false);
+        let mut graph = input_list_to_graph(&InputList { strings: set3, max_dist: 2 }, string_distance_no_break, false);
         assert!(!split_subgroup(&mut graph).is_some());
     }
 }

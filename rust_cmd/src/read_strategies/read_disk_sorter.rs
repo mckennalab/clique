@@ -1,11 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{VecDeque};
-use std::path::{PathBuf};
-use crate::read_strategies::read_set::ReadSetContainer;
 use serde::{Serialize, Deserialize};
 use crate::alignment::fasta_bit_encoding::FastaBase;
-use shardio::*;
-use crate::read_strategies::sequence_layout::{UMIConfiguration};
 
 /// a sortable read set container that sorts on a set of keys -- which we populate with
 /// extracted barcode sequences. These sorting sequences could have been corrected to a known list
@@ -55,13 +51,9 @@ impl Ord for SortingReadSetContainer {
     }
 }
 
-pub struct StreamSorter {
-    shard_reader: ShardReader<SortingReadSetContainer>,
-    filename: PathBuf,
-}
-
+/*
 impl StreamSorter {
-    /*
+
     pub fn from_fasta(filedir: &InstanceLivedTempDir,
                 reads: &dyn Iterator<Item=ReadSetContainer>,
                 sort_on: UMIConfiguration) -> StreamSorter {
@@ -85,16 +77,15 @@ impl StreamSorter {
             sender,
             filename: filename,
         }
-    }*/
+    }
 
 
     /// sort the iterator of ReadSetContainers by a specific capture sequence
     pub fn sort_level(reads: &dyn Iterator<Item=ReadSetContainer>, sort_on: UMIConfiguration) {}
 }
-
+*/
 #[cfg(test)]
 mod tests {
-    use bio::data_structures::bwt::Less;
     use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_N, FASTA_T};
     use super::*;
     use crate::utils::read_utils::fake_reads;

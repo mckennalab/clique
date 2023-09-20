@@ -56,7 +56,7 @@ pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: 
 
 pub fn gap_proportion_per_tag(tags: &BTreeMap<u8, String>) -> Vec<f64> {
     let mut gap_proportions = Vec::new();
-    for (key, value) in tags {
+    for (_key, value) in tags {
         let mut gap_count = 0;
         let mut total_count = 0;
         for base in value.as_bytes() {

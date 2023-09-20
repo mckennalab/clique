@@ -1,27 +1,21 @@
 extern crate rust_spoa;
 
-use std::alloc::System;
-use std::borrow::Borrow;
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
-use rayon::prelude::*;
 use rust_spoa::poa_consensus;
-use shardio::{Range, ShardReader, ShardWriter};
+use shardio::{Range, ShardReader};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
-use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
-use std::io::Write;
-use std::sync::{Arc, Mutex};
+use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use counter::Counter;
 use indicatif::ProgressBar;
-use rust_htslib::bam::record::{Cigar, CigarString};
+use rust_htslib::bam::record::{CigarString};
 use crate::alignment::alignment_matrix::AlignmentTag;
-use crate::alignment_functions::{create_sam_record, perform_rust_bio_alignment, perform_wavefront_alignment, setup_sam_writer, simplify_cigar_string};
+use crate::alignment_functions::{create_sam_record, perform_rust_bio_alignment, setup_sam_writer, simplify_cigar_string};
 use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
-use rand::seq::SliceRandom;
-use rust_htslib::bam::{Record, Writer};
-use actix::prelude::*;
+use rust_htslib::bam::{Writer};
+
 
 /*
 #[derive(Message)]
@@ -86,30 +80,8 @@ impl ConsensusActor {
     }
 }*/
 
-
-pub struct ConsensusCandidate {
-    pub reads: Vec<SortingReadSetContainer>,
-    pub global_umi: Vec<u8>,
-}
-
-pub struct ConsensusResult {
-    pub read_one: Vec<u8>,
-    pub read_two: Option<Vec<u8>>,
-    pub global_umi: Vec<u8>,
-}
-
-pub fn null_cap(strs: &[Vec<u8>]) -> Vec<Vec<u8>> {
-    strs.iter().map(|r| {
-        let mut ret = r.clone();
-        ret.push(b'\0');
-        ret
-    }).collect::<Vec<Vec<u8>>>()
-}
-
-
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
                              output_file: &String,
-                             threads: &usize,
                              levels: usize,
                              read_counts: &usize,
                              reference_manager: &ReferenceManager,
@@ -123,7 +95,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     let mut buffered_reads = VecDeque::new();
     let bar = ProgressBar::new(read_counts.clone() as u64);
 
-    reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, x)| {
+    reader.iter_range(&Range::all()).unwrap().for_each(|x| {
         bar.inc(1);
         let x = x.unwrap();
         assert_eq!(x.ordered_sorting_keys.len(), levels);
@@ -143,13 +115,13 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
 fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
                                         maximum_reads_before_downsampling: &usize,
                                         writer: &mut Writer,
-                                        mut buffered_reads: &mut VecDeque<SortingReadSetContainer>) {
+                                        buffered_reads: &mut VecDeque<SortingReadSetContainer>) {
     let mut added_tags = HashMap::new();
     added_tags.insert((b'r', b'c'), buffered_reads.len().to_string());
 
     added_tags.insert((b'd', b'c'), cmp::min(*maximum_reads_before_downsampling,buffered_reads.len()).to_string());
 
-    let mut consensus_reads = create_poa_consensus(&buffered_reads, maximum_reads_before_downsampling);
+    let consensus_reads = create_poa_consensus(&buffered_reads, maximum_reads_before_downsampling);
     let consensus_reference = Counter::<Vec<u8>, usize>::init(buffered_reads.iter().map(|x| x.aligned_read.ref_name.clone().as_bytes().to_vec()).collect::<Vec<Vec<u8>>>()).most_common_ordered();
 
     let top_ref = &consensus_reference.get(0).unwrap().clone().0;
@@ -160,6 +132,9 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
     let read_names = buffered_reads.iter().map(|x| x.aligned_read.read_name.clone()).collect::<Vec<String>>();
 
     added_tags.insert((b'a', b'r'), read_names.join(","));
+    added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&new_alignment.reference_aligned,&new_alignment.read_aligned).to_string());
+    added_tags.insert((b'a', b's'), new_alignment.score.to_string());
+    
 
     let sam_read = create_sam_record(read_names.get(0).clone().unwrap(),
                                      &new_alignment.read_aligned,
@@ -172,6 +147,23 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
     writer.write(&sam_read).unwrap();
 }
 
+pub fn get_reference_alignment_rate(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> f64 {
+    let mut matches = 0;
+    let mut mismatches = 0;
+
+    for index in 0..reference.len() {
+        if reference.get(index).unwrap() != &FASTA_UNSET && read.get(index).unwrap() != &FASTA_UNSET {
+            if reference.get(index).unwrap() == read.get(index).unwrap()
+            {
+                matches += 1;
+            } else {
+                mismatches += 1;
+            }
+        }
+    }
+
+    (matches as f64) / ((matches + mismatches) as f64)
+}
 pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: &Vec<FastaBase>) -> CigarString {
     let mut result: Vec<AlignmentTag> = Vec::new();
 
@@ -195,17 +187,12 @@ pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: 
 pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downsample_to: &usize) -> Vec<u8> {
     let max_length = sequences.iter().map(|n| n.aligned_read.aligned_read.len()).collect::<Vec<usize>>();
     let max_length = max_length.iter().max().unwrap();
-    let first_name = match sequences.iter().next() {
-        Some(x) => x.aligned_read.read_name.clone(),
-        None => "UNKNOWN".to_string(),
-    };
 
     let mut base_sequences = sequences.iter().map(|n| {
         let mut y = FastaBase::to_vec_u8(&n.aligned_read.aligned_read);
         y.push(b'\0');
         y
     }).collect::<Vec<Vec<u8>>>();
-
 
     // downsample if needed -- it's not the best idea to do downsampling here after all the work above,
     // but sometimes the borrow checker is a pain when your brain is small

@@ -52,12 +52,8 @@ pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, spacer: &Opt
             ret_vec.extend(vec![FASTA_UNSET; gap_size.clone() as usize]);
             ret_vec.extend(rev_comp_read2);
 
-            let quals = vec![b'H'; ret_vec.len()];
-
             MergedSequence {
-                read_bases: ret_vec,
-                read_quals: quals,
-                mismatch_rate: 0.0,
+                read_bases: ret_vec
             }
         }
         _ => {
@@ -77,12 +73,8 @@ pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, spacer: &Opt
                     ret_vec
                 }
             };
-            let quals = vec![b'H'; sq.len()];
-
             MergedSequence {
-                read_bases: sq,
-                read_quals: quals,
-                mismatch_rate: 0.0,
+                read_bases: sq
             }
         }
     }
@@ -210,9 +202,7 @@ pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_sc
 }
 
 pub struct MergedSequence {
-    read_bases: Vec<FastaBase>,
-    read_quals: Vec<u8>,
-    mismatch_rate: f64,
+    read_bases: Vec<FastaBase>
 }
 
 /// Computes the consensus sequence, quality scores, and mismatch rate for two aligned DNA sequences.
@@ -245,7 +235,6 @@ pub fn alignment_rate_and_consensus(alignment_1: &Vec<FastaBase>, qual_scores1: 
     let mut resulting_quality_scores = Vec::new();
     let mut alignment_1_qual_position = 0;
     let mut alignment_2_qual_position = 0;
-    let mut agreed_bases = 0;
 
     assert_eq!(alignment_1.len(), alignment_2.len());
 
@@ -254,7 +243,6 @@ pub fn alignment_rate_and_consensus(alignment_1: &Vec<FastaBase>, qual_scores1: 
             (a, b) if a == b => {
                 resulting_alignment.push(a.clone());
                 resulting_quality_scores.push(combine_phred_scores(&qual_scores1[alignment_1_qual_position], &qual_scores2[alignment_2_qual_position], true));
-                agreed_bases += 1;
                 alignment_1_qual_position += 1;
                 alignment_2_qual_position += 1;
             }
@@ -284,9 +272,7 @@ pub fn alignment_rate_and_consensus(alignment_1: &Vec<FastaBase>, qual_scores1: 
     }
 
     MergedSequence {
-        read_bases: resulting_alignment,
-        read_quals: resulting_quality_scores,
-        mismatch_rate: agreed_bases as f64 / alignment_1.len() as f64,
+        read_bases: resulting_alignment
     }
 }
 
@@ -382,7 +368,7 @@ mod tests {
 
         let start = Instant::now();
 
-        for i in 0..1000 {
+        for _i in 0..1000 {
             merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
         }
         let duration = start.elapsed();

@@ -1,15 +1,13 @@
-use std::cell::Ref;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Output;
 use std::str;
 use crate::itertools::Itertools;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
-use crate::alignment::alignment_matrix::{Alignment, AlignmentCigar, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
+use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, READ_CHAR, REFERENCE_CHAR, stretch_sequence_to_alignment};
 use crate::linked_alignment::{orient_by_longest_segment};
@@ -20,14 +18,13 @@ use bio::alignment::AlignmentOperation;
 use ndarray::Ix3;
 use shardio::{ShardReader, ShardWriter};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
-use crate::merger::{MergedReadSequence, NamedRead};
+use crate::merger::{MergedReadSequence};
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration};
 use libwfa::{affine_wavefront::*, bindings::*, mm_allocator::*, penalties::*};
 use rust_htslib::bam;
-use rust_htslib::bam::{Record, Writer};
+use rust_htslib::bam::{Record};
 use rust_htslib::bam::record::{Aux, CigarString};
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
-use bio::alignment::distance::simd::{bounded_levenshtein, levenshtein};
 use bio::alignment::pairwise::Aligner;
 
 
@@ -147,14 +144,14 @@ pub fn align_reads(use_capture_sequences: &bool,
     });
 }
 
-pub fn fast_align_reads(use_capture_sequences: &bool,
+pub fn fast_align_reads(_use_capture_sequences: &bool,
                         read_structure: &SequenceLayoutDesign,
-                        only_output_captured_ref: &bool,
-                        to_fake_fastq: &bool,
+                        _only_output_captured_ref: &bool,
+                        _to_fake_fastq: &bool,
                         rm: &ReferenceManager,
                         output: &Path,
                         max_reference_multiplier: &f64,
-                        min_read_length: &usize,
+                        _min_read_length: &usize,
                         read1: &String,
                         read2: &String,
                         index1: &String,
@@ -173,7 +170,7 @@ pub fn fast_align_reads(use_capture_sequences: &bool,
                                                                                     256,
                                                                                     1 << 16).unwrap();
 
-    let mut sender = Arc::new(Mutex::new(sharded_output.get_sender()));
+    let sender = Arc::new(Mutex::new(sharded_output.get_sender()));
 
     let mut sorting_order = read_structure.umi_configurations.iter().map(|x| x.1.clone()).collect::<Vec<UMIConfiguration>>();
     sorting_order.sort_by(|a, b| a.order.cmp(&b.order));
@@ -188,13 +185,12 @@ pub fn fast_align_reads(use_capture_sequences: &bool,
     let reference_seq = rm.references.iter().next().unwrap();
     let reference_bases = FastaBase::from_vec_u8_default_ns(&reference_seq.1.sequence_u8);
     let reference_name = String::from_utf8(reference_seq.1.name.clone()).unwrap();
-    let mut read_count = Arc::new(Mutex::new(0 as usize));
-    let mut skipped_count = Arc::new(Mutex::new(0 as usize));
-    let mut gap_rejected = Arc::new(Mutex::new(0 as usize));
+    let read_count = Arc::new(Mutex::new(0 as usize));
+    let skipped_count = Arc::new(Mutex::new(0 as usize));
+    let gap_rejected = Arc::new(Mutex::new(0 as usize));
 
     read_iterator.par_bridge().for_each(|xx| {
         if (xx.seq.len() as f64) < ((*max_reference_multiplier) * reference_bases.len() as f64) {
-            let name = &String::from_utf8(xx.name.clone()).unwrap();
             let forward_oriented_seq = if !read_structure.known_orientation {
                 let orientation = orient_by_longest_segment(&xx.seq, &reference_seq.1.sequence_u8, &reference_seq.1.suffix_table).0;
                 if orientation {
@@ -333,7 +329,7 @@ pub fn best_reference(read: &Vec<FastaBase>,
 
             match ranked_alignments.iter().next() {
                 None => { None }
-                Some((x, y)) => {
+                Some((_x, y)) => {
                     Some((Some(y.0.clone()), y.1.clone(), y.2.clone()))
                 }
             }
@@ -346,8 +342,8 @@ pub fn best_reference(read: &Vec<FastaBase>,
 pub fn alignment(x: &Vec<FastaBase>,
                  reference: &Reference,
                  read_structure: &SequenceLayoutDesign,
-                 alignment_mat: &mut Alignment<Ix3>,
-                 my_aff_score: &AffineScoring,
+                 _alignment_mat: &mut Alignment<Ix3>,
+                 _my_aff_score: &AffineScoring,
                  _my_score: &InversionScoring,
                  _use_inversions: &bool,
                  max_reference_multiplier: usize,
@@ -556,19 +552,9 @@ pub fn tags_to_output(tags: &BTreeMap<u8, String>) -> String {
     tags.iter().filter(|(k, _v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", String::from_utf8(vec![*k]).unwrap(), v)).join(";")
 }
 
-
-pub fn write_alignment(alignment: &AlignmentResult,
-                       read_name: &String,
-                       original_ref: &Vec<u8>,
-                       use_capture_sequences: &bool,
-                       output: Arc<Mutex<bam::Writer>>) {
-    let mut output = output.lock().unwrap();
-    output.write(&alignment.to_sam_record(read_name, &0, original_ref, use_capture_sequences)).unwrap();
-}
-
 pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) -> Result<bam::Writer, rust_htslib::errors::Error> {
     let mut header = bam::Header::new();
-    reference_manger.references.iter().for_each(|(reference)| {
+    reference_manger.references.iter().for_each(|reference| {
         let mut header_record = bam::header::HeaderRecord::new(b"SQ");
         header_record.push_tag(b"SN", String::from_utf8(reference.1.name.clone()).unwrap());
         header_record.push_tag(b"LN", &reference.1.sequence.len());
@@ -794,8 +780,6 @@ mod tests {
 
     #[test]
     fn wavefront() {
-        let alloc = MMAllocator::new(BUFFER_SIZE_8M as u64);
-
         let pattern = FastaBase::from_string(&String::from("AAACGCTTCTGCACTTCGCGTGATATCATTACGTTTTGTCCCTCTACGATGTACCTGTCATCTTAGCTAAGACGACAGGACATGTCCAGGAAGTGCTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT"));
         let text = FastaBase::from_string(&String::from("NNNNNNNNNNNNNNNNNNNNNNNNNNNNTTACGTTNNNNNNNNNNNNGATGTACCTGTCATCTTAGCTAAGATGACAGGACATGTCCAGGAAGTACTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT"));
 
@@ -824,7 +808,6 @@ mod tests {
 
     #[test]
     fn writing_sam_file() {
-        let sam_file = std::fs::File::create("test_data/test.sam").unwrap();
         let mut header_record = bam::header::HeaderRecord::new(b"SQ");
         header_record.push_tag(b"SN", &"chr1");
         header_record.push_tag(b"LN", &"150");
@@ -841,9 +824,8 @@ mod tests {
             bounding_box: None,
         };
 
-        for i in 0..1000 {
+        for _i in 0..1000 {
             out.write(&alignment_record.to_sam_record("test",
-                                                      &0,
                                                       &"CCAATCTACTACTGCTTGCA".to_string().into_bytes(),
                                                       &false)).unwrap();
         }

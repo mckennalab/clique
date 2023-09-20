@@ -28,6 +28,7 @@ extern crate symspell;
 extern crate derive_more;
 extern crate shardio;
 extern crate anyhow;
+extern crate sift4;
 
 
 use ::std::io::Result;
@@ -193,7 +194,7 @@ fn main() {
             outbam,
             read_structure,
             threads,
-            temp_dir,
+            temp_dir: _,
             read1,
             read2,
             index1,

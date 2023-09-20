@@ -1,24 +1,18 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::path::{Path, PathBuf};
-use std::string;
-use crate::alignment_functions::{align_reads, fast_align_reads};
+use std::collections::{HashMap, VecDeque};
+use std::path::{PathBuf};
+use crate::alignment_functions::{fast_align_reads};
 use crate::InstanceLivedTempDir;
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
-use bio::io::fasta::*;
 use indicatif::ProgressBar;
-use itertools::Itertools;
-use log::Level::Warn;
-use shardio::{DefaultSort, Range, ShardReader, ShardSender, ShardWriter};
+use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use crate::alignment::fasta_bit_encoding::FastaBase;
-use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
-use crate::sequence_lookup::KnownLookup;
+use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use rustc_hash::FxHashMap;
-use typetag::__private::inventory::iter;
 use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::umis::known_list::KnownList;
-use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, input_list_to_graph, InputList, split_subgroup, string_distance};
+use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, input_list_to_graph, InputList, string_distance_break};
 
 pub fn collapse(reference: &String,
                 final_output: &String,
@@ -88,7 +82,7 @@ pub fn collapse(reference: &String,
     info!("writing consensus reads");
 
     // collapse the final reads down to a single sequence and write everything to the disk
-    write_consensus_reads(&sorted_input, final_output, &threads, levels, &read_count, &rm, &40);
+    write_consensus_reads(&sorted_input, final_output, levels, &read_count, &rm, &40);
 }
 
 
@@ -144,7 +138,9 @@ impl TagStrippingDiskBackedBuffer {
     }
 
     /// Pushes a new item onto the buffer
-    /// If the buffer is full, it will write the buffer to disk and clear it.
+    /// we buffer writing to prevent the costly disk writes when we have smaller sets of barcodes.
+    /// When we overflow we write the whole buffer to disk and continue to write additional reads to
+    /// disk until we've finished.
     ///
     pub fn push(&mut self, mut item: SortingReadSetContainer) {
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
@@ -166,6 +162,7 @@ impl TagStrippingDiskBackedBuffer {
         }
     }
 
+    /// Dumps the buffer to disk
     pub fn dump_buffer(&mut self) {
         self.shard_writer = Some(Box::new(ShardWriter::new(&self.output_file,
                                                            32,
@@ -177,18 +174,19 @@ impl TagStrippingDiskBackedBuffer {
         });
     }
 
+    /// This function 'corrects' a list of barcodes using a connected components algorithm
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
         let string_set = Vec::from_iter(self.hash_map.keys()).iter().map(|s| s.as_bytes().to_vec()).collect::<Vec<Vec<u8>>>();
-        let collection = InputList { strings: string_set, max_dist: u64::try_from(self.tag.max_distance).unwrap() };
+        let collection = InputList { strings: string_set, max_dist: self.tag.max_distance.clone() };
         let progress_bar = self.hash_map.len() > 50000;
-        let graph = input_list_to_graph(&collection, string_distance, progress_bar);
+        let graph = input_list_to_graph(&collection, string_distance_break, progress_bar);
 
         let cc = get_connected_components(&graph);
-        //info!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
+        info!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {
-            let minilist = InputList { strings: group, max_dist: u64::try_from(self.tag.max_distance.clone()).unwrap() };
+            let minilist = InputList { strings: group, max_dist: self.tag.max_distance.clone() };
 
             // TODO this is a hack to get around the fact that the graph is not being split correctly -- need to fix this
             /*let mut minigraph = input_list_to_graph(&minilist, string_distance, false);
@@ -280,10 +278,10 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
     let mut largest_group_size = 0;
     let mut group_size = 0;
 
-    reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, y)| {
+    reader.iter_range(&Range::all()).unwrap().for_each(|y| {
         bar.inc(1);
         let mut x = y.as_ref().unwrap().clone();
-        let mut x2 = y.as_ref().unwrap().clone();
+        let x2 = y.as_ref().unwrap().clone();
 
         processed_reads += 1;
         //info!("processing read {} with {:?} tags", processed_reads, x.ordered_sorting_keys);
@@ -366,14 +364,10 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
                                                                                         1 << 16).unwrap();
         let mut sender = sharded_output.get_sender();
 
-        reader.iter_range(&Range::all()).unwrap().enumerate().for_each(|(i, x)| {
+        reader.iter_range(&Range::all()).unwrap().for_each(|x| {
             bar.inc(1);
             processed_reads += 1;
             let mut sorting_read_set_container = x.unwrap();
-            let sq = FastaBase::to_string(&sorting_read_set_container.aligned_read.aligned_read);
-            let sqref = FastaBase::to_string(&sorting_read_set_container.aligned_read.aligned_ref);
-
-            let sq2 = sorting_read_set_container.aligned_read.read_name.clone();
             assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), tag.order);
 
             let next_key = sorting_read_set_container.ordered_unsorted_keys.pop_front().unwrap();
@@ -389,10 +383,10 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
                     collided_reads += 1;
                     dropped_reads += 1;
                 }
-                (x, y) if y > tag.max_distance => {
+                (_x, y) if y > tag.max_distance => {
                     dropped_reads += 1;
                 }
-                (x, y) => {
+                (_x, _y) => {
                     sorting_read_set_container.ordered_sorting_keys.push((next_key.0, corrected_hits.hits.get(0).unwrap().clone()));
                     sender.send(sorting_read_set_container).unwrap();
                 }
@@ -410,9 +404,7 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use super::*;
-    use crate::read_strategies::read_set::ReadIterator;
 
     #[test]
     fn test_consensus() {

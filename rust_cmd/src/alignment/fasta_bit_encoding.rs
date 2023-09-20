@@ -2,7 +2,7 @@ extern crate derive_more;
 
 use std::cmp::Ordering;
 use std::fmt;
-use derive_more::{From, Add};
+use derive_more::{Add};
 use std::ops::{BitAnd, BitOr, BitXor, Shl, Shr};
 use serde::{Serialize,Deserialize};
 
@@ -198,10 +198,6 @@ fn encoding_to_u8(base: &FastaBase) -> u8 {
     }
 }
 
-
-fn char_to_encoding(base: &char) -> Option<FastaBase> {
-    Some(FastaBase::from(base.clone()))
-}
 fn u8_to_encoding_defaulted_to_n(base: &u8) -> FastaBase {
     match base {
         b'-' => FASTA_UNSET,
@@ -295,7 +291,6 @@ pub(crate) fn reverse_complement(bases: &Vec<FastaBase>) -> Vec<FastaBase> {
 mod tests {
     use std::collections::HashMap;
     use std::time::Instant;
-    use crate::fasta_comparisons::DEGENERATEBASES;
     use super::*;
 
     #[test]
@@ -505,23 +500,23 @@ mod tests {
         let fbases2 = FastaBase::from_vec_u8(&bases2);
 
         let start = Instant::now();
-        let mut not_equal = 0;
-        for i in 0..10000000 {
+        let mut _not_equal = 0;
+        for _i in 0..10000000 {
             if bases != bases2 {
-                not_equal += 1;
+                _not_equal += 1;
             }
         }
         let duration = start.elapsed();
         println!("Time elapsed in aligning u8 reads is: {:?}", duration);
 
         let start2 = Instant::now();
-        let mut not_equal = 0;
-        for i in 0..10000000 {
+        let mut _not_equal = 0;
+        for _i in 0..10000000 {
             if fbases != fbases2 {
-                not_equal += 1;
+                _not_equal += 1;
             }
         }
-        let duration2 = start.elapsed();
+        let duration2 = start2.elapsed();
         println!("Time elapsed in aligning fasta is: {:?}", duration2);
 
         /* DEGENERATEBASES
