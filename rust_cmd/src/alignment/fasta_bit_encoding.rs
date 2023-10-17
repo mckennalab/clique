@@ -41,6 +41,14 @@ impl FastaBase {
         bases.iter().map(|b| encoding_to_u8(b)).collect()
     }
 
+    pub fn strip_gaps(bases: &Vec<FastaBase>) -> Vec<FastaBase> {
+        bases.iter().filter(|b| *b != &FASTA_UNSET).map(|b| *b).collect()
+    }
+
+    pub fn to_vec_u8_strip_gaps(bases: &Vec<FastaBase>) -> Vec<u8> {
+        bases.iter().filter(|x| *x != &FASTA_UNSET).map(|b| encoding_to_u8(b)).collect()
+    }
+
     pub fn edit_distance(fasta_bases: &Vec<FastaBase>, other: &Vec<FastaBase>) -> usize {
         assert_eq!(fasta_bases.len(), other.len());
         let mut distance = 0;
@@ -470,6 +478,19 @@ mod tests {
                            String::from_utf8(vec![*z]).unwrap());
             })
         });
+    }
+
+    #[test]
+    fn to_fasta_base_and_back() {
+        let bases = "ACGTACGTACGT---".to_string();
+        let fasta_bases = FastaBase::from_string(&bases);
+        let rebased = FastaBase::to_string(&fasta_bases);
+        assert_eq!(bases, rebased);
+
+        let bases = "ACGTRYKMSWBDHVN-".to_string();
+        let fasta_bases = FastaBase::from_string(&bases);
+        let rebased = FastaBase::to_string(&fasta_bases);
+        assert_eq!(bases, rebased);
     }
 
     #[test]

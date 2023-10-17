@@ -208,8 +208,9 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
             let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.1.sequence_u8);
             let ets = extract_tagged_sequences(&read_al, &full_ref);
 
+            //println!("Alignment results: {} {}",FastaBase::to_string(&alignment.read_aligned),FastaBase::to_string(&alignment.reference_aligned));
             let gap_proportion = gap_proportion_per_tag(&ets);
-            //println!("Gap proportion: {:?} {:?} from {} tested {} and {}", ets, gap_proportion, gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap(), gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion, *max_gaps_proportion);
+
             if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
                 let read_tags_ordered = VecDeque::from(sorted_tags.iter().
                     map(|x| (x.clone(), ets.get(&x.to_string().as_bytes()[0]).unwrap().as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>())).collect::<Vec<(char, Vec<FastaBase>)>>());
@@ -223,6 +224,8 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         aligned_ref: alignment.reference_aligned,
                         ref_name: reference_name.clone(),
                         read_name: String::from_utf8(xx.name.clone()).unwrap(),
+                        cigar_string: alignment.cigar_string.clone(),
+                        score: alignment.score,
                     },
                 };
                 assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
@@ -249,6 +252,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
         max_reference_multiplier,
         *gap_rejected.lock().unwrap(),
         *read_count.lock().unwrap());
+
     sender.lock().unwrap().finished().unwrap();
     sharded_output.finish().unwrap();
 
@@ -477,6 +481,9 @@ pub fn bio_to_alignment_result(alignment: bio::alignment::Alignment, reference: 
             }
         }
     }
+
+    //resulting_cigar.reverse();
+
     AlignmentResult{
         reference_aligned: aligned_ref,
         read_aligned: aligned_read,
@@ -573,9 +580,10 @@ pub fn create_sam_record(
     cigar_string: &CigarString,
     extract_capture_tags: &bool,
     additional_tags: HashMap<(u8, u8), String>) -> Record {
+
     let mut record = Record::new();
-    let seq = FastaBase::to_vec_u8(
-        &read_seq.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>());
+
+    let seq = FastaBase::to_vec_u8_strip_gaps(&read_seq);
 
     // we don't currently calculate real quality scores
     let quals = vec![255 as u8; seq.len()];
@@ -585,7 +593,6 @@ pub fn create_sam_record(
     additional_tags.iter().for_each(|(x, y)| {
         record.push_aux(vec![x.0, x.1].as_slice(), Aux::String(y)).unwrap();
     });
-
 
     if *extract_capture_tags {
         let full_ref = stretch_sequence_to_alignment(&FastaBase::to_vec_u8(&reference_aligned_seq), reference_original_seq);
@@ -662,60 +669,35 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
 
     let mut last_token: Option<AlignmentTag> = None; // zero length, so combining won't affect the final cigar string
 
-    for token in cigar_tokens.into_iter() {
-        last_token = match token {
-            AlignmentTag::MatchMismatch(size) => {
-                match last_token {
-                    Some(AlignmentTag::MatchMismatch(size_old)) => Some(AlignmentTag::MatchMismatch(size + size_old)),
-                    _ => {
-                        if last_token != None { new_cigar.push(last_token.unwrap()); }
+    cigar_tokens.iter().for_each(|token| {
+        match (&last_token,token) {
+            (None, _) => {last_token = Some(token.clone())},
+            (Some(AlignmentTag::InversionOpen),AlignmentTag::InversionOpen) => {
+                panic!("Cannot have two inversion open tags in a row");
+            },
+            (Some(AlignmentTag::InversionClose),AlignmentTag::InversionClose) => {
+                panic!("Cannot have two inversion closed tags in a row");
+            },
+            (Some(AlignmentTag::MatchMismatch(last_count)),AlignmentTag::MatchMismatch(this_count)) => {
+                last_token = Some(AlignmentTag::MatchMismatch(last_count + this_count));
+            },
+            (Some(AlignmentTag::Del(last_count)),AlignmentTag::Del(this_count)) => {
+                last_token = Some(AlignmentTag::Del(last_count + this_count));
+            },
+            (Some(AlignmentTag::Ins(last_count)),AlignmentTag::Ins(this_count)) => {
+                last_token = Some(AlignmentTag::Ins(last_count + this_count));
+            },
+            (Some(x),y) => {
+                new_cigar.push(x.clone());
+                last_token = Some(y.clone());
+            },
 
-                        Some(AlignmentTag::MatchMismatch(*size))
-                    }
-                }
-            }
-            AlignmentTag::Del(size) => {
-                match last_token {
-                    Some(AlignmentTag::Del(size_old)) => Some(AlignmentTag::Del(size + size_old)),
-                    _ => {
-                        if last_token != None { new_cigar.push(last_token.unwrap()); }
-                        Some(AlignmentTag::Del(*size))
-                    }
-                }
-            }
-            AlignmentTag::Ins(size) => {
-                match last_token {
-                    Some(AlignmentTag::Ins(size_old)) => Some(AlignmentTag::Ins(size + size_old)),
-                    _ => {
-                        if last_token != None { new_cigar.push(last_token.unwrap()); }
-                        Some(AlignmentTag::Ins(*size))
-                    }
-                }
-            }
-            AlignmentTag::InversionOpen => {
-                match last_token {
-                    _ => {
-                        // we don't combine inversions
-                        if last_token != None { new_cigar.push(last_token.unwrap()); }
-                        Some(AlignmentTag::InversionOpen)
-                    }
-                }
-            }
-            AlignmentTag::InversionClose => {
-                match last_token {
-                    _ => {
-                        // we don't combine inversions
-                        if last_token != None { new_cigar.push(last_token.unwrap()); }
-                        Some(AlignmentTag::InversionClose)
-                    }
-                }
-            }
         }
-    }
+    });
+
     if let Some(x) = last_token {
         new_cigar.push(x);
     }
-    new_cigar.reverse();
     new_cigar
 }
 
@@ -727,6 +709,19 @@ mod tests {
     use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
     use crate::alignment::fasta_bit_encoding::FastaBase;
     use crate::alignment_functions::{perform_wavefront_alignment, simplify_cigar_string};
+
+    #[test]
+    fn simplify_cigar_test() {
+        let input_cigar = vec![AlignmentTag::MatchMismatch(1),AlignmentTag::MatchMismatch(1),AlignmentTag::MatchMismatch(1)];
+        let merged_cigar = vec![AlignmentTag::MatchMismatch(3)];
+        let resulting_cigar = simplify_cigar_string(&input_cigar);
+        assert_eq!(resulting_cigar, merged_cigar);
+
+        let input_cigar = vec![AlignmentTag::MatchMismatch(1),AlignmentTag::Ins(1), AlignmentTag::MatchMismatch(1),AlignmentTag::MatchMismatch(1)];
+        let merged_cigar = vec![AlignmentTag::MatchMismatch(1), AlignmentTag::Ins(1), AlignmentTag::MatchMismatch(2)];
+        let resulting_cigar = simplify_cigar_string(&input_cigar);
+        assert_eq!(resulting_cigar, merged_cigar);
+    }
 
     #[test]
     fn simple_libwfa() {
@@ -796,14 +791,18 @@ mod tests {
 
         assert_eq!(alignment.read_aligned, aligned_pattern);
         assert_eq!(alignment.reference_aligned, text);
-        assert_eq!("11M5D14M", simplify_cigar_string(&alignment.cigar_string).iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(""));
+        let mut cigar_results = simplify_cigar_string(&alignment.cigar_string);
+        cigar_results.reverse();
+        assert_eq!("11M5D14M", cigar_results.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(""));
 
         // invert the alignment
         let alignment = perform_wavefront_alignment(&pattern, &text);
 
         assert_eq!(alignment.read_aligned, text);
         assert_eq!(alignment.reference_aligned, aligned_pattern);
-        assert_eq!("11M5I14M", simplify_cigar_string(&alignment.cigar_string).iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(""));
+        let mut cigar_results = simplify_cigar_string(&alignment.cigar_string);
+        cigar_results.reverse();
+        assert_eq!("11M5I14M", cigar_results.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(""));
     }
 
     #[test]

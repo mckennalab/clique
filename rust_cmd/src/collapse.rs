@@ -182,7 +182,7 @@ impl TagStrippingDiskBackedBuffer {
         let graph = input_list_to_graph(&collection, string_distance_break, progress_bar);
 
         let cc = get_connected_components(&graph);
-        info!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
+        //info!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {
@@ -229,7 +229,7 @@ impl TagStrippingDiskBackedBuffer {
 }
 
 
-/// Sorts the reads by the known tag
+/// Sorts the reads by the degenerate tag
 ///
 /// we group reads into a container where previous tags all match. We then determine the clique of
 /// degenerate tags within the container and correct the sequences to the consensuses of cliques within

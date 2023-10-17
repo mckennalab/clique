@@ -8,6 +8,7 @@ use num_traits::identities::Zero;
 use log::{trace};
 use rust_htslib::bam::Record;
 use rust_htslib::bam::record::{Aux, CigarString};
+use serde::{Deserialize, Serialize};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 
 use crate::alignment::scoring_functions::*;
@@ -37,7 +38,7 @@ pub struct AlignmentCigar {
 }
 
 /// Our alignment tags -- we don't support clipping for our global alignment approach(es)
-#[derive(Eq, PartialEq, Debug, Copy, Clone, Hash)]
+#[derive(Eq, PartialEq, Debug, Copy, Clone, Hash, Serialize, Deserialize)]
 pub enum AlignmentTag {
     MatchMismatch(usize),
     Del(usize),

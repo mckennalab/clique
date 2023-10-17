@@ -1,3 +1,4 @@
+#![feature(ascii_char)]
 extern crate backtrace;
 extern crate bgzip;
 extern crate bio;
@@ -203,6 +204,7 @@ fn main() {
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
 
             let mut tmp = InstanceLivedTempDir::new().unwrap();
+
             collapse(reference,
                      outbam,
                      &mut tmp,
@@ -257,61 +259,6 @@ fn main() {
         }
     }
 }
-/*
-fn merger(parameters: &Args) {
-    let read_layout = LayoutType::from_str(&parameters.read_template).expect("Unable to parse read template type");
-
-    let read_bundle = ReadFileContainer::new(&parameters.read1, &parameters.read2, &parameters.index1, &parameters.index2);
-
-    let est_read_count = estimate_read_count(&parameters.read1).unwrap_or(0);
-
-    info!("estimated read set/pair count = {}", est_read_count);
-
-    let no_temp_file: String = String::from("NONE");
-    let temp_dir: Option<PathBuf> = match &parameters.temp_dir {
-        no_temp_file => None,
-        _ => Some(PathBuf::from(&parameters.temp_dir)),
-    };
-
-    let tmp_location = TempDir::new().unwrap();
-
-    let mut run_specs = RunSpecifications {
-        estimated_reads: est_read_count,
-        sorting_file_count: parameters.max_bins,
-        sorting_threads: parameters.sorting_threads,
-        processing_threads: parameters.processing_threads,
-        tmp_location: tmp_location.into(),
-    };
-
-    // setup our thread pool
-    rayon::ThreadPoolBuilder::new().num_threads(parameters.threads).build_global().unwrap();
-
-    let mut known_list = KnownList::new(&parameters.known_list);
-
-    info!("------------------------- Sorting ------------------------- ");
-    let sort_structure = SortStructure::from_umi_type(&read_layout, &known_list);
-
-    let read_pattern = ReadPattern::from_read_file_container(&read_bundle);
-    info!("Running with read pattern {},{},{},{}",read_pattern,read_bundle.read_two.is_some(),read_bundle.index_one.is_some(),read_bundle.index_two.is_some());
-
-    let read_piles = Sorter::sort(
-        UMIType::TENXRT,
-        sort_structure,
-        &read_bundle,
-        &"./tmp/".to_string(),
-        &"test_sorted.txt.gz".to_string(),
-        &read_layout,
-        &read_pattern,
-        &mut run_specs);
-
-    info!("------------------------- Building Consensus ------------------------- ");
-    threaded_write_consensus_reads(read_piles,
-                                   &parameters.output_base,
-                                   &ReadPattern::from_read_file_container(&read_bundle),
-                                   &run_specs);
-}
-*/
-
 pub struct RunSpecifications {
     pub estimated_reads: usize,
     pub sorting_file_count: usize,
@@ -319,39 +266,6 @@ pub struct RunSpecifications {
     pub processing_threads: usize,
     pub tmp_location: Arc<InstanceLivedTempDir>,
 }
-/*
-#[derive(Debug)]
-pub struct InstanceLivedTempDir{
-    temp_dir: Option<ActualTempDir>,
-    next_file_id: usize,
-}
-
-
-
-//Forward inherent methods to the tempdir crate.
-impl InstanceLivedTempDir {
-    pub fn new() -> Result<InstanceLivedTempDir>
-    { ActualTempDir::new().map(Some).map(InstanceLivedTempDir) }
-
-    pub fn temp_file(&mut self, name: &str) -> PathBuf
-    {
-        self.next_file_id += 1; // indexing will then start on one
-        self.temp_dir.as_ref().unwrap().path().join(self.next_file_id.to_string()).join(name.clone()).clone()
-    }
-
-    pub fn path(&self) -> &Path
-    { self.temp_dir.as_ref().unwrap().path() }
-
-}
-
-/// Leaks the inner TempDir if we are unwinding.
-impl Drop for InstanceLivedTempDir {
-    fn drop(&mut self) {
-        if ::std::thread::panicking() {
-            ::std::mem::forget(self.temp_dir.take())
-        }
-    }
-}*/
 
 #[derive(Debug)]
 pub struct InstanceLivedTempDir(Option<ActualTempDir>);
@@ -363,7 +277,7 @@ impl InstanceLivedTempDir {
 
     pub fn temp_file(&mut self, name: &str) -> PathBuf
     {
-        self.0.as_ref().unwrap().path().join(name.clone()).clone()
+        self.0.as_ref().unwrap().path().join(name).clone()
     }
 
     pub fn path(&self) -> &Path

@@ -19,6 +19,7 @@ pub enum MergeStrategy {
     /// you allow before not considering two sequences to be from the same source.
     Align,
     Concatenate,
+    ConcatenateBothForward,
 }
 
 

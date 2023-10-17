@@ -57,15 +57,17 @@ pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: 
 pub fn gap_proportion_per_tag(tags: &BTreeMap<u8, String>) -> Vec<f64> {
     let mut gap_proportions = Vec::new();
     for (_key, value) in tags {
-        let mut gap_count = 0;
-        let mut total_count = 0;
-        for base in value.as_bytes() {
-            if base == &b'-' {
-                gap_count += 1;
+        if _key != &REFERENCE_CHAR && _key != &READ_CHAR {
+            let mut gap_count = 0;
+            let mut total_count = 0;
+            for base in value.as_bytes() {
+                if base == &b'-' {
+                    gap_count += 1;
+                }
+                total_count += 1;
             }
-            total_count += 1;
+            gap_proportions.push(gap_count as f64 / total_count as f64);
         }
-        gap_proportions.push(gap_count as f64 / total_count as f64);
     }
     gap_proportions
 }

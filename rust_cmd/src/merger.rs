@@ -35,7 +35,7 @@ use crate::utils::read_utils::combine_phred_scores;
 /// ```
 /// let merged_sequence = merge_reads_by_concatenation(&read1, &read2, &reference, &scoring);
 /// ```
-pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, spacer: &Option<String>, reference_size: usize) -> MergedSequence {
+pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, spacer: &Option<String>, strategy: &MergeStrategy, reference_size: usize) -> MergedSequence {
     let read1_seq = FastaBase::from_vec_u8(&read1.seq().to_vec());
     let rev_comp_read2 = FastaBase::from_vec_u8(&read2.seq().reverse_complement().to_vec());
     match &reference_size {
@@ -50,7 +50,11 @@ pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, spacer: &Opt
 
             ret_vec.extend(read1_seq);
             ret_vec.extend(vec![FASTA_UNSET; gap_size.clone() as usize]);
-            ret_vec.extend(rev_comp_read2);
+            match strategy {
+                MergeStrategy::Align => {panic!("cant be here")}
+                MergeStrategy::Concatenate => {ret_vec.extend(rev_comp_read2); }
+                MergeStrategy::ConcatenateBothForward => {ret_vec.extend(FastaBase::from_vec_u8( &read2.seq().to_vec()))}
+            }
 
             MergedSequence {
                 read_bases: ret_vec
@@ -62,14 +66,22 @@ pub fn merge_reads_by_concatenation(read1: &Record, read2: &Record, spacer: &Opt
                 None => {
                     let mut ret_vec = Vec::with_capacity(read1_seq.len() + rev_comp_read2.len());
                     ret_vec.extend(read1_seq);
-                    ret_vec.extend(rev_comp_read2);
+                    match strategy {
+                        MergeStrategy::Align => {panic!("cant be here")}
+                        MergeStrategy::Concatenate => {ret_vec.extend(rev_comp_read2); }
+                        MergeStrategy::ConcatenateBothForward => {ret_vec.extend(FastaBase::from_vec_u8( &read2.seq().to_vec()))}
+                    }
                     ret_vec
                 }
                 Some(x) => {
                     let mut ret_vec = Vec::with_capacity(read1_seq.len() + rev_comp_read2.len());
                     ret_vec.extend(read1_seq);
                     ret_vec.extend(FastaBase::from_string(&x));
-                    ret_vec.extend(rev_comp_read2);
+                    match strategy {
+                        MergeStrategy::Align => {panic!("cant be here")}
+                        MergeStrategy::Concatenate => {ret_vec.extend(rev_comp_read2); }
+                        MergeStrategy::ConcatenateBothForward => {ret_vec.extend(FastaBase::from_vec_u8( &read2.seq().to_vec()))}
+                    }
                     ret_vec
                 }
             };
@@ -117,10 +129,10 @@ impl MergedReadSequence {
                     seq: merge_reads_by_alignment(&it.read_one, &it.read_two.unwrap(),DEFAULT_ALIGNMENT_AFFINE_SCORING.as_ref()).read_bases,
                 }
             }
-            ((true, true, false, false), Some(MergeStrategy::Concatenate)) => {
+            ((true, true, false, false), Some(strat)) if strat == &MergeStrategy::Concatenate || strat == &MergeStrategy::ConcatenateBothForward => {
                 NamedRead{
                     name: it.read_one.id().as_bytes().to_vec(),
-                    seq: merge_reads_by_concatenation(&it.read_one, &it.read_two.unwrap(),padding, 0).read_bases
+                    seq: merge_reads_by_concatenation(&it.read_one, &it.read_two.unwrap(),padding, strat, 0).read_bases
                 }
             }
             ((true, false, false, false), _) => {
@@ -389,9 +401,29 @@ mod tests {
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
         println!("HERE2");
 
-        let fake_aligned = merge_reads_by_concatenation(&record1, &record2, &None, reference.len());
+        let fake_aligned = merge_reads_by_concatenation(&record1, &record2, &None, &MergeStrategy::Concatenate, reference.len());
         println!("HERE3");
         println!("fake_aligned: {}", FastaBase::to_string(&fake_aligned.read_bases));
         assert_eq!(fake_aligned.read_bases.cmp(&reads_reference_aligned)==Ordering::Equal, true);
+    }
+
+    #[test]
+    fn check_orientation() {
+        let read1_fwd = "AAAAAAAAAA".as_bytes();
+        let read1_qls = "FFFFFFFFFF".as_bytes();
+        let read2_fwd = "TTTTTTTTTT".as_bytes();
+        let read2_qls = "FFFFFFFFFF".as_bytes();
+
+        let both_fwd = FastaBase::from_vec_u8(&"AAAAAAAAAATTTTTTTTTT".as_bytes().to_vec());
+        let both_rc = FastaBase::from_vec_u8(&"AAAAAAAAAAAAAAAAAAAA".as_bytes().to_vec());
+
+        let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
+        let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
+
+        let fake_aligned = merge_reads_by_concatenation(&record1, &record2, &None, &MergeStrategy::Concatenate, both_fwd.len());
+        assert_eq!(fake_aligned.read_bases.cmp(&both_rc)==Ordering::Equal, true);
+
+        let fake_aligned = merge_reads_by_concatenation(&record1, &record2, &None, &MergeStrategy::ConcatenateBothForward, both_fwd.len());
+        assert_eq!(fake_aligned.read_bases.cmp(&both_fwd)==Ordering::Equal, true);
     }
 }

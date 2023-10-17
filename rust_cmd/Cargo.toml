@@ -44,9 +44,16 @@ anyhow = "1"
 rust-spoa = "*"
 rustc-hash = "*"
 libwfa = {git = "https://github.com/cschin/rs-wfa.git"}
+counter = "*"
+actix = "0.13"
+sift4 = "*"
+colored = "*"
 
 [profile.release]
 lto = true
 debug = true
 
+[target.x86_64-unknown-linux-gnu]
+linker = "/usr/bin/clang"
+rustflags = ["-Clink-arg=-fuse-ld=lld", "-Clink-arg=-Wl,--no-rosegment"]
 

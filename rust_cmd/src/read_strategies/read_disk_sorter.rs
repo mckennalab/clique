@@ -1,6 +1,8 @@
 use std::cmp::Ordering;
 use std::collections::{VecDeque};
+use rust_htslib::bam::record::CigarString;
 use serde::{Serialize, Deserialize};
+use crate::alignment::alignment_matrix::{AlignmentLocation, AlignmentTag};
 use crate::alignment::fasta_bit_encoding::FastaBase;
 
 /// a sortable read set container that sorts on a set of keys -- which we populate with
@@ -18,6 +20,16 @@ pub struct SortedAlignment {
     pub aligned_ref: Vec<FastaBase>,
     pub ref_name: String,
     pub read_name: String,
+    pub cigar_string: Vec<AlignmentTag>,
+    pub score: f64,
+}
+
+impl SortedAlignment {
+    pub fn to_cigar_string(&self) -> CigarString {
+        CigarString::try_from(
+            self.cigar_string.iter().map(|m| format!("{}", m)).collect::<Vec<String>>().join("").as_bytes()).
+            expect("Unable to parse cigar string.")
+    }
 }
 
 impl Eq for SortingReadSetContainer {}
@@ -51,39 +63,6 @@ impl Ord for SortingReadSetContainer {
     }
 }
 
-/*
-impl StreamSorter {
-
-    pub fn from_fasta(filedir: &InstanceLivedTempDir,
-                reads: &dyn Iterator<Item=ReadSetContainer>,
-                sort_on: UMIConfiguration) -> StreamSorter {
-
-        let filename = filedir.path().join("my-temporary-shard-sort.txt");
-
-        let mut writer: ShardWriter<SortingReadSetContainer> =
-            ShardWriter::new(filename.clone(),
-                             32,
-                             256,
-                             1 << 16).unwrap();
-
-        // Get a handle to send data to the file
-        let mut sender = writer.get_sender();
-
-        // now transform individual reads into sorting read set containers by the UMIconfiguration we're sorting on
-
-        StreamSorter {
-            shard_reader: (),
-            shard_writer: writer,
-            sender,
-            filename: filename,
-        }
-    }
-
-
-    /// sort the iterator of ReadSetContainers by a specific capture sequence
-    pub fn sort_level(reads: &dyn Iterator<Item=ReadSetContainer>, sort_on: UMIConfiguration) {}
-}
-*/
 #[cfg(test)]
 mod tests {
     use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_N, FASTA_T};
@@ -101,6 +80,8 @@ mod tests {
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
                 read_name: "".to_string(),
+                cigar_string: vec![],
+                score: 0.0,
             },
         };
         let srsc2 = SortingReadSetContainer{
@@ -111,6 +92,8 @@ mod tests {
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
                 read_name: "".to_string(),
+                cigar_string: vec![],
+                score: 0.0,
             },
         };
 
@@ -124,6 +107,8 @@ mod tests {
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
                 read_name: "".to_string(),
+                cigar_string: vec![],
+                score: 0.0,
             },
         };
         let srsc2 = SortingReadSetContainer{
@@ -134,6 +119,8 @@ mod tests {
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
                 read_name: "".to_string(),
+                cigar_string: vec![],
+                score: 0.0,
             },
         };
 
@@ -150,6 +137,8 @@ mod tests {
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
                 read_name: "".to_string(),
+                cigar_string: vec![],
+                score: 0.0,
             },
         };
         let srsc2 = SortingReadSetContainer{
@@ -162,6 +151,8 @@ mod tests {
                 aligned_ref: vec![],
                 ref_name: "".to_string(),
                 read_name: "".to_string(),
+                cigar_string: vec![],
+                score: 0.0,
             },
         };
 
@@ -183,6 +174,8 @@ mod tests {
             aligned_ref:  read_seq.clone(),
             ref_name: "".to_string(),
             read_name: "".to_string(),
+            cigar_string: vec![],
+            score: 0.0,
         };
 
         let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone()], ordered_unsorted_keys: VecDeque::new(), aligned_read: fake_read.clone() };
@@ -195,7 +188,6 @@ mod tests {
 
         let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
         let st2 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
-        println!("{} {}", st1 > st2, st1 < st2);
         assert!(!(st1 > st2) & !(st2 > st1));
 
         let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone(), key2.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };

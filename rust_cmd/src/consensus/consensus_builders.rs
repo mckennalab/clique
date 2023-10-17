@@ -121,30 +121,54 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
     added_tags.insert((b'd', b'c'), cmp::min(*maximum_reads_before_downsampling,buffered_reads.len()).to_string());
 
-    let consensus_reads = create_poa_consensus(&buffered_reads, maximum_reads_before_downsampling);
-    let consensus_reference = Counter::<Vec<u8>, usize>::init(buffered_reads.iter().map(|x| x.aligned_read.ref_name.clone().as_bytes().to_vec()).collect::<Vec<Vec<u8>>>()).most_common_ordered();
 
-    let top_ref = &consensus_reference.get(0).unwrap().clone().0;
-    let reference_pointer = reference_manager.references.get(reference_manager.reference_name_to_ref.get(top_ref).unwrap()).unwrap();
+    if buffered_reads.len() > 1 {
+        let consensus_reads = create_poa_consensus(&buffered_reads, maximum_reads_before_downsampling);
+        let consensus_reference = Counter::<Vec<u8>, usize>::init(buffered_reads.iter().map(|x| x.aligned_read.ref_name.clone().as_bytes().to_vec()).collect::<Vec<Vec<u8>>>()).most_common_ordered();
 
-    // TODO: this needs to be tied to their aligner choice!!!
-    let new_alignment = perform_rust_bio_alignment(&reference_pointer.sequence, &FastaBase::from_vec_u8(&consensus_reads));
-    let read_names = buffered_reads.iter().map(|x| x.aligned_read.read_name.clone()).collect::<Vec<String>>();
+        let top_ref = &consensus_reference.get(0).unwrap().clone().0;
+        let reference_pointer = reference_manager.references.get(reference_manager.reference_name_to_ref.get(top_ref).unwrap()).unwrap();
 
-    added_tags.insert((b'a', b'r'), read_names.join(","));
-    added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&new_alignment.reference_aligned,&new_alignment.read_aligned).to_string());
-    added_tags.insert((b'a', b's'), new_alignment.score.to_string());
-    
+        // TODO: this needs to be tied to their aligner choice!!!
+        let new_alignment = perform_rust_bio_alignment(&reference_pointer.sequence, &FastaBase::from_vec_u8(&consensus_reads));
 
-    let sam_read = create_sam_record(read_names.get(0).clone().unwrap(),
-                                     &new_alignment.read_aligned,
-                                     &new_alignment.reference_aligned,
-                                     &reference_pointer.sequence_u8,
-                                     &reference_read_to_cigar_string(&new_alignment.reference_aligned, &new_alignment.read_aligned),
-                                     &true,
-                                     added_tags);
+        let read_names = buffered_reads.iter().map(|x| x.aligned_read.read_name.clone()).collect::<Vec<String>>();
 
-    writer.write(&sam_read).unwrap();
+        added_tags.insert((b'a', b'r'), read_names.join(","));
+        added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&new_alignment.reference_aligned,&new_alignment.read_aligned).to_string());
+        added_tags.insert((b'a', b's'), new_alignment.score.to_string());
+
+
+        let sam_read = create_sam_record(read_names.get(0).clone().unwrap(),
+                                         &new_alignment.read_aligned,
+                                         &new_alignment.reference_aligned,
+                                         &reference_pointer.sequence_u8,
+                                         &reference_read_to_cigar_string(&new_alignment.reference_aligned, &new_alignment.read_aligned),
+                                         &true,
+                                         added_tags);
+
+        writer.write(&sam_read).unwrap();
+    } else {
+        let single_read = buffered_reads.get(0).unwrap();
+        added_tags.insert((b'a', b'r'), single_read.aligned_read.read_name.clone());
+        added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&single_read.aligned_read.aligned_ref,
+                                                                     &single_read.aligned_read.aligned_read).to_string());
+        added_tags.insert((b'a', b's'), single_read.aligned_read.score.to_string());
+        //println!("FINAL results: {} {}",FastaBase::to_string(&single_read.aligned_read.aligned_read),FastaBase::to_string(&single_read.aligned_read.aligned_ref));
+
+        let original_reference = reference_manager.references.get(reference_manager.reference_name_to_ref.get(single_read.aligned_read.ref_name.as_bytes()).unwrap()).unwrap().sequence_u8.as_ref();
+
+        let sam_read = create_sam_record(single_read.aligned_read.read_name.as_str(),
+                                         &single_read.aligned_read.aligned_read,
+                                         &single_read.aligned_read.aligned_ref,
+                                         original_reference,
+                                         &single_read.aligned_read.to_cigar_string(),
+                                         &true,
+                                         added_tags);
+
+        writer.write(&sam_read).unwrap();
+    };
+
 }
 
 pub fn get_reference_alignment_rate(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> f64 {
@@ -168,9 +192,9 @@ pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: 
     let mut result: Vec<AlignmentTag> = Vec::new();
 
     for index in 0..reference_seq.len() {
-        if *reference_seq.get(index).unwrap() == FASTA_UNSET {
+        if reference_seq.get(index).unwrap().eq(&FASTA_UNSET) {
             result.push(AlignmentTag::Ins(1))
-        } else if *read_seq.get(index).unwrap() == FASTA_UNSET {
+        } else if read_seq.get(index).unwrap().eq(&FASTA_UNSET) {
             result.push(AlignmentTag::Del(1))
         } else {
             result.push(AlignmentTag::MatchMismatch(1))
@@ -203,4 +227,25 @@ pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downs
 
     poa_consensus(&base_sequences, max_length.clone(), 1, 5, -4, -3, -1).
         iter().filter(|x| *x != &b'-').map(|x| *x).collect::<Vec<u8>>()
+}
+
+
+// reference_read_to_cigar_string
+
+#[cfg(test)]
+mod tests {
+    use rust_htslib::bam::record::Cigar;
+    use super::*;
+
+    #[test]
+    fn test_cigar_string() {
+        let reference = FastaBase::from_string(&"CGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAA-------TATACAAG".to_string());
+        let read      = FastaBase::from_string(&"CGT-----AGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG".to_string());
+        let cigar = reference_read_to_cigar_string(&reference, &read);
+        let true_cigar = CigarString(vec![Cigar::Match(3),Cigar::Del(5), Cigar::Match(38),Cigar::Ins(7),Cigar::Match(8)]);
+        assert_eq!(cigar,true_cigar);
+        // CGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG-----------------------------------------------------------------------------------------------------------------------------------------------------------------GTAGGAGCCGTTACCAGGATGA------AGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAACAAGCTAACGGTGCAGGATCTTGGGTTTCTGTCTCTTATTCACATCTGACGCTGCCGACGACGAGGTATAAGTGTAGATATCGGTGGTCGCCGTATCATT
+        // AAACCCAAGATCCTGCACCGTTAGCTTGCGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAGGTAGGAGCCGTTACCAGGATGAAGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAACAAGCTAACGGTGCAGGATCTTGGGTTTCTGTCTCTTATTCACATCTGACGCTGCCGACGACGAGGTATAAGTGTAGATATCGGTGGTCGCCGTATCATTACAAAAGTGGGTGGGGGGGGGGGGGGGGC
+        // CGTACGCTAGACATTGTGCCGCATC22222222222222TAGGAAATGACGGCTATACAAGGCATCGCGGTGTCTCGTCAATACACCTTACGGAGGCATTGGATGATAATGTCGCAAGGAGGTCTCAAGATTCTGTACCACACGTCGGCACGCGATTGAACCAATGGACAGAGGACAGGATACGTAGGATCACCAACTAGGTCATTAGGTGGAAGGTGATACGTAGGAGCCGTTACCAGGATGAACGATGAGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAANNNNNNNNNNNNNNNNNNNNNNNNNNNNCTGTCTCTTATACACATCTGACGCTGCCGACGANNNNNNNNNNGTGTAGATCTCGGTGGTCGCCGTATCATT
+    }
 }

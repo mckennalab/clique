@@ -16,7 +16,7 @@ pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> V
     let mut references = Vec::new();
 
     for ref_entry in fasta_entries {
-        let ref_copy = ref_entry.seq().clone().to_vec();
+        let ref_copy = ref_entry.seq().to_vec();
 
         let seeds = ReferenceManager::find_seeds(&ref_copy, kmer_size);
         references.push(Reference {
@@ -92,7 +92,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
     }
 
     pub fn sequence_to_kmers(reference: &Vec<u8>, kmer_size: usize) -> Vec<(Vec<u8>, usize)> {
-        reference.windows(kmer_size).dedup_with_count().map(|(c,w)| (w.clone().to_vec(),c)).collect()
+        reference.windows(kmer_size).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect()
     }
 
     /// find a list of unique kmers per reference
@@ -189,7 +189,7 @@ mod tests {
             } else {
                 missing += 1;
                 if missing < 200 {
-                    println!("Not found {}",String::from_utf8(read.read_one.seq().clone().to_vec()).unwrap());
+                    println!("Not found {}",String::from_utf8(read.read_one.seq().to_vec()).unwrap());
                 }
             }
         }
