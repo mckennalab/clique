@@ -242,7 +242,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
         *read_count.lock().unwrap() += 1;
         if *read_count.lock().unwrap() % 1000000 == 0 {
             let duration = start.elapsed();
-            println!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
+            info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
         }
     });
 
