@@ -72,6 +72,9 @@ pub fn cigar_alignment_to_full_string(read: &Vec<u8>, reference: &Vec<u8>, align
             AlignmentTag::InversionClose => {
                 panic!("unclear how to handle InversionClose");
             }
+            AlignmentTag::SoftClip(_) => {
+                panic!("unclear how to handle SoftClip");
+            }
         }
     }
     (read_align,ref_align)

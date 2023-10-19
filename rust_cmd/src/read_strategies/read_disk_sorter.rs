@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{VecDeque};
 use rust_htslib::bam::record::CigarString;
 use serde::{Serialize, Deserialize};
-use crate::alignment::alignment_matrix::{AlignmentLocation, AlignmentTag};
+use crate::alignment::alignment_matrix::{AlignmentTag};
 use crate::alignment::fasta_bit_encoding::FastaBase;
 
 /// a sortable read set container that sorts on a set of keys -- which we populate with

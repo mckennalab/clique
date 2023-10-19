@@ -124,23 +124,15 @@ enum Cmd {
 
     },
     Align {
-        #[clap(long)]
-        use_capture_sequences: bool,
 
         #[clap(long)]
         read_structure: String,
 
         #[clap(long)]
-        only_output_captured_ref: bool,
-
-        #[clap(long)]
-        to_fake_fastq: bool,
-
-        #[clap(long)]
         reference: String,
 
         #[clap(long)]
-        output: String,
+        output_bam_file: String,
 
         #[clap(long, default_value = "2")]
         max_reference_multiplier: usize,
@@ -219,12 +211,9 @@ fn main() {
         }
 
         Cmd::Align {
-            use_capture_sequences,
             read_structure,
-            only_output_captured_ref,
-            to_fake_fastq,
             reference,
-            output,
+            output_bam_file: output,
             max_reference_multiplier,
             min_read_length,
             read1,
@@ -242,10 +231,7 @@ fn main() {
 
             let output_path = Path::new(&output);
 
-            align_reads(use_capture_sequences,
-                        &my_yaml,
-                        only_output_captured_ref,
-                        to_fake_fastq,
+            align_reads(&my_yaml,
                         &rm,
                         &output_path,
                         max_reference_multiplier,

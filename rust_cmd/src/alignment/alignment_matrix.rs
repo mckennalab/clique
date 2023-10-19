@@ -13,6 +13,7 @@ use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_compl
 
 use crate::alignment::scoring_functions::*;
 use crate::alignment_functions::{simplify_cigar_string, };
+use crate::consensus::consensus_builders::get_reference_alignment_rate;
 use crate::extractor::{extract_tagged_sequences, stretch_sequence_to_alignment};
 
 
@@ -43,6 +44,7 @@ pub enum AlignmentTag {
     MatchMismatch(usize),
     Del(usize),
     Ins(usize),
+    SoftClip(usize),
     InversionOpen,
     InversionClose,
 }
@@ -65,6 +67,7 @@ impl fmt::Display for AlignmentTag {
             AlignmentTag::Ins(size) => write!(f, "{}I", size),
             AlignmentTag::InversionOpen => write!(f, "<"),
             AlignmentTag::InversionClose => write!(f, ">"),
+            AlignmentTag::SoftClip(size) => write!(f, "{}S", size),
         }
     }
 }
@@ -507,6 +510,8 @@ pub struct AlignmentResult {
     pub cigar_string: Vec<AlignmentTag>,
     pub path: Vec<AlignmentLocation>,
     pub score: f64,
+    pub reference_start: usize,
+    pub read_start: usize,
     pub bounding_box: Option<(AlignmentLocation, AlignmentLocation)>,
 }
 
@@ -522,28 +527,45 @@ impl AlignmentResult {
             cigar_string,
             path,
             score,
+            reference_start: start_x,
+            read_start: start_y,
             bounding_box: None,
         }
     }
 
     pub fn to_sam_record(&self, read_name: &str, original_reference: &Vec<u8>, extract_capture_tags: &bool) -> Record {
+
         let mut record = Record::new();
         let seq = FastaBase::to_vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>());
-        let cigar = CigarString::try_from(
-            self.cigar_string.iter().map(|m|format!("{}",m)).collect::<Vec<String>>().join("").as_bytes()).
-            expect("Unable to parse cigar string.");
+        let mut cigar_string_rep = if self.read_start > 0 {
+            let end_str = self.cigar_string.iter().map(|m|format!("{}",m)).collect::<Vec<String>>().join("").into_bytes();
+            let start_str = format!("{}S", self.read_start.clone());
+            let mut cigar_string_rep = Vec::with_capacity(start_str.len() + end_str.len());
+            cigar_string_rep.extend_from_slice(start_str.as_bytes());
+            cigar_string_rep.extend_from_slice(end_str.as_slice());
+            cigar_string_rep
+        } else {
+            self.cigar_string.iter().map(|m|format!("{}",m)).collect::<Vec<String>>().join("").clone().into_bytes()
+        };
+
+        let cigar = CigarString::try_from(cigar_string_rep.as_slice()).expect("Unable to parse cigar string.");
 
         // we don't currently calculate real quality scores
         let quals = vec![ 255 as u8; seq.len()];
 
         record.set(read_name.as_bytes(), Some(&cigar), &seq.as_slice(), &quals.as_slice());
+        record.set_pos(self.reference_start as i64);
+
+        record.push_aux(vec![b'r', b'm'].as_slice(), Aux::String(&get_reference_alignment_rate(&self.reference_aligned,
+                                                                     &self.read_aligned).to_string()));
+        record.push_aux(vec![b'a', b's'].as_slice(), Aux::String(self.score.to_string().as_str()));
 
         if *extract_capture_tags {
             let full_ref = stretch_sequence_to_alignment(&FastaBase::to_vec_u8(&self.reference_aligned), original_reference);
             let ets = extract_tagged_sequences(&FastaBase::to_vec_u8(&self.read_aligned), &full_ref);
 
             ets.iter().for_each(|(tag, seq)| {
-                record.push_aux(vec![b'e' *tag].as_slice(), Aux::String(seq)).unwrap();
+                record.push_aux(vec![b'e', *tag].as_slice(), Aux::String(seq)).unwrap();
             });
         }
         record
@@ -578,6 +600,8 @@ impl AlignmentResult {
                             cigar_string,
                             path,
                             score,
+                            reference_start: self.reference_start,
+                            read_start: self.read_start,
                             bounding_box: None,
                         });
                         alignment_string1 = Vec::new();
@@ -595,6 +619,8 @@ impl AlignmentResult {
                             cigar_string,
                             path,
                             score,
+                            reference_start: self.reference_start,
+                            read_start: self.read_start,
                             bounding_box: None,
                         });
                         alignment_string1 = Vec::new();
@@ -604,6 +630,7 @@ impl AlignmentResult {
                         score = 0.0;
                     }
                 }
+                _ => {} // TODO: this is not smart
             }
         }
         if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
@@ -613,6 +640,8 @@ impl AlignmentResult {
                 cigar_string,
                 path,
                 score,
+                reference_start: self.reference_start,
+                read_start: self.read_start,
                 bounding_box: None,
             });
         }
@@ -639,6 +668,8 @@ impl AlignmentResult {
             cigar_string: self.cigar_string.clone(),
             path: new_path,
             score: self.score,
+            reference_start: self.reference_start,
+            read_start: self.read_start,
             bounding_box: Some(bounds),
         }
     }
@@ -858,6 +889,8 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         cigar_string: simplify_cigar_string(&cigars),
         path,
         score,
+        reference_start: 0, // we're global
+        read_start: 0, // we're global
         bounding_box: None,
     }
 }
@@ -1236,6 +1269,8 @@ mod tests {
             cigar_string: vec![AlignmentTag::MatchMismatch(20)],
             path: vec![],
             score: 0.0,
+            reference_start: 0,
+            read_start: 0,
             bounding_box: None,
         };
 

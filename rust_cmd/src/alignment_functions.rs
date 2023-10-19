@@ -1,15 +1,12 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str;
-use crate::itertools::Itertools;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
 use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
-use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, READ_CHAR, REFERENCE_CHAR, stretch_sequence_to_alignment};
+use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, stretch_sequence_to_alignment};
 use crate::linked_alignment::{orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
@@ -20,7 +17,6 @@ use shardio::{ShardReader, ShardWriter};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 use crate::merger::{MergedReadSequence};
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration};
-use libwfa::{affine_wavefront::*, bindings::*, mm_allocator::*, penalties::*};
 use rust_htslib::bam;
 use rust_htslib::bam::{Record};
 use rust_htslib::bam::record::{Aux, CigarString};
@@ -28,10 +24,7 @@ use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetCo
 use bio::alignment::pairwise::Aligner;
 
 
-pub fn align_reads(use_capture_sequences: &bool,
-                   read_structure: &SequenceLayoutDesign,
-                   only_output_captured_ref: &bool,
-                   to_fake_fastq: &bool,
+pub fn align_reads(read_structure: &SequenceLayoutDesign,
                    rm: &ReferenceManager,
                    output: &Path,
                    max_reference_multiplier: &usize,
@@ -42,7 +35,9 @@ pub fn align_reads(use_capture_sequences: &bool,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
-    let output_file = File::create(&output).unwrap();
+
+
+    let output_file = setup_sam_writer(&output.to_str().unwrap().to_string(), rm).expect("Unable to create output bam file");
 
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
                                           Some(PathBuf::from(&read2)),
@@ -51,7 +46,7 @@ pub fn align_reads(use_capture_sequences: &bool,
 
     let read_iterator = MergedReadSequence::new(read_iterator, read_structure);
 
-    let output = Arc::new(Mutex::new(output_file)); // Mutex::new(gz));
+    let output = Arc::new(Mutex::new(output_file));
 
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(*threads).build_global().unwrap();
@@ -105,14 +100,14 @@ pub fn align_reads(use_capture_sequences: &bool,
                                          inversions,
                                          *max_reference_multiplier,
                                          *min_read_length);
-            //println!("Aligning read {}", FastaBase::to_string(&xx.seq));
+
             match aligned {
                 None => {
-                    warn!("Unable to find alignment for read {}",name);
+                    warn!("Unable to create alignment for read {}",name);
                 }
-                Some((results, orig_ref_seq, ref_name)) => {
+                Some((results, orig_ref_seq, _ref_name)) => {
                     match results {
-                        None => { warn!("Unable to find alignment for read {}",name); }
+                        None => { warn!("Unable to create alignment for read {}",name); }
                         Some(aln) => {
                             let output = Arc::clone(&output);
                             let mut read_count = read_count.lock().unwrap();
@@ -122,20 +117,11 @@ pub fn align_reads(use_capture_sequences: &bool,
                                 info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count, duration);
                             }
                             assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
-                            let cigar_string = format!("{}", "");
 
+                            let samrecord = aln.to_sam_record(&name, &orig_ref_seq, &true);
 
-                            output_alignment(&FastaBase::to_vec_u8(&aln.read_aligned),
-                                             name,
-                                             &FastaBase::to_vec_u8(&aln.reference_aligned),
-                                             &orig_ref_seq,
-                                             &ref_name,
-                                             use_capture_sequences,
-                                             only_output_captured_ref,
-                                             to_fake_fastq,
-                                             output,
-                                             &cigar_string,
-                                             min_read_length);
+                            let mut output = output.lock().unwrap();
+                            output.write(&samrecord).expect("Unable to write read to output bam file");
                         }
                     }
                 }
@@ -269,7 +255,6 @@ pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
         }
         Some(x) => {
             match x.as_str() {
-                "wavefront" => {perform_wavefront_alignment(&reference_bases, &xx)}
                 "rustbio" => {perform_rust_bio_alignment(&reference_bases, &xx)}
                 //"inversion_aware" => {perform_inversion_aware_alignment(&reference_bases, &xx.seq)}
                 //"degenerate" => {perform_degenerate_alignment(&reference_bases, &xx.seq)}
@@ -381,7 +366,7 @@ pub fn alignment(x: &Vec<FastaBase>,
             None);
         Some(results)*/
         // TODO: allow the users to pick which aligner to use
-        Some(perform_wavefront_alignment(&reference.sequence,
+        Some(perform_rust_bio_alignment(&reference.sequence,
                                          &forward_oriented_seq))
     }
 }
@@ -431,8 +416,9 @@ pub fn perform_rust_bio_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
 pub fn bio_to_alignment_result(alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     let mut aligned_ref = Vec::new();
     let mut aligned_read = Vec::new();
-    let mut ref_pos = alignment.xstart;
-    let mut read_pos = alignment.ystart;
+    let mut ref_pos = alignment.ystart;
+    let mut read_pos = alignment.xstart;
+
     let mut resulting_cigar = Vec::new();
     for al in alignment.operations {
         match al {
@@ -481,56 +467,14 @@ pub fn bio_to_alignment_result(alignment: bio::alignment::Alignment, reference: 
             }
         }
     }
-
-    //resulting_cigar.reverse();
-
     AlignmentResult{
         reference_aligned: aligned_ref,
         read_aligned: aligned_read,
         cigar_string: simplify_cigar_string(&resulting_cigar),
         path: vec![],
         score: alignment.score as f64,
-        bounding_box: None,
-    }
-}
-
-pub fn perform_wavefront_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
-    let alloc = MMAllocator::new(BUFFER_SIZE_8M as u64);
-
-    let mut penalties = AffinePenalties {
-        match_: 0,
-        mismatch: 4,
-        gap_opening: 6,
-        gap_extension: 2,
-    };
-
-    let pat_len = read.len();
-    let text_len = reference.len();
-
-    let mut wavefronts = AffineWavefronts::new_complete(
-        text_len,
-        pat_len,
-        &mut penalties,
-        &alloc,
-    );
-
-    match wavefronts
-        .align(FastaBase::to_vec_u8(reference).as_slice(), FastaBase::to_vec_u8(read).as_slice()) {
-        Ok(_) => {}
-        Err(x) => { panic!("Failed to align reference: {} and read: {} with error {:?}", FastaBase::to_string(&reference), FastaBase::to_string(&read), x) }
-    }
-
-    let cigar = wavefronts.cigar_bytes_raw();
-    let score = wavefronts.edit_cigar_score(&mut penalties);
-    let ref_read = cigar_to_alignment(reference, read, &cigar);
-
-
-    AlignmentResult {
-        reference_aligned: ref_read.0,
-        read_aligned: ref_read.1,
-        cigar_string: cigar.iter().map(|x| AlignmentTag::from(x.clone())).collect::<Vec<AlignmentTag>>(),
-        path: vec![],
-        score: score as f64,
+        reference_start: alignment.xstart,
+        read_start: alignment.ystart,
         bounding_box: None,
     }
 }
@@ -553,10 +497,6 @@ pub fn matching_read_bases_prop(read: &Vec<FastaBase>, reference: &Vec<FastaBase
     } else {
         matched as f32 / total_read_bases as f32
     }
-}
-
-pub fn tags_to_output(tags: &BTreeMap<u8, String>) -> String {
-    tags.iter().filter(|(k, _v)| **k != READ_CHAR && **k != REFERENCE_CHAR).map(|(k, v)| format!("key={}:{}", String::from_utf8(vec![*k]).unwrap(), v)).join(";")
 }
 
 pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) -> Result<bam::Writer, rust_htslib::errors::Error> {
@@ -605,65 +545,6 @@ pub fn create_sam_record(
     record
 }
 
-/// Handle output of the alignment results based on the requested output formats
-///
-pub fn output_alignment(aligned_read: &Vec<u8>,
-                        aligned_name: &String,
-                        aligned_ref: &Vec<u8>,
-                        original_ref: &Vec<u8>,
-                        reference_name: &Vec<u8>,
-                        use_capture_sequences: &bool,
-                        only_output_captured_ref: &bool,
-                        to_fake_fastq: &bool,
-                        output: Arc<Mutex<File>>,
-                        _cigar_string: &String,
-                        min_read_length: &usize) {
-    let mut output = output.lock().unwrap();
-
-    let (ref_seq, read_seq, read_tags) =
-        if *use_capture_sequences {
-            let full_ref = stretch_sequence_to_alignment(aligned_ref, original_ref);
-            let ets = extract_tagged_sequences(aligned_read, &full_ref);
-            let read_tags = tags_to_output(&ets);
-            if *only_output_captured_ref {
-                (ets.get(&REFERENCE_CHAR).unwrap().clone(), ets.get(&READ_CHAR).unwrap().clone(), read_tags)
-            } else {
-                (String::from_utf8(aligned_ref.clone()).unwrap(), String::from_utf8(aligned_read.clone()).unwrap(), read_tags)
-            }
-        } else {
-            (String::from_utf8(aligned_ref.clone()).unwrap(), String::from_utf8(aligned_read.clone()).unwrap(), String::from(""))
-        };
-
-    if *to_fake_fastq {
-        let replaced = read_seq.replace("-", "");
-
-        if replaced.len() >= *min_read_length {
-            let fake_qual = (0..replaced.len()).map(|_| "H").collect::<String>();
-            write!(output, "@{}_{}_ref_{}\n{}\n+\n{}\n",
-                   str::replace(aligned_name, " ", "."),
-                   read_tags,
-                   String::from_utf8(reference_name.clone()).unwrap(),
-                   replaced,
-                   fake_qual,
-            ).expect("Unable to write to output file");
-        } else {
-            warn!("Final read product too short after trimming: {}, dropping read", replaced.len());
-        }
-    } else {
-        if read_seq.len() >= *min_read_length {
-            write!(output, ">{}\n{}\n>{}_{}\n{}\n",
-                   String::from_utf8(reference_name.clone()).unwrap(),
-                   ref_seq,
-                   str::replace(aligned_name, " ", "_"),
-                   read_tags,
-                   read_seq,
-            ).expect("Unable to write to output file");
-        } else {
-            warn!("Final read product too short after trimming: {}, dropping read", read_seq.len());
-        }
-    }
-}
-
 pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentTag> {
     let mut new_cigar = Vec::new();
 
@@ -704,11 +585,10 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
 
 #[cfg(test)]
 mod tests {
-    use libwfa::{affine_wavefront::*, bindings::*, mm_allocator::*, penalties::*};
     use rust_htslib::bam;
     use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
     use crate::alignment::fasta_bit_encoding::FastaBase;
-    use crate::alignment_functions::{perform_wavefront_alignment, simplify_cigar_string};
+    use crate::alignment_functions::{simplify_cigar_string};
 
     #[test]
     fn simplify_cigar_test() {
@@ -723,87 +603,6 @@ mod tests {
         assert_eq!(resulting_cigar, merged_cigar);
     }
 
-    #[test]
-    fn simple_libwfa() {
-        let alloc = MMAllocator::new(BUFFER_SIZE_8M as u64);
-
-        let pattern = String::from("AAACGCTTCTGCACTTCGCGTGATATCATTACGTTTTGTCCCTCTACGATGTACCTGTCATCTTAGCTAAGACGACAGGACATGTCCAGGAAGTGCTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT");
-        let text = String::from("NNNNNNNNNNNNNNNNNNNNNNNNNNNNTTACGTTNNNNNNNNNNNNGATGTACCTGTCATCTTAGCTAAGATGACAGGACATGTCCAGGAAGTACTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT");
-
-        let mut penalties = AffinePenalties {
-            match_: 0,
-            mismatch: 4,
-            gap_opening: 6,
-            gap_extension: 2,
-        };
-
-        let pat_len = pattern.as_bytes().len();
-        let text_len = text.as_bytes().len();
-
-
-        for i in 0..1000 {
-            let mut wavefronts = AffineWavefronts::new_complete(
-                pat_len,
-                text_len,
-                &mut penalties,
-                &alloc,
-            );
-
-            wavefronts
-                .align(pattern.as_bytes(), text.as_bytes())
-                .unwrap();
-
-            let score = wavefronts.edit_cigar_score(&mut penalties);
-
-            if i == 0 {
-                println!("score: {}", score);
-                wavefronts.print_cigar(pattern.as_bytes(), text.as_bytes());
-
-                // The cigar can also be extracted as a byte vector
-                let cigar = wavefronts.cigar_bytes_raw();
-                let cg_str = std::str::from_utf8(&cigar).unwrap();
-                println!("cigar: {}", cg_str);
-
-                // Or as a prettier byte vector
-
-                let cigar = wavefronts.cigar_bytes();
-                let cg_str = std::str::from_utf8(&cigar).unwrap();
-                println!("cigar: {}", cg_str);
-            }
-        }
-    }
-
-    #[test]
-    fn wavefront() {
-        let pattern = FastaBase::from_string(&String::from("AAACGCTTCTGCACTTCGCGTGATATCATTACGTTTTGTCCCTCTACGATGTACCTGTCATCTTAGCTAAGACGACAGGACATGTCCAGGAAGTGCTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT"));
-        let text = FastaBase::from_string(&String::from("NNNNNNNNNNNNNNNNNNNNNNNNNNNNTTACGTTNNNNNNNNNNNNGATGTACCTGTCATCTTAGCTAAGATGACAGGACATGTCCAGGAAGTACTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT"));
-
-        let alignment = perform_wavefront_alignment(&text, &pattern);
-
-        assert_eq!(alignment.read_aligned, pattern);
-        assert_eq!(alignment.reference_aligned, text);
-
-        let pattern = FastaBase::from_string(&String::from("AAACGCTTCTGCACGTGATATCATT")); // AAACGCTTCTGCACTTCGCGTGATATCATT
-        let aligned_pattern = FastaBase::from_string(&String::from("AAACGCTTCTGCAC-----GTGATATCATT"));
-        let text = FastaBase::from_string(&String::from("AAACGCTTCTGCACTTCGCGTGATATCATT"));         // AAACGCTTCTGCAC-----GTGATATCATT
-
-        let alignment = perform_wavefront_alignment(&text, &pattern);
-
-        assert_eq!(alignment.read_aligned, aligned_pattern);
-        assert_eq!(alignment.reference_aligned, text);
-        let mut cigar_results = simplify_cigar_string(&alignment.cigar_string);
-        cigar_results.reverse();
-        assert_eq!("11M5D14M", cigar_results.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(""));
-
-        // invert the alignment
-        let alignment = perform_wavefront_alignment(&pattern, &text);
-
-        assert_eq!(alignment.read_aligned, text);
-        assert_eq!(alignment.reference_aligned, aligned_pattern);
-        let mut cigar_results = simplify_cigar_string(&alignment.cigar_string);
-        cigar_results.reverse();
-        assert_eq!("11M5I14M", cigar_results.iter().map(|x| format!("{}", x)).collect::<Vec<String>>().join(""));
-    }
 
     #[test]
     fn writing_sam_file() {
@@ -820,6 +619,8 @@ mod tests {
             cigar_string: vec![AlignmentTag::MatchMismatch(20)],
             path: vec![],
             score: 0.0,
+            reference_start: 0,
+            read_start: 0,
             bounding_box: None,
         };
 

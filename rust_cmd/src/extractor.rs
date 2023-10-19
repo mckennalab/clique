@@ -75,24 +75,34 @@ pub fn gap_proportion_per_tag(tags: &BTreeMap<u8, String>) -> Vec<f64> {
 pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -> BTreeMap<u8, String> {
     let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let mut in_extractor = false;
+    let mut next_extractor_read = b'a';
+    let mut next_extractor_ref = b'A';
 
     for (reference_base, read_base) in std::iter::zip(aligned_ref, aligned_read) {
-        match (FastaBase::valid(reference_base), reference_base.is_ascii_uppercase() || (*reference_base == b'-' && in_extractor), in_extractor) {
+        match (FastaBase::valid(reference_base),
+               reference_base.is_ascii_uppercase() || (*reference_base == b'-' && in_extractor),
+               in_extractor) {
+
             (_x, true, _z) => {
                 in_extractor = true;
-                special_values.entry(REFERENCE_CHAR).or_insert_with(Vec::new).push(reference_base.clone());
-                special_values.entry(READ_CHAR).or_insert_with(Vec::new).push(read_base.clone());
+                special_values.entry(next_extractor_ref).or_insert_with(Vec::new).push(reference_base.clone());
+                special_values.entry(next_extractor_read).or_insert_with(Vec::new).push(read_base.clone());
             }
             (false, _y, false) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
                 special_values.entry(*reference_base).or_insert_with(Vec::new).push(read_base.clone());
             }
             (false, _y, true) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
-                special_values.entry(REFERENCE_CHAR).or_insert_with(Vec::new).push(reference_base.clone());
-                special_values.entry(READ_CHAR).or_insert_with(Vec::new).push(read_base.clone());
+                special_values.entry(next_extractor_ref).or_insert_with(Vec::new).push(reference_base.clone());
+                special_values.entry(next_extractor_read).or_insert_with(Vec::new).push(read_base.clone());
                 special_values.entry(*reference_base).or_insert_with(Vec::new).push(read_base.clone());
             }
             (_x, false, _z) => {
+                if in_extractor {
+                    next_extractor_read += 1;
+                    next_extractor_ref += 1;
+                }
                 in_extractor = false;
+
             }
         }
     }
@@ -171,6 +181,9 @@ mod tests {
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);
 
-        assert_eq!(keyvalues.get(&READ_CHAR).unwrap(), "-----------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGC");
+        keyvalues.iter().for_each(|(key, value)| println!("key-value {} / {}", *key as char, value));
+
+        assert_eq!(keyvalues.get(&b'A').unwrap(), "GTTACGTATTGCTAAGCAGTGGTAT111111111GAGTACC------TTA--");
+        assert_eq!(keyvalues.get(&b'a').unwrap(), "-----------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGC");
     }
 }
