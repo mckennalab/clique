@@ -156,7 +156,7 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
     StringGraph { graph, string_to_node, node_to_string, max_distance: input_list.max_dist as u64 }
 }
 
-
+#[allow(dead_code)]
 pub fn process_cliques(string_graph: &StringGraph) -> BronKerbosch<u32, u32> {
     let mut bronker = BronKerbosch::new(string_graph.graph.clone());
     bronker.compute();
@@ -210,6 +210,7 @@ pub fn max_graph_set_differences(string_graph: &StringGraph) -> u64 {
 /// A heuristic approach to splitting over-connected graphs: find the most balanced split that
 /// lowers each subgraph below the over-connected limit (2 * max_distance). If successful it returns
 /// those strings, else None
+#[allow(dead_code)]
 pub fn split_subgroup(string_graph: &mut StringGraph) -> Option<Vec<Vec<Vec<u8>>>> {
     if max_set_distance(&string_graph.string_to_node.keys().map(|k| k.clone()).collect::<Vec<Vec<u8>>>()) <= string_graph.max_distance * 2 {
         return None
@@ -257,6 +258,7 @@ pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>>
     }).collect::<Vec<Vec<Vec<u8>>>>()
 }
 
+#[allow(dead_code)]
 pub fn generate_random_string(length: usize) -> Vec<u8> {
     let bases = vec![b'A', b'C', b'G', b'T'];
     let mut results = Vec::new();
@@ -264,6 +266,7 @@ pub fn generate_random_string(length: usize) -> Vec<u8> {
     results
 }
 
+#[allow(dead_code)]
 pub fn create_one_off_errors(template: &Vec<u8>) -> Vec<Vec<u8>> {
     let mut ret = Vec::new();
     let bases = vec![b'A', b'C', b'G', b'T'];
@@ -283,6 +286,7 @@ pub fn create_one_off_errors(template: &Vec<u8>) -> Vec<Vec<u8>> {
     ret
 }
 
+#[allow(dead_code)]
 pub fn permute_random_string(length: usize, error_rate: f64, count: usize) -> Vec<Vec<u8>> {
     let mut ret = Vec::new();
     let base_str = generate_random_string(length);
@@ -301,6 +305,7 @@ pub fn permute_random_string(length: usize, error_rate: f64, count: usize) -> Ve
     ret
 }
 
+#[allow(dead_code)]
 pub fn generate_simulated_data(length: usize, groups: usize, error_strings_per_string: usize, base_error_pct: f64) -> Vec<Vec<u8>> {
     let mut returned_vec = Vec::new();
     for _i in 0..groups {

@@ -73,8 +73,7 @@ impl ReadIterator
     pub fn new(read_1: PathBuf,
                read_2: Option<PathBuf>,
                index_1: Option<PathBuf>,
-               index_2: Option<PathBuf>
-               ,
+               index_2: Option<PathBuf>,
     ) -> ReadIterator {
         let r_one = ReadIterator::open_reader(&Some(&read_1));
         if !r_one.is_some() { panic!("Unable to open input file"); }

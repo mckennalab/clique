@@ -72,9 +72,11 @@ mod umis {
     pub mod bronkerbosch;
     pub mod known_list;
 }
+
 mod consensus {
     pub mod consensus_builders;
 }
+
 pub mod fasta_comparisons;
 
 mod utils {
@@ -122,9 +124,9 @@ enum Cmd {
         #[clap(long, default_value = "NONE")]
         index2: String,
 
+
     },
     Align {
-
         #[clap(long)]
         read_structure: String,
 
@@ -191,7 +193,7 @@ fn main() {
             read1,
             read2,
             index1,
-            index2,
+            index2
         } => {
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
 
@@ -223,7 +225,6 @@ fn main() {
             threads,
             find_inversions,
         } => {
-
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
 
             // load up the reference files
@@ -245,6 +246,7 @@ fn main() {
         }
     }
 }
+
 pub struct RunSpecifications {
     pub estimated_reads: usize,
     pub sorting_file_count: usize,

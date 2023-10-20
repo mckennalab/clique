@@ -128,6 +128,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         UniqueKmerLookup{ kmer_length: 0, kmer_to_reference: unique_kmer_to_reference, reference_to_kmer: reference_to_unique, all_have_unique_mappings: all_unique }
     }
 
+    #[allow(dead_code)]
     pub fn match_references(&self, read: ReadSetContainer) -> Vec<&Reference> {
         let read_kmers = ReferenceManager::sequence_to_kmers(&read.read_one.seq().to_vec(), self.kmer_size );
 

@@ -69,7 +69,6 @@ mod tests {
     use super::*;
     use crate::utils::read_utils::fake_reads;
 
-
     #[test]
     fn test_ordinal_nature() {
         let srsc1 = SortingReadSetContainer{
@@ -193,5 +192,14 @@ mod tests {
         let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone(), key2.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
         let st2 = SortingReadSetContainer { ordered_sorting_keys: vec![key1.clone(), key1.clone()], ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
         assert!(st1 > st2);
+
+        // real example we hit
+        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![('a',FastaBase::from_str("AAACCCATCAGCATTA")),
+                                                                        ('a',FastaBase::from_str("TATTGACAACCT"))],
+            ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
+        let st2 = st1.clone();
+        assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);
+
+
     }
 }

@@ -537,7 +537,7 @@ impl AlignmentResult {
 
         let mut record = Record::new();
         let seq = FastaBase::to_vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>());
-        let mut cigar_string_rep = if self.read_start > 0 {
+        let cigar_string_rep = if self.read_start > 0 {
             let end_str = self.cigar_string.iter().map(|m|format!("{}",m)).collect::<Vec<String>>().join("").into_bytes();
             let start_str = format!("{}S", self.read_start.clone());
             let mut cigar_string_rep = Vec::with_capacity(start_str.len() + end_str.len());
@@ -557,8 +557,8 @@ impl AlignmentResult {
         record.set_pos(self.reference_start as i64);
 
         record.push_aux(vec![b'r', b'm'].as_slice(), Aux::String(&get_reference_alignment_rate(&self.reference_aligned,
-                                                                     &self.read_aligned).to_string()));
-        record.push_aux(vec![b'a', b's'].as_slice(), Aux::String(self.score.to_string().as_str()));
+                                                                     &self.read_aligned).to_string())).expect("Unable to set reference alignment rate");
+        record.push_aux(vec![b'a', b's'].as_slice(), Aux::String(self.score.to_string().as_str())).expect("Unable to set reference alignment score");
 
         if *extract_capture_tags {
             let full_ref = stretch_sequence_to_alignment(&FastaBase::to_vec_u8(&self.reference_aligned), original_reference);

@@ -35,8 +35,6 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
-
-
     let output_file = setup_sam_writer(&output.to_str().unwrap().to_string(), rm).expect("Unable to create output bam file");
 
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
@@ -187,7 +185,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
             } else {
                 xx.seq.clone()
             };
-            let alignment = align_using_selected_aligner(read_structure, &reference_bases,&forward_oriented_seq);
+            let alignment = align_using_selected_aligner(read_structure, &reference_bases, &forward_oriented_seq);
 
             let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
             let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
@@ -255,10 +253,10 @@ pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
         }
         Some(x) => {
             match x.as_str() {
-                "rustbio" => {perform_rust_bio_alignment(&reference_bases, &xx)}
+                "rustbio" => { perform_rust_bio_alignment(&reference_bases, &xx) }
                 //"inversion_aware" => {perform_inversion_aware_alignment(&reference_bases, &xx.seq)}
                 //"degenerate" => {perform_degenerate_alignment(&reference_bases, &xx.seq)}
-                _ => {panic!("Unknown alignment method {}", x)}
+                _ => { panic!("Unknown alignment method {}", x) }
             }
         }
     }
@@ -367,10 +365,11 @@ pub fn alignment(x: &Vec<FastaBase>,
         Some(results)*/
         // TODO: allow the users to pick which aligner to use
         Some(perform_rust_bio_alignment(&reference.sequence,
-                                         &forward_oriented_seq))
+                                        &forward_oriented_seq))
     }
 }
 
+#[allow(dead_code)]
 fn cigar_to_alignment(reference: &Vec<FastaBase>,
                       read: &Vec<FastaBase>,
                       cigar: &Vec<u8>) -> (Vec<FastaBase>, Vec<FastaBase>) {
@@ -435,39 +434,34 @@ pub fn bio_to_alignment_result(alignment: bio::alignment::Alignment, reference: 
                 ref_pos += 1;
                 read_pos += 1;
                 resulting_cigar.push(AlignmentTag::MatchMismatch(1));
-
             }
             AlignmentOperation::Del => {
                 aligned_ref.push(reference.get(ref_pos).unwrap().clone());
                 aligned_read.push(FASTA_UNSET);
                 ref_pos += 1;
                 resulting_cigar.push(AlignmentTag::Del(1));
-
             }
             AlignmentOperation::Ins => {
                 aligned_ref.push(FASTA_UNSET);
                 aligned_read.push(read.get(read_pos).unwrap().clone());
                 read_pos += 1;
                 resulting_cigar.push(AlignmentTag::Ins(1));
-
             }
             AlignmentOperation::Xclip(x) => {
                 aligned_ref.extend(reference[ref_pos..ref_pos + x].iter());
-                aligned_read.extend(FastaBase::from_vec_u8(&vec![b'-';x]).iter());
+                aligned_read.extend(FastaBase::from_vec_u8(&vec![b'-'; x]).iter());
                 ref_pos += x.clone();
                 resulting_cigar.push(AlignmentTag::Ins(x));
-
             }
             AlignmentOperation::Yclip(y) => {
                 aligned_read.extend(read[read_pos..read_pos + y].iter());
-                aligned_ref.extend(FastaBase::from_vec_u8(&vec![b'-';y]).iter());
+                aligned_ref.extend(FastaBase::from_vec_u8(&vec![b'-'; y]).iter());
                 read_pos += y.clone();
                 resulting_cigar.push(AlignmentTag::Del(y));
-
             }
         }
     }
-    AlignmentResult{
+    AlignmentResult {
         reference_aligned: aligned_ref,
         read_aligned: aligned_read,
         cigar_string: simplify_cigar_string(&resulting_cigar),
@@ -520,7 +514,6 @@ pub fn create_sam_record(
     cigar_string: &CigarString,
     extract_capture_tags: &bool,
     additional_tags: HashMap<(u8, u8), String>) -> Record {
-
     let mut record = Record::new();
 
     let seq = FastaBase::to_vec_u8_strip_gaps(&read_seq);
@@ -551,28 +544,27 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
     let mut last_token: Option<AlignmentTag> = None; // zero length, so combining won't affect the final cigar string
 
     cigar_tokens.iter().for_each(|token| {
-        match (&last_token,token) {
-            (None, _) => {last_token = Some(token.clone())},
-            (Some(AlignmentTag::InversionOpen),AlignmentTag::InversionOpen) => {
+        match (&last_token, token) {
+            (None, _) => { last_token = Some(token.clone()) }
+            (Some(AlignmentTag::InversionOpen), AlignmentTag::InversionOpen) => {
                 panic!("Cannot have two inversion open tags in a row");
-            },
-            (Some(AlignmentTag::InversionClose),AlignmentTag::InversionClose) => {
+            }
+            (Some(AlignmentTag::InversionClose), AlignmentTag::InversionClose) => {
                 panic!("Cannot have two inversion closed tags in a row");
-            },
-            (Some(AlignmentTag::MatchMismatch(last_count)),AlignmentTag::MatchMismatch(this_count)) => {
+            }
+            (Some(AlignmentTag::MatchMismatch(last_count)), AlignmentTag::MatchMismatch(this_count)) => {
                 last_token = Some(AlignmentTag::MatchMismatch(last_count + this_count));
-            },
-            (Some(AlignmentTag::Del(last_count)),AlignmentTag::Del(this_count)) => {
+            }
+            (Some(AlignmentTag::Del(last_count)), AlignmentTag::Del(this_count)) => {
                 last_token = Some(AlignmentTag::Del(last_count + this_count));
-            },
-            (Some(AlignmentTag::Ins(last_count)),AlignmentTag::Ins(this_count)) => {
+            }
+            (Some(AlignmentTag::Ins(last_count)), AlignmentTag::Ins(this_count)) => {
                 last_token = Some(AlignmentTag::Ins(last_count + this_count));
-            },
-            (Some(x),y) => {
+            }
+            (Some(x), y) => {
                 new_cigar.push(x.clone());
                 last_token = Some(y.clone());
-            },
-
+            }
         }
     });
 
@@ -592,12 +584,12 @@ mod tests {
 
     #[test]
     fn simplify_cigar_test() {
-        let input_cigar = vec![AlignmentTag::MatchMismatch(1),AlignmentTag::MatchMismatch(1),AlignmentTag::MatchMismatch(1)];
+        let input_cigar = vec![AlignmentTag::MatchMismatch(1), AlignmentTag::MatchMismatch(1), AlignmentTag::MatchMismatch(1)];
         let merged_cigar = vec![AlignmentTag::MatchMismatch(3)];
         let resulting_cigar = simplify_cigar_string(&input_cigar);
         assert_eq!(resulting_cigar, merged_cigar);
 
-        let input_cigar = vec![AlignmentTag::MatchMismatch(1),AlignmentTag::Ins(1), AlignmentTag::MatchMismatch(1),AlignmentTag::MatchMismatch(1)];
+        let input_cigar = vec![AlignmentTag::MatchMismatch(1), AlignmentTag::Ins(1), AlignmentTag::MatchMismatch(1), AlignmentTag::MatchMismatch(1)];
         let merged_cigar = vec![AlignmentTag::MatchMismatch(1), AlignmentTag::Ins(1), AlignmentTag::MatchMismatch(2)];
         let resulting_cigar = simplify_cigar_string(&input_cigar);
         assert_eq!(resulting_cigar, merged_cigar);

@@ -26,6 +26,10 @@ impl FastaBase {
         st.chars().map(|c| u8_to_encoding(&(c as u8)).unwrap()).collect()
     }
 
+    pub fn from_str(st: &str) -> Vec<FastaBase> {
+        st.chars().map(|c| u8_to_encoding(&(c as u8)).unwrap()).collect()
+    }
+
     pub fn from_vec_u8(st: &Vec<u8>) -> Vec<FastaBase> {
         st.iter().map(|c| u8_to_encoding(c).unwrap()).collect()
     }
@@ -36,6 +40,7 @@ impl FastaBase {
     pub fn to_string(bases: &Vec<FastaBase>) -> String {
         String::from_utf8(FastaBase::to_vec_u8(bases)).unwrap()
     }
+
 
     pub fn to_vec_u8(bases: &Vec<FastaBase>) -> Vec<u8> {
         bases.iter().map(|b| encoding_to_u8(b)).collect()
