@@ -95,21 +95,31 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     let mut buffered_reads = VecDeque::new();
     let bar = ProgressBar::new(read_counts.clone() as u64);
 
+    let mut written_buffers = 0;
+    let mut processed_reads = 0;
+
     reader.iter_range(&Range::all()).unwrap().for_each(|x| {
-        bar.inc(1);
+        if processed_reads % 10000 == 0 {
+            bar.set_position(processed_reads as u64);
+        }
         let x = x.unwrap();
         assert_eq!(x.ordered_sorting_keys.len(), levels);
         if !(last_read.is_some() && &x.cmp(last_read.as_ref().unwrap()) == &Ordering::Equal) && buffered_reads.len() > 0 {
             output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads);
+            written_buffers += 1;
             buffered_reads = VecDeque::new();
         }
+        processed_reads += 1;
         buffered_reads.push_back(x.clone());
         last_read = Some(x);
     });
 
     if buffered_reads.len() > 0 {
         output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads);
+        written_buffers += 1;
     }
+    bar.set_position(processed_reads as u64);
+    info!("Processed {} reads into {} consensus reads", processed_reads, written_buffers);
 }
 
 fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,

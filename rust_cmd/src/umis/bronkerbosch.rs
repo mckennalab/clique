@@ -28,6 +28,12 @@ impl<N: NodeTrait, E> BronKerbosch<N, E> {
         self.bronkerbosch(p, r, x);
     }
 
+    #[allow(dead_code)]
+    pub fn cliques(&self) -> &Vec<HashSet<N>> {
+        &self.max_cliques
+    }
+
+
     fn bronkerbosch(&mut self, p: HashSet<N>, r: HashSet<N>, x: HashSet<N>) {
         let mut p_fp = p.clone();
         let mut x_fp = x.clone();

@@ -185,6 +185,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
             } else {
                 xx.seq.clone()
             };
+
             let alignment = align_using_selected_aligner(read_structure, &reference_bases, &forward_oriented_seq);
 
             let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
@@ -230,17 +231,11 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
         }
     });
 
-    warn!("Skipped {} reads since their length was greater than {}, which is {} times the reference length; skipped {} reads for containing too many gaps in tags, processed {} reads",
-        skipped_count.lock().unwrap(),
-        (*max_reference_multiplier) * reference_bases.len() as f64,
-        max_reference_multiplier,
-        *gap_rejected.lock().unwrap(),
-        *read_count.lock().unwrap());
-
     sender.lock().unwrap().finished().unwrap();
     sharded_output.finish().unwrap();
 
-    let final_count = read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone();
+    let final_count = (read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone()) - gap_rejected.lock().unwrap().clone();
+    info!("Aligned {} reads; {} gap-rejected and {} skipped for being longer than {}", final_count, gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),(*max_reference_multiplier) * reference_bases.len() as f64,);
     (final_count, ShardReader::open(output).unwrap())
 }
 

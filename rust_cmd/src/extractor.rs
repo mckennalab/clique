@@ -56,8 +56,8 @@ pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: 
 
 pub fn gap_proportion_per_tag(tags: &BTreeMap<u8, String>) -> Vec<f64> {
     let mut gap_proportions = Vec::new();
-    for (_key, value) in tags {
-        if _key != &REFERENCE_CHAR && _key != &READ_CHAR {
+    for (key, value) in tags {
+        if key != &REFERENCE_CHAR && key != &READ_CHAR && key <= &b'9' && key >= &b'0' {
             let mut gap_count = 0;
             let mut total_count = 0;
             for base in value.as_bytes() {
@@ -132,14 +132,14 @@ mod tests {
     #[test]
     fn gap_proportion_per_tag_test() {
         let mut tags = BTreeMap::new();
-        tags.insert(0, String::from("ACGT"));
-        tags.insert(1, String::from("ACGT"));
+        tags.insert(b'0', String::from("ACGT"));
+        tags.insert(b'1', String::from("ACGT"));
         assert_eq!(gap_proportion_per_tag(&tags).iter().max_by(|a, b| a.total_cmp(b)).unwrap(),&0.0);
 
-        tags.insert(1, String::from("AC--"));
+        tags.insert(b'1', String::from("AC--"));
         assert_eq!(gap_proportion_per_tag(&tags).iter().max_by(|a, b| a.total_cmp(b)).unwrap(),&0.5);
 
-        tags.insert(1, String::from("----"));
+        tags.insert(b'1', String::from("----"));
         assert_eq!(gap_proportion_per_tag(&tags).iter().max_by(|a, b| a.total_cmp(b)).unwrap(),&1.0);
     }
     #[test]

@@ -113,7 +113,7 @@ fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
     consensus
 }
 
-struct TagStrippingDiskBackedBuffer {
+struct DegenerateBuffer {
     buffer: VecDeque<SortingReadSetContainer>,
     max_buffer_size: usize,
     writen_reads: usize,
@@ -124,11 +124,11 @@ struct TagStrippingDiskBackedBuffer {
     hash_map: FxHashMap<String, usize>,
 }
 
-impl TagStrippingDiskBackedBuffer {
-    pub fn new(output_file: PathBuf, max_size: usize, tag: UMIConfiguration) -> TagStrippingDiskBackedBuffer {
-        TagStrippingDiskBackedBuffer {
+impl DegenerateBuffer {
+    pub fn new(output_file: PathBuf, max_size: &usize, tag: UMIConfiguration) -> DegenerateBuffer {
+        DegenerateBuffer {
             buffer: VecDeque::new(),
-            max_buffer_size: max_size,
+            max_buffer_size: *max_size,
             writen_reads: 0,
             shard_writer: None,
             shard_sender: None,
@@ -182,7 +182,7 @@ impl TagStrippingDiskBackedBuffer {
         let graph = input_list_to_graph(&collection, string_distance_break, false);
 
         let cc = get_connected_components(&graph);
-        println!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
+        //println!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {
@@ -218,8 +218,7 @@ impl TagStrippingDiskBackedBuffer {
     pub fn close(&mut self) -> (VecDeque<SortingReadSetContainer>, FxHashMap<Vec<u8>, Vec<u8>>) {
         let final_correction = self.correct_list();
         let ret = (std::mem::replace(&mut self.buffer, VecDeque::new()), final_correction);
-        self.buffer = VecDeque::new();
-        self.hash_map.clear();
+        self.clean();
         ret
     }
 
@@ -259,10 +258,8 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                              iteration: &usize, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
     info!("Sorting degenerate level {}",tag.symbol);
     // create a new output
-    let mut processed_reads = 0;
-    let mut added_to_group = 0;
-    let mut sent_reads = 0;
-    let mut dropped_collection = 0;
+    let mut all_read_count: usize = 0;
+    let mut output_reads: usize = 0;
 
     let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
     let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&aligned_temp, 32,
@@ -271,70 +268,89 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
 
     let mut sender = sharded_output.get_sender();
     let bar = ProgressBar::new(read_count.clone() as u64);
-
     let mut last_read: Option<SortingReadSetContainer> = None;
-    let mut current_sorting_bin: TagStrippingDiskBackedBuffer =
-        TagStrippingDiskBackedBuffer::new(temp_directory.temp_file(format!("{}_{}.fasta", 0, tag.order).as_str()), 1000000, tag.clone());
 
-    let mut group_size = 0;
+    let maximum_reads_per_bin = if tag.maximum_subsequences.is_some() {
+        tag.maximum_subsequences.clone().unwrap()
+    } else {
+        usize::MAX
+    };
 
-    reader.iter_range(&Range::all()).unwrap().for_each(|y| {
-        bar.inc(1);
-        let mut x = y.as_ref().unwrap().clone();
-        let x2 = y.as_ref().unwrap().clone();
+    let mut current_sorting_bin: Option<DegenerateBuffer> = None;
 
-        processed_reads += 1;
-        if last_read.is_none() {
-            // we're the first read! just add it to our current bin
-            current_sorting_bin.push(x);
-        } else {
-            assert_eq!(x.ordered_sorting_keys.len(), *iteration);
+    reader.iter_range(&Range::all()).unwrap().for_each(|current_read| {
+        all_read_count += 1;
+        if all_read_count % 10000 == 0 {
+            bar.set_position(all_read_count as u64);
+        }
+        let mut current_read = current_read.unwrap();
+        let next_last_read = current_read.clone();
 
-            // at this point reads only have ordered set keys from previous iterations, so we're binning them by the previous
-            // key if they're equal. If they're not equal, we'll make a new bin
-            if last_read.as_ref().unwrap().cmp(&mut x) == Ordering::Equal {
-                current_sorting_bin.push(x);
-                group_size += 1;
-                added_to_group += 1;
-            } else {
-                if (tag.maximum_subsequences.is_some() &&
-                    tag.maximum_subsequences.unwrap() > current_sorting_bin.buffer.len()) ||
-                    tag.maximum_subsequences.is_none() {
+        match current_sorting_bin.as_mut() {
+            None => {
+                let mut bin = DegenerateBuffer::new(
+                    temp_directory.temp_file(format!("{}.fasta", tag.order).as_str()),
+                    &maximum_reads_per_bin,
+                    tag.clone());
+                bin.push(current_read);
+                current_sorting_bin = Some(bin);
+            }
 
-                    close_bin(&mut sender, &mut current_sorting_bin);
-                    sent_reads += 1;
-                } else {
-                    dropped_collection += 1;
+            Some(mut bin) => {
+                let reads_equal = last_read.as_ref().unwrap().cmp(&mut current_read) == Ordering::Equal;
+                let exceeded_max_tags = bin.buffer.len() > maximum_reads_per_bin;
+
+                match (reads_equal, exceeded_max_tags) {
+                    (true, true) => {
+                        // do nothing, we've overflowed the bin
+                    }
+                    (false, true) => {
+                        // don't write the previous bin, but add the current read to the next bin
+                        bin.clean();
+                        bin.push(current_read);
+                        warn!("dropping bin due to overflow, check that this is intentional!")
+                    }
+                    (true, false) => {
+                        // add the current read to the bin
+                        bin.push(current_read);
+                    }
+                    (false, false) => {
+                        // write the previous bin, and add the current read to the next bin
+                        output_reads += close_and_write_bin(&mut sender, &mut bin);
+                        bin.push(current_read);
+                    }
                 }
-                group_size = 1;
-                current_sorting_bin.clean();
-                current_sorting_bin.push(x);
             }
         }
-        last_read = Some(x2);
+
+        last_read = Some(next_last_read);
     });
 
-    if (tag.maximum_subsequences.is_some() && tag.maximum_subsequences.unwrap() > current_sorting_bin.buffer.len()) || tag.maximum_subsequences.is_none() {
-        close_bin(&mut sender, &mut current_sorting_bin);
+    match current_sorting_bin {
+        None => {}
+        Some(mut bin) => { output_reads += close_and_write_bin(&mut sender, &mut bin); }
     }
 
-    info!("For degenerate tag {} we processed {} reads, we dispatched {} reads to the next level, dropped {} read collections and {} added to groups", &tag.symbol, processed_reads, sent_reads, dropped_collection,added_to_group);
+    bar.set_position(all_read_count as u64);
+
+    info!("For degenerate tag {} (iteration {}) we processed {} reads, of which {} were passed to the next level", &tag.symbol, iteration, all_read_count, output_reads);
     sender.finished().unwrap();
 
     sharded_output.finish().unwrap();
 
-    (sent_reads, ShardReader::open(aligned_temp).unwrap())
+    (output_reads, ShardReader::open(aligned_temp).unwrap())
 }
 
-fn close_bin(sender: &mut ShardSender<SortingReadSetContainer>, current_sorting_bin: &mut TagStrippingDiskBackedBuffer) {
+fn close_and_write_bin(sender: &mut ShardSender<SortingReadSetContainer>, current_sorting_bin: &mut DegenerateBuffer) -> usize {
     let (buffer, correction) = current_sorting_bin.close();
-
+    let ret = buffer.len();
     for mut y in buffer {
         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
         let corrected = correction.get(&FastaBase::to_vec_u8(&key_value.1)).unwrap();
         y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
         sender.send(y).unwrap();
     }
+    ret
 }
 
 pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &ShardReader<SortingReadSetContainer>, tag: &UMIConfiguration, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
@@ -357,8 +373,10 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
         let mut sender = sharded_output.get_sender();
 
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
-            bar.inc(1);
             processed_reads += 1;
+            if processed_reads % 10000 == 0 {
+                bar.set_position(processed_reads as u64);
+            }
             let mut sorting_read_set_container = x.unwrap();
             assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), tag.order);
 
@@ -385,10 +403,12 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
             };
         });
 
-        info!("Dropped {} reads where we couldn't match a known barcode, {} collided reads, {} total reads",dropped_reads, collided_reads, processed_reads);
+        info!("Dropped {} reads (of which {} were collided reads), {} total reads",dropped_reads, collided_reads, processed_reads);
         sender.finished().unwrap();
         sharded_output.finish().unwrap();
     }
+    bar.set_position(processed_reads as u64);
+
     info!("For known tag {} we processed {} reads", &tag.symbol, processed_reads);
 
     (processed_reads - dropped_reads, ShardReader::open(aligned_temp).unwrap())
@@ -430,18 +450,18 @@ mod tests {
     fn test_consensus_real_world() {
         let reads = fake_reads(10, 1);
         let read_seq = reads.get(0).unwrap().read_one.seq().iter().map(|x| FastaBase::from(x.clone())).collect::<Vec<FastaBase>>();
-        let fake_read = SortedAlignment{
+        let fake_read = SortedAlignment {
             aligned_read: read_seq.clone(),
-            aligned_ref:  read_seq.clone(),
+            aligned_ref: read_seq.clone(),
             ref_name: "".to_string(),
             read_name: "".to_string(),
             cigar_string: vec![],
             score: 0.0,
         };
 
-        let mut tbb = TagStrippingDiskBackedBuffer::new(
+        let mut tbb = DegenerateBuffer::new(
             PathBuf::from("test_data/consensus_test.fastq"),
-            1000,
+            &1000,
             UMIConfiguration {
                 symbol: 'a',
                 file: None,
@@ -454,13 +474,19 @@ mod tests {
 
 
         // real example we hit
-        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![('a',FastaBase::from_str("AAACCCATCAGCATTA")),
-                                                                       ('a',FastaBase::from_str("TATTGACAACCT"))],
-            ordered_unsorted_keys: VecDeque::from(vec![('a',FastaBase::from_str("TGGTATGCTGG-"))]),aligned_read: fake_read.clone() };
+        let st1 = SortingReadSetContainer {
+            ordered_sorting_keys: vec![('a', FastaBase::from_str("AAACCCATCAGCATTA")),
+                                       ('a', FastaBase::from_str("TATTGACAACCT"))],
+            ordered_unsorted_keys: VecDeque::from(vec![('a', FastaBase::from_str("TGGTATGCTGG-"))]),
+            aligned_read: fake_read.clone(),
+        };
 
-        let st2 = SortingReadSetContainer { ordered_sorting_keys: vec![('a',FastaBase::from_str("AAACCCATCAGCATTA")),
-                                                                       ('a',FastaBase::from_str("TATTGACAACCT"))],
-            ordered_unsorted_keys: VecDeque::from(vec![('a',FastaBase::from_str("TGGTATGCTGGG"))]),aligned_read: fake_read.clone() };
+        let st2 = SortingReadSetContainer {
+            ordered_sorting_keys: vec![('a', FastaBase::from_str("AAACCCATCAGCATTA")),
+                                       ('a', FastaBase::from_str("TATTGACAACCT"))],
+            ordered_unsorted_keys: VecDeque::from(vec![('a', FastaBase::from_str("TGGTATGCTGGG"))]),
+            aligned_read: fake_read.clone(),
+        };
 
         assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);
 
