@@ -15,7 +15,7 @@ use bio::alignment::AlignmentOperation;
 use ndarray::Ix3;
 use shardio::{ShardReader, ShardWriter};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
-use crate::merger::{MergedReadSequence};
+use crate::merger::{MergedReadSequence, UnifiedRead};
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration};
 use rust_htslib::bam;
 use rust_htslib::bam::{Record};
@@ -79,7 +79,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
 
     let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1) * 2, (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
 
-    read_iterator.par_bridge().for_each(|xx| {
+    read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
         STORE.with(|arc_mtx| {
             let mut local_alignment = arc_mtx.lock().unwrap();
             if local_alignment.is_none() {
@@ -87,9 +87,9 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                 STORE_CLONES.lock().unwrap().push(arc_mtx.clone());
             }
 
-            let name = &String::from_utf8(xx.name).unwrap();
+            let name = &String::from_utf8(xx.name().clone()).unwrap();
 
-            let aligned = best_reference(&xx.seq,
+            let aligned = best_reference(&xx.seq(),
                                          &rm.references,
                                          read_structure,
                                          &mut local_alignment.as_mut().unwrap(),
@@ -173,17 +173,17 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     let skipped_count = Arc::new(Mutex::new(0 as usize));
     let gap_rejected = Arc::new(Mutex::new(0 as usize));
 
-    read_iterator.par_bridge().for_each(|xx| {
-        if (xx.seq.len() as f64) < ((*max_reference_multiplier) * reference_bases.len() as f64) {
-            let forward_oriented_seq = if !read_structure.known_orientation {
-                let orientation = orient_by_longest_segment(&xx.seq, &reference_seq.1.sequence_u8, &reference_seq.1.suffix_table).0;
+    read_iterator.par_bridge().for_each(|mut xx| {
+        if (xx.seq().len() as f64) < ((*max_reference_multiplier) * reference_bases.len() as f64) {
+            let forward_oriented_seq = if !read_structure.known_strand {
+                let orientation = orient_by_longest_segment(&xx.seq(), &reference_seq.1.sequence_u8, &reference_seq.1.suffix_table).0;
                 if orientation {
-                    xx.seq.clone()
+                    xx.seq().clone()
                 } else {
-                    reverse_complement(&xx.seq)
+                    reverse_complement(&xx.seq())
                 }
             } else {
-                xx.seq.clone()
+                xx.seq().clone()
             };
 
             let alignment = align_using_selected_aligner(read_structure, &reference_bases, &forward_oriented_seq);
@@ -208,7 +208,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         aligned_read: alignment.read_aligned.clone(),
                         aligned_ref: alignment.reference_aligned,
                         ref_name: reference_name.clone(),
-                        read_name: String::from_utf8(xx.name.clone()).unwrap(),
+                        read_name: String::from_utf8(xx.name().clone()).unwrap(),
                         cigar_string: alignment.cigar_string.clone(),
                         score: alignment.score,
                     },
@@ -330,7 +330,7 @@ pub fn alignment(x: &Vec<FastaBase>,
                  _use_inversions: &bool,
                  max_reference_multiplier: usize,
                  min_read_length: usize) -> Option<AlignmentResult> {
-    let forward_oriented_seq = if !read_structure.known_orientation {
+    let forward_oriented_seq = if !read_structure.known_strand {
         let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
         if orientation {
             x.clone()
@@ -398,9 +398,10 @@ fn cigar_to_alignment(reference: &Vec<FastaBase>,
 }
 
 pub fn perform_rust_bio_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
-    let score = |a: u8, b: u8| if a == b || a == 'N' as u8 || b == 'N' as u8 { 1i32 } else { -1i32 };
+    // TODO: do a better look at scoring here!
+    let score = |a: u8, b: u8| if a == b  { 2i32 } else if a == 'N' as u8 || b == 'N' as u8 {1i32} else { -2i32 };
 
-    let mut aligner = Aligner::new(-10, -1, &score);
+    let mut aligner = Aligner::new(-20, -2, &score);
     let x = FastaBase::to_vec_u8(&reference);
     let y = FastaBase::to_vec_u8(&read);
     let alignment = aligner.global(y.as_slice(), x.as_slice());

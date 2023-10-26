@@ -60,9 +60,11 @@ mod tests {
         let configuration = UMIConfiguration{
             symbol: '#',
             file: Some(String::from("test_data/100K-february-2018.txt")),
+            reverse_complement_sequences: None,
             sort_type: KnownTag,
             length: 16,
             order: 0,
+            pad: None,
             max_distance: 2,
             maximum_subsequences: None,
         };
@@ -124,9 +126,11 @@ mod tests {
         let configuration = UMIConfiguration{
             symbol: '#',
             file: Some(String::from("test_data/just_sequences_500.txt")),
+            reverse_complement_sequences: None,
             sort_type: KnownTag,
             length: 16,
             order: 0,
+            pad: None,
             max_distance: 2,
             maximum_subsequences: None,
         };

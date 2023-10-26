@@ -7,8 +7,8 @@ use log::{info};
 
 use crate::umis::sequence_clustering::BestHits;
 
-use crate::alignment::fasta_bit_encoding::FastaBase;
-use crate::read_strategies::sequence_layout::UMIConfiguration;
+use crate::alignment::fasta_bit_encoding::{FastaBase, reverse_complement};
+use crate::read_strategies::sequence_layout::{UMIConfiguration, UMIPadding};
 
 pub struct KnownList {
     pub name: UMIConfiguration,
@@ -22,9 +22,12 @@ impl KnownList {
     pub fn read_known_list_file(umi_type: &UMIConfiguration, filename: &str, starting_nmer_size: &usize) -> KnownList {
 
         info!("Setting up known list reader for {}", &filename);
-        let btree = KnownList::create_b_tree(filename);
+        let min_max = KnownList::get_min_max_length(filename);
 
-        // now that the barcodes are read and in-order, we make a quick lookup prefix lookup to speed up matching later on
+        let rev_comp = umi_type.reverse_complement_sequences.clone().unwrap_or(false);
+        let btree = KnownList::create_b_tree(filename, &umi_type.pad, &rev_comp, &min_max.1);
+
+        // now that the barcodes are read and in-order, we'll make a prefix lookup. This should speed up matching later on
         let mut prefix: Option<Vec<FastaBase>> = None;
         let mut container: Vec<Vec<FastaBase>> = Vec::new();
 
@@ -54,22 +57,54 @@ impl KnownList {
         }
     }
 
-    pub fn create_b_tree(filename: &str) -> BTreeSet<Vec<FastaBase>> {
+    pub fn create_b_tree(filename: &str, pad_dir: &Option<UMIPadding>, reverse_comp: &bool, pad_length: &usize) -> BTreeSet<Vec<FastaBase>> {
 
         let raw_reader = BufReader::new(File::open(filename).unwrap());
-
-
-        // sort the barcodes as we go with a btree
         let mut btree = BTreeSet::new();
-
         for line in raw_reader.lines() {
-            let bytes = line.unwrap();
-            if bytes.contains("-") {
-                btree.insert(FastaBase::from_vec_u8(&bytes.split("-").collect::<Vec<&str>>().get(0).unwrap().as_bytes().to_vec()));
-            } else {
-                btree.insert(FastaBase::from_string(&bytes));
+            let mut bytes = line.unwrap();
+            if *reverse_comp {
+                bytes = FastaBase::to_string(&reverse_complement(&FastaBase::from_string(&bytes)));
+            }
+            match pad_dir {
+                None => {
+                    btree.insert(FastaBase::from_string(&bytes));
+                }
+                Some(x) => {
+                    if bytes.len() < *pad_length {
+                        match x {
+                            UMIPadding::Left => {
+                                let mut padded_bytes = bytes.clone();
+                                padded_bytes.insert_str(0, &"-".repeat(pad_length - bytes.len()));
+                                btree.insert(FastaBase::from_string(&padded_bytes));
+                            }
+                            UMIPadding::Right => {
+                                let mut padded_bytes = bytes.clone();
+                                padded_bytes.push_str(&"-".repeat(pad_length - bytes.len()));
+                                btree.insert(FastaBase::from_string(&padded_bytes));
+                            }
+                        }
+                    } else if bytes.len() == *pad_length {
+                        btree.insert(FastaBase::from_string(&bytes));
+                    } else {
+                        panic!("Barcode {} is longer than the specified padding length of {}", &bytes, *pad_length);
+                    }
+                }
             }
         }
         btree
+    }
+
+    pub fn get_min_max_length(filename: &str) -> (usize,usize) {
+        let raw_reader = BufReader::new(File::open(filename).unwrap());
+        let mut min = usize::MAX;
+        let mut max = usize::MIN;
+        for line in raw_reader.lines() {
+            let bytes = line.unwrap();
+            let len = bytes.len();
+            if len < min { min = len; }
+            if len > max { max = len; }
+        }
+        (min,max)
     }
 }

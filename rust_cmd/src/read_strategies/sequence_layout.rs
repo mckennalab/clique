@@ -80,25 +80,50 @@ impl SequenceLayoutDesign {
 
 }
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub enum ReadPosition {
-    READ1,
-    READ2,
-    INDEX1,
-    INDEX2
+pub enum AlignedReadOrientation {
+    Forward,
+    Reverse,
+    ReverseComplement,
 }
-impl ReadPosition {
-    pub fn position(&self) -> usize {
-        self.clone() as usize
-    }
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub enum ReadPosition {
+    READ1 {
+        chain_align: Option<bool>,
+        orientation: AlignedReadOrientation
+    },
+    READ2 {
+        chain_align: Option<bool>,
+        orientation: AlignedReadOrientation
+    },
+    INDEX1 {
+        chain_align: Option<bool>,
+        orientation: AlignedReadOrientation
+    },
+    INDEX2 {
+        chain_align: Option<bool>,
+        orientation: AlignedReadOrientation
+    },
+    SPACER {
+        spacer_sequence: String
+    },
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub enum UMIPadding {
+    Left,
+    Right,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct UMIConfiguration {
     pub symbol: char,
     pub file: Option<String>,
+    pub reverse_complement_sequences: Option<bool>,
     pub sort_type: UMISortType,
     pub length: usize,
     pub order: usize,
+    pub pad: Option<UMIPadding>,
     pub max_distance: usize,
     pub maximum_subsequences: Option<usize>,
 }
@@ -108,8 +133,7 @@ pub struct SequenceLayoutDesign {
     pub aligner: Option<String>,
     pub merge: Option<MergeStrategy>,
     pub reads: Vec<ReadPosition>,
-    pub known_orientation: bool,
-    pub read_separator: Option<String>,
+    pub known_strand: bool,
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
 }
 

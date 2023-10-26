@@ -1,9 +1,11 @@
 ---
-known_orientation: true
+known_strand: true
 merge: "Concatenate"
 reads:
-  - READ1
-  - READ2
+  - !READ1
+    orientation: Forward
+  - !READ2
+    orientation: Forward
 umi_configurations:
   cell_id:
     symbol: '*'

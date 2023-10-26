@@ -465,9 +465,11 @@ mod tests {
             UMIConfiguration {
                 symbol: 'a',
                 file: None,
+                reverse_complement_sequences: None,
                 sort_type: UMISortType::DegenerateTag,
                 length: 0,
                 order: 0,
+                pad: None,
                 max_distance: 1,
                 maximum_subsequences: None,
             });
@@ -493,7 +495,7 @@ mod tests {
         tbb.push(st1);
         tbb.push(st2);
 
-        let (buffer, correction) = tbb.close();
+        let (_buffer, correction) = tbb.close();
         correction.iter().for_each(|x| {
             assert_eq!(String::from_utf8(x.1.clone()).unwrap(), String::from("TGGTATGCTGGG"));
         });

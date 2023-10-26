@@ -43,7 +43,6 @@ shardio = "*"
 anyhow = "1"
 rust-spoa = "*"
 rustc-hash = "*"
-libwfa = {git = "https://github.com/cschin/rs-wfa.git"}
 counter = "*"
 actix = "0.13"
 sift4 = "*"
