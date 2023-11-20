@@ -21,7 +21,7 @@ use rust_htslib::bam;
 use rust_htslib::bam::{Record};
 use rust_htslib::bam::record::{Aux, CigarString};
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
-use bio::alignment::pairwise::Aligner;
+use bio::alignment::pairwise::{Aligner, Scoring};
 
 
 pub fn align_reads(read_structure: &SequenceLayoutDesign,
@@ -244,7 +244,9 @@ pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
                                     xx: &Vec<FastaBase>) -> AlignmentResult {
     match &read_structure.aligner {
         None => {
-            perform_rust_bio_alignment(&reference_bases, &xx) // current default
+            let score = AffineScoring::default();
+            align_two_strings(&reference_bases, &xx, &score, false)
+            //perform_rust_bio_alignment(&reference_bases, &xx) // current default
         }
         Some(x) => {
             match x.as_str() {
@@ -399,14 +401,18 @@ fn cigar_to_alignment(reference: &Vec<FastaBase>,
 
 pub fn perform_rust_bio_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     // TODO: do a better look at scoring here!
-    let score = |a: u8, b: u8| if a == b  { 2i32 } else if a == 'N' as u8 || b == 'N' as u8 {1i32} else { -2i32 };
+    let score = |a: u8, b: u8| if a == b  { 2i32 } else if a == 'N' as u8 || b == 'N' as u8 {2i32} else { -2i32 };
 
-    let mut aligner = Aligner::new(-20, -2, &score);
+    let alignment_scoring = Scoring::new(-20,-2, &score).xclip_prefix(0).xclip_suffix(0).yclip_suffix(0).yclip_suffix(0);
+    let mut aligner = Aligner::with_capacity_and_scoring(reference.len(), read.len(), alignment_scoring);
     let x = FastaBase::to_vec_u8(&reference);
     let y = FastaBase::to_vec_u8(&read);
     let alignment = aligner.global(y.as_slice(), x.as_slice());
     bio_to_alignment_result(alignment, reference, read)
 }
+
+
+
 
 pub fn bio_to_alignment_result(alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     let mut aligned_ref = Vec::new();

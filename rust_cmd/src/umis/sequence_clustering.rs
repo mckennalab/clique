@@ -1,5 +1,5 @@
 use std::cmp::Ordering::Less;
-use std::collections::{HashMap};
+use std::collections::{HashMap, HashSet};
 
 use petgraph::algo::{tarjan_scc};
 use petgraph::prelude::*;
@@ -7,6 +7,7 @@ use rand::{Rng};
 use rand::prelude::*;
 
 use indicatif::ProgressBar;
+use vpsearch::{BestCandidate, MetricSpace};
 use crate::alignment::fasta_bit_encoding::FastaBase;
 
 use crate::umis::bronkerbosch::BronKerbosch;
@@ -57,6 +58,7 @@ pub fn correct_to_known_list(barcode: &Vec<FastaBase>, kl: &mut KnownList, max_d
 
         let barcode_subslice = &barcode[0..kl.known_list_subset_key_size].to_vec();
 
+        let mut scanned = 0;
         for candidate_key in kl.known_list_subset.keys() {
             let key_dist = FastaBase::edit_distance(barcode_subslice, &candidate_key);
 
@@ -66,6 +68,7 @@ pub fn correct_to_known_list(barcode: &Vec<FastaBase>, kl: &mut KnownList, max_d
                 for full_candidate in subset {
                     if full_candidate.len() == barcode.len() {
                         let dist = FastaBase::edit_distance(&full_candidate, barcode);
+                        scanned += 1;
                         if dist < distance {
                             hits.clear();
                             distance = dist;
@@ -78,6 +81,7 @@ pub fn correct_to_known_list(barcode: &Vec<FastaBase>, kl: &mut KnownList, max_d
             }
         }
         kl.known_list_map.insert(barcode.clone(), BestHits { hits: hits.clone(), distance });
+        warn!("Scanned {} keys for barcode {} and found {} hits", scanned, FastaBase::to_string(barcode), hits.len());
         BestHits { hits, distance }
     }
 }
@@ -126,8 +130,8 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
             string_to_node.insert(str.clone(), current_index);
             node_to_string.insert(current_index, str.clone());
             current_index += 1;
-            if bar2.is_some() {
-                bar2.as_ref().unwrap().inc(1);
+            if current_index % 100000 == 0 && bar2.is_some() {
+                bar2.as_ref().unwrap().inc(100000);
             }
         }
     });
@@ -139,6 +143,9 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
         None
     };
 
+    let mut checkedist = 0;
+    let counts = 10000;
+    println!("string_to_node size {}",string_to_node.len());
     string_to_node.clone().into_iter().for_each(|(key1, node1)| {
         string_to_node.clone().into_iter().for_each(|(key2, node2)| {
             if key1 != key2 && key1.cmp(&key2) == Less {
@@ -146,12 +153,142 @@ pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8
                 if dist <= input_list.max_dist {
                     graph.add_edge(node1, node2, dist as u32);
                 }
-                if bar.is_some() {
-                    bar.as_ref().unwrap().inc(1);
+                checkedist += 1;
+                if checkedist % counts == 0 && bar.is_some() {
+                    bar.as_ref().unwrap().inc(counts);
                 }
             }
         });
+
     });
+
+    StringGraph { graph, string_to_node, node_to_string, max_distance: input_list.max_dist as u64 }
+}
+
+#[derive(Clone)]
+struct U8String {
+    u8str : Vec<u8>
+}
+
+impl MetricSpace for U8String {
+    type UserData = ();
+    type Distance = u32;
+
+    fn distance(&self, other: &Self, _: &Self::UserData) -> Self::Distance {
+        let mut dist: u32 = 0;
+        for (c1, c2) in self.u8str.iter().zip(other.u8str.iter()) {
+            if c1 != c2 {
+                dist += 1;
+            }
+        }
+        dist
+    }
+}
+
+/// Add custom search for finding the index of multiple points in a radius
+/// The index of all point with a euclidean distance strictly less than
+/// `max_distance` will be returned.
+struct RadiusBasedNeighborhood<Item: MetricSpace<Impl>, Impl> {
+    max_distance: Item::Distance,
+    ids: HashSet<u32>,
+    distances: HashMap<u32,Item::Distance>,
+
+}
+
+impl<Item: MetricSpace<Impl>, Impl> RadiusBasedNeighborhood<Item, Impl> {
+    /// Helper function for creating the RadiusBasedNeighborhood struct.
+    /// Here `max_distance` is an exclusive upper bound to the euclidean distance.
+    fn new(max_distance: Item::Distance) -> Self {
+        RadiusBasedNeighborhood {
+            max_distance,
+            ids: HashSet::<u32>::new(),
+            distances: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Clone,Copy,Hash)]
+struct ClosestHits {
+    id: u32,
+    distance: u32,
+}
+
+/// Best candidate definitions that tracks of the index all the points
+/// within the radius of `distance` as specified in the `RadiusBasedNeighborhood`.
+impl<Item: MetricSpace<Impl> + Clone, Impl> BestCandidate<Item, Impl>
+for RadiusBasedNeighborhood<Item, Impl>
+{
+    type Output = HashMap<u32,Item::Distance>;
+
+    #[inline]
+    fn consider(
+        &mut self,
+        _: &Item,
+        distance: Item::Distance,
+        candidate_index: usize,
+        _: &Item::UserData,
+    ) {
+        // If the distance is lower than the bound we include the index
+        // in the result.
+        if distance <= self.max_distance {
+            self.ids.insert(candidate_index as u32);
+            self.distances.insert(candidate_index as u32, distance);
+        }
+    }
+
+    #[inline]
+    fn distance(&self) -> Item::Distance {
+        self.max_distance
+    }
+    fn result(self, _: &Item::UserData) -> Self::Output {
+        self.distances
+    }
+}
+
+pub fn vantage_point_string_graph(input_list: &InputList, progress: bool) -> StringGraph {
+
+    let bar2: Option<ProgressBar> = if progress {
+        info!("Processing input list into nodes (progress bar may end early due to duplicate IDs)");
+        Some(ProgressBar::new(input_list.strings.len() as u64))
+    } else {
+        None
+    };
+
+
+
+    let mut graph = GraphMap::<u32, u32, Undirected>::new();
+    let mut string_to_node: HashMap<Vec<u8>, u32> = HashMap::new();
+    let mut node_to_string: HashMap<u32, Vec<u8>> = HashMap::new();
+    let mut current_index = 0;
+
+    input_list.strings.iter().for_each(|str| {
+        if !string_to_node.contains_key(str) {
+            graph.add_node(current_index);
+            string_to_node.insert(str.clone(), current_index);
+            node_to_string.insert(current_index, str.clone());
+            current_index += 1;
+
+        }
+    });
+
+    let vp = vpsearch::Tree::new(&input_list.strings.iter().map(|t| U8String{ u8str: t.clone() }).collect::<Vec<U8String>>());
+
+
+    string_to_node.iter().enumerate().for_each(|(index,(x,n))| {
+        //let expected = HashSet::new();
+        let nearest = vp.find_nearest_custom(
+            &U8String{u8str: x.clone()},
+            &(),
+            RadiusBasedNeighborhood::new(input_list.max_dist.clone() as u32),
+        );
+        nearest.iter().for_each(|(index,dist)| {
+            graph.add_edge(*n, *index, *dist);
+        });
+        if index % 5000 == 0 && bar2.is_some() {
+            bar2.as_ref().unwrap().inc(5000);
+        }
+    });
+
 
     StringGraph { graph, string_to_node, node_to_string, max_distance: input_list.max_dist as u64 }
 }
@@ -321,6 +458,9 @@ mod tests {
     use std::io;
     use std::io::BufRead;
     use std::path::Path;
+    use std::time::Instant;
+    use petgraph::visit::Walker;
+    use rand::distributions::Slice;
     use crate::utils::base_utils::edit_distance;
     use super::*;
 
@@ -353,6 +493,45 @@ mod tests {
         let graph = input_list_to_graph(&collection, string_distance_no_break, false);
         //println!("{}", Dot::new(&graph.graph));
         assert_eq!(6, graph.graph.edge_count()); // paths are
+    }
+
+    fn create_random_string(length: &usize) -> Vec<u8> {
+        let vowels = ['A', 'C', 'G', 'T'];
+        let vowels_dist = Slice::new(&vowels).unwrap();
+        let rng = rand::thread_rng();
+
+    // build a string of 10 vowels
+        let vowel_string: String = rng
+            .sample_iter(&vowels_dist)
+            .take(10)
+            .collect();
+        vowel_string.into_bytes()
+    }
+
+    fn create_set_of_random_strings(length: &usize, pool_size: &usize) -> Vec<Vec<u8>> {
+        (0..*pool_size).map(|_| create_random_string(length)).into_iter().collect()
+    }
+
+    #[test]
+    fn test_graph_creation_comp() {
+        let now = Instant::now();
+
+        for i in (1000..10000).step_by(5000) {
+            println!("I {} ",i);
+            let vec_of_vecs = create_set_of_random_strings(&20, &i);
+            println!("Vec size {} one {} two {}", vec_of_vecs.len(),
+                     String::from_utf8(vec_of_vecs.get(0).unwrap().clone()).unwrap(),
+                     String::from_utf8(vec_of_vecs.get(1).unwrap().clone()).unwrap());
+
+            let collection = InputList { strings: vec_of_vecs, max_dist: 1 };
+            //let graph = input_list_to_graph(&collection, string_distance_no_break, false);
+            //assert_eq!(6, graph.graph.edge_count()); // paths are
+            //println!("string_distance_break high/low {}", now.elapsed().as_millis());
+
+            let now = Instant::now();
+            let graph = vantage_point_string_graph(&collection, false);
+            println!("string_distance_break high/low {}", now.elapsed().as_millis());
+        }
     }
 
 
@@ -443,7 +622,8 @@ mod tests {
             }
         }
     }
-    #[test]
+
+    // #[test] -- a test for optimization
     fn test_sift4_vs_string_dist() {
         let low_match = "AAAAAAAA";
         let low_match_bytes = low_match.to_string().into_bytes();
@@ -505,6 +685,11 @@ mod tests {
             }
             println!("string_distance_break close/low {}", now.elapsed().as_millis());
         }
+    }
+
+    #[test]
+    fn test_vantage_point_vs_all_by_all() {
+
     }
 
 

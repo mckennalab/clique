@@ -67,8 +67,20 @@ pub struct AffineScoring {
     pub(crate) final_gap_multiplier: f64,
 
 }
-
+impl AffineScoring {
+    pub fn default() -> AffineScoring {
+        AffineScoring {
+            match_score: 6.0,
+            mismatch_score: -4.0,
+            special_character_score: 5.0,
+            gap_open: -10.0,
+            gap_extend: -0.5,
+            final_gap_multiplier: 0.5,
+        }
+    }
+}
 impl AffineScoringFunction for AffineScoring {
+
     fn match_mismatch(&self, bit_a: &FastaBase, bit_b: &FastaBase) -> f64 {
         if bit_a == bit_b && (bit_a .identity(&FASTA_N) || bit_b.identity(&FASTA_N)) { self.special_character_score }
         else if bit_a == bit_b {self.match_score}

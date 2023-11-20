@@ -1,7 +1,7 @@
 use bio::io::fastq::Record;
 use needletail::Sequence;
 use serde::{Deserialize, Serialize};
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
+use crate::alignment::fasta_bit_encoding::{encoding_to_u8, FASTA_UNSET, FastaBase, reverse_complement};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
 use crate::alignment_functions::align_two_strings;
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
@@ -173,14 +173,15 @@ pub fn sequence_to_fasta_vec(sequence: &[u8], orientation: &AlignedReadOrientati
 }
 
 lazy_static! {
+
     pub static ref DEFAULT_ALIGNMENT_AFFINE_SCORING: Box<dyn AffineScoringFunction + Send + Sync> =
         Box::new(AffineScoring {
             match_score: 10.0,
-            mismatch_score: -15.0,
+            mismatch_score: -5.0,
             special_character_score: 8.0,
             gap_open: -15.0,
-            gap_extend: -15.0,
-            final_gap_multiplier: 0.1,
+            gap_extend: -1.0,
+            final_gap_multiplier: 0.25,
         });
 }
 
@@ -346,7 +347,12 @@ pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_sc
     merge_fasta_bases_by_alignment(&read1_seq, &read1.qual().to_vec(), &rev_comp_read2, &rev_comp_qual_read2, merge_initial_scoring)
 }
 
-pub fn merge_fasta_bases_by_alignment(read1_seq: &Vec<FastaBase>, read1_quals: &Vec<u8>, read2_seq: &Vec<FastaBase>, read2_quals: &Vec<u8>, merge_initial_scoring: &dyn AffineScoringFunction) -> MergedSequence {
+pub fn merge_fasta_bases_by_alignment(read1_seq: &Vec<FastaBase>,
+                                      read1_quals: &Vec<u8>,
+                                      read2_seq: &Vec<FastaBase>,
+                                      read2_quals: &Vec<u8>,
+                                      merge_initial_scoring: &dyn AffineScoringFunction) -> MergedSequence {
+
     let results = align_two_strings(&read1_seq, &read2_seq, merge_initial_scoring, false);
 
     alignment_rate_and_consensus(
@@ -392,6 +398,7 @@ pub fn alignment_rate_and_consensus(alignment_1: &Vec<FastaBase>, qual_scores1: 
     let mut alignment_1_qual_position = 0;
     let mut alignment_2_qual_position = 0;
 
+    debug!("{} {}",FastaBase::to_string(alignment_1),FastaBase::to_string(alignment_2));
     assert_eq!(alignment_1.len(), alignment_2.len());
 
     for i in 0..alignment_1.len() {
@@ -414,9 +421,13 @@ pub fn alignment_rate_and_consensus(alignment_1: &Vec<FastaBase>, qual_scores1: 
             }
             (a, b) => {
                 // bases disagree -- we take the higher quality base
-                let final_base = if qual_scores1[alignment_1_qual_position] > qual_scores2[alignment_2_qual_position] {
+                let final_base = if qual_scores1[alignment_1_qual_position] >= qual_scores2[alignment_2_qual_position] {
+                    debug!("A Base {} {} {} {} {} {}", encoding_to_u8(&a) as char, encoding_to_u8(&b) as char, qual_scores1[alignment_1_qual_position] as char, qual_scores2[alignment_2_qual_position] as char, alignment_1_qual_position, alignment_2_qual_position);
                     a.clone()
-                } else { b.clone() };
+                } else {
+                    debug!("B Base {} {} {} {} {} {}", encoding_to_u8(&a) as char, encoding_to_u8(&b) as char, qual_scores1[alignment_1_qual_position] as char, qual_scores2[alignment_2_qual_position] as char, alignment_1_qual_position, alignment_2_qual_position);
+                    b.clone()
+                };
 
                 resulting_alignment.push(final_base);
                 resulting_quality_scores.push(combine_phred_scores(&qual_scores1[alignment_1_qual_position], &qual_scores2[alignment_2_qual_position], false));
@@ -446,11 +457,11 @@ mod tests {
     fn get_scoring_scheme() -> AffineScoring {
         AffineScoring {
             match_score: 10.0,
-            mismatch_score: -15.0,
+            mismatch_score: -5.0,
             special_character_score: 8.0,
             gap_open: -15.0,
-            gap_extend: -15.0,
-            final_gap_multiplier: 0.1,
+            gap_extend: -1.0,
+            final_gap_multiplier: 0.25,
         }
     }
 
@@ -495,7 +506,53 @@ mod tests {
 
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
-        assert_eq!(merged.read_bases, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
+        zip_and_convert(&FastaBase::to_string(&merged.read_bases),&String::from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
+
+        assert_eq!(merged.read_bases, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGCGGAACCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
+    }
+
+    fn zip_and_convert(str1: &String, str2: &String) {
+        assert_eq!(str1.len(),str2.len());
+        let mut res1 = Vec::with_capacity(str1.len());
+        let mut res2 = Vec::with_capacity(str2.len());
+        str1.as_bytes().iter().zip(str2.as_bytes().iter()).for_each(|(x,y)| {
+            match (x,y) {
+                (x,y) if x == y => {
+                    let xUpper = x.to_ascii_uppercase();
+                    let yUpper = y.to_ascii_uppercase();
+                    res1.push(xUpper);
+                    res2.push(yUpper);
+                }
+                (x,y) if x != y => {
+                    let xUpper = x.to_ascii_lowercase();
+                    let yUpper = y.to_ascii_lowercase();
+                    res1.push(xUpper);
+                    res2.push(yUpper);
+                }
+                _ => {
+                    panic!("what?");
+                }
+            }
+        });
+        println!("{}\n{}",String::from_utf8(res1).unwrap(),String::from_utf8(res2).unwrap());
+    }
+
+    #[test]
+    fn read_merger_real_reads_from_meisam() {
+        let read1_fwd = "CGAATGTCAAAGTCAATGCGTTAGGGTTTCTTATATGGTGGTTTCTAACATTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACACGTCTGAACTCCAGTCACATG".as_bytes();
+        let read1_qls = "AAFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF".as_bytes();
+        let read2_fwd = "AATCAGTGGTATAAAAGCAGAGTACTCCTTAGGTTAACTTTCTATTTCTAGCTCTAACCCCAATGTTAGAAACCCCCATATAAGAAACCCTAACGCATTGACTTTGACATTCGAGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGAT".as_bytes();
+        let read2_qls = "=FAF6FFFFFFF//FFFFFFFFFF//FAAAFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFAFFFFF/FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFAFFAFFFFFF//FF/FA/F/F=F//=/".as_bytes();
+
+        let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
+        let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
+
+
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+        let real = "ATCTACACTCTTTCCCTACACGACGCTCTTCCGATCTCGAATGTCAAAGTCAATGCGTTAGGGTTTCTTATATGGTGGTTTCTAACATTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACACGTCTGAACTCCAGTCACATG";
+        println!("{}\n{}",FastaBase::to_string(&merged.read_bases),real);
+        zip_and_convert(&FastaBase::to_string(&merged.read_bases),&String::from(real.clone()));
+        assert_eq!(merged.read_bases, str_to_fasta_vec(real));
     }
 
 

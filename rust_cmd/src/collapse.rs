@@ -12,7 +12,7 @@ use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use rustc_hash::FxHashMap;
 use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::umis::known_list::KnownList;
-use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, input_list_to_graph, InputList, string_distance_break};
+use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, input_list_to_graph, InputList, string_distance_break, vantage_point_string_graph};
 
 pub fn collapse(reference: &String,
                 final_output: &String,
@@ -99,6 +99,7 @@ fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
         let mut max = 0;
         let mut consensus_byte = b'N';
 
+        //println!("consensus {:?}",counter);
         for (byte, count) in counter {
             // if we're the new maximum OR we're tied for the maximum and we're an N or a gap, then we'll take the new value
             if count > max || (count == max && consensus_byte == b'N') || (count == max && consensus_byte == b'-') {
@@ -179,10 +180,11 @@ impl DegenerateBuffer {
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
         let string_set = Vec::from_iter(self.hash_map.keys()).iter().map(|s| s.as_bytes().to_vec()).collect::<Vec<Vec<u8>>>();
         let collection = InputList { strings: string_set, max_dist: self.tag.max_distance.clone() };
-        let graph = input_list_to_graph(&collection, string_distance_break, false);
+        let graph = vantage_point_string_graph(&collection, self.hash_map.len() > 50000);
+        //let graph = input_list_to_graph(&collection, string_distance_break, self.hash_map.len() > 50000);
 
         let cc = get_connected_components(&graph);
-        //println!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
+        println!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {
@@ -384,6 +386,13 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
             assert_eq!(next_key.0, tag.symbol);
 
             let corrected_hits = correct_to_known_list(&next_key.1, &mut known_lookup, &tag.max_distance);
+            /*warn!("{} {} {} for {} and {} named {}",
+                corrected_hits.hits.len(),
+                corrected_hits.distance,
+                tag.max_distance,
+                FastaBase::to_string(&sorting_read_set_container.aligned_read.aligned_read),
+                FastaBase::to_string(&sorting_read_set_container.aligned_read.aligned_ref),
+                sorting_read_set_container.aligned_read.read_name);*/
 
             match (corrected_hits.hits.len(), corrected_hits.distance) {
                 (x, _) if x < 1 => {
@@ -490,12 +499,15 @@ mod tests {
             aligned_read: fake_read.clone(),
         };
 
+
         assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);
 
         tbb.push(st1);
-        tbb.push(st2);
+        tbb.push(st2.clone());
+        tbb.push(st2.clone());
 
         let (_buffer, correction) = tbb.close();
+
         correction.iter().for_each(|x| {
             assert_eq!(String::from_utf8(x.1.clone()).unwrap(), String::from("TGGTATGCTGGG"));
         });

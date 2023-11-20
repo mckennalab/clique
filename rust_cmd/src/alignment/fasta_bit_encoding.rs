@@ -191,7 +191,7 @@ pub const FASTA_H: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_
 pub const FASTA_V: FastaBase = add_two_string_encodings(FASTA_A, add_two_string_encodings(FASTA_C, FASTA_G));
 
 
-fn encoding_to_u8(base: &FastaBase) -> u8 {
+pub fn encoding_to_u8(base: &FastaBase) -> u8 {
     match base {
         x if x.0 == FASTA_UNSET.0 => {b'-'},
         x if x.0 == FASTA_A.0 => {b'A'},
