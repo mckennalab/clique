@@ -33,6 +33,7 @@ pub fn string_distance_no_break(str1: &Vec<u8>, str2: &Vec<u8>, _max_dist: &usiz
     str1.iter().zip(str2.iter()).map(|(c1, c2)| if c1 == c2 { 0 } else { 1 }).sum()
 }
 
+#[allow(dead_code)]
 pub fn string_distance_break(str1: &Vec<u8>, str2: &Vec<u8>, max_dist: &usize) -> usize {
     //assert_eq!(str1.len(), str2.len());
     let mut dist: usize = 0;
@@ -110,6 +111,8 @@ pub fn average_dist(strings: &Vec<Vec<u8>>,compare: fn(&Vec<u8>, &Vec<u8>) -> u6
     dist / (count as f64)
 }
 
+// keep for now -- but much slower
+#[allow(dead_code)]
 pub fn input_list_to_graph(input_list: &InputList, compare: fn(&Vec<u8>, &Vec<u8>, &usize) -> usize, progress: bool) -> StringGraph {
     let mut graph = GraphMap::<u32, u32, Undirected>::new();
     let mut string_to_node: HashMap<Vec<u8>, u32> = HashMap::new();

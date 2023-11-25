@@ -12,7 +12,7 @@ use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use rustc_hash::FxHashMap;
 use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::umis::known_list::KnownList;
-use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, input_list_to_graph, InputList, string_distance_break, vantage_point_string_graph};
+use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, InputList, vantage_point_string_graph};
 
 pub fn collapse(reference: &String,
                 final_output: &String,
@@ -184,7 +184,7 @@ impl DegenerateBuffer {
         //let graph = input_list_to_graph(&collection, string_distance_break, self.hash_map.len() > 50000);
 
         let cc = get_connected_components(&graph);
-        println!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
+        //println!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {

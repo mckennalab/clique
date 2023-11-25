@@ -48,6 +48,7 @@ actix = "0.13"
 sift4 = "*"
 colored = "*"
 vpsearch = "*"
+libwfa = "0.1"
 
 [profile.release]
 lto = true
@@ -57,3 +58,5 @@ debug = true
 linker = "/usr/bin/clang"
 rustflags = ["-Clink-arg=-fuse-ld=lld", "-Clink-arg=-Wl,--no-rosegment"]
 
+[build-dependencies]
+#bindgen = "*"

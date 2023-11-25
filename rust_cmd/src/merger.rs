@@ -1,6 +1,6 @@
+use bio::bio_types::sequence::SequenceRead;
 use bio::io::fastq::Record;
 use needletail::Sequence;
-use serde::{Deserialize, Serialize};
 use crate::alignment::fasta_bit_encoding::{encoding_to_u8, FASTA_UNSET, FastaBase, reverse_complement};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
 use crate::alignment_functions::align_two_strings;
@@ -247,9 +247,9 @@ impl UnifiedRead {
             seq: None,
             underlying_reads,
             read_pattern: (MergedReadSequence::contains_read1(&read_structure),
-                            MergedReadSequence::contains_read2(&read_structure),
-                            MergedReadSequence::contains_index1(&read_structure),
-                            MergedReadSequence::contains_index2(&read_structure)),
+                           MergedReadSequence::contains_read2(&read_structure),
+                           MergedReadSequence::contains_index1(&read_structure),
+                           MergedReadSequence::contains_index2(&read_structure)),
             read_structure,
 
         }
@@ -273,7 +273,8 @@ impl UnifiedRead {
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(merge_reads_by_alignment(&self.underlying_reads.read_one,
                                                          &self.underlying_reads.read_two.as_ref().unwrap(),
-                                                         DEFAULT_ALIGNMENT_AFFINE_SCORING.as_ref()).read_bases);
+                                                         DEFAULT_ALIGNMENT_AFFINE_SCORING.as_ref(),
+                                                         &self.read_structure).read_bases);
             }
             ((true, true, false, false), Some(strat)) if strat == &MergeStrategy::Concatenate || strat == &MergeStrategy::ConcatenateBothForward => {
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
@@ -339,12 +340,14 @@ pub fn merged_iterator(iterator: ReadIterator, read_structure: &SequenceLayoutDe
 /// ```
 /// let merged_sequence = read_merger(&read1, &read2);
 /// ```
-pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_scoring: &dyn AffineScoringFunction) -> MergedSequence {
+pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_scoring: &dyn AffineScoringFunction, /*TODO use this */ _read_structure: &SequenceLayoutDesign) -> MergedSequence {
     let read1_seq = FastaBase::from_vec_u8(&read1.seq().to_vec());
     let rev_comp_read2 = FastaBase::from_vec_u8(&read2.seq().reverse_complement().to_vec());
     let mut rev_comp_qual_read2 = read2.qual().to_vec();
     rev_comp_qual_read2.reverse();
+
     merge_fasta_bases_by_alignment(&read1_seq, &read1.qual().to_vec(), &rev_comp_read2, &rev_comp_qual_read2, merge_initial_scoring)
+
 }
 
 pub fn merge_fasta_bases_by_alignment(read1_seq: &Vec<FastaBase>,
@@ -352,7 +355,6 @@ pub fn merge_fasta_bases_by_alignment(read1_seq: &Vec<FastaBase>,
                                       read2_seq: &Vec<FastaBase>,
                                       read2_quals: &Vec<u8>,
                                       merge_initial_scoring: &dyn AffineScoringFunction) -> MergedSequence {
-
     let results = align_two_strings(&read1_seq, &read2_seq, merge_initial_scoring, false);
 
     alignment_rate_and_consensus(
@@ -506,24 +508,24 @@ mod tests {
 
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
-        zip_and_convert(&FastaBase::to_string(&merged.read_bases),&String::from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
+        zip_and_convert(&FastaBase::to_string(&merged.read_bases), &String::from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
 
         assert_eq!(merged.read_bases, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGCGGAACCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
     }
 
     fn zip_and_convert(str1: &String, str2: &String) {
-        assert_eq!(str1.len(),str2.len());
+        assert_eq!(str1.len(), str2.len());
         let mut res1 = Vec::with_capacity(str1.len());
         let mut res2 = Vec::with_capacity(str2.len());
-        str1.as_bytes().iter().zip(str2.as_bytes().iter()).for_each(|(x,y)| {
-            match (x,y) {
-                (x,y) if x == y => {
+        str1.as_bytes().iter().zip(str2.as_bytes().iter()).for_each(|(x, y)| {
+            match (x, y) {
+                (x, y) if x == y => {
                     let xUpper = x.to_ascii_uppercase();
                     let yUpper = y.to_ascii_uppercase();
                     res1.push(xUpper);
                     res2.push(yUpper);
                 }
-                (x,y) if x != y => {
+                (x, y) if x != y => {
                     let xUpper = x.to_ascii_lowercase();
                     let yUpper = y.to_ascii_lowercase();
                     res1.push(xUpper);
@@ -534,7 +536,7 @@ mod tests {
                 }
             }
         });
-        println!("{}\n{}",String::from_utf8(res1).unwrap(),String::from_utf8(res2).unwrap());
+        println!("{}\n{}", String::from_utf8(res1).unwrap(), String::from_utf8(res2).unwrap());
     }
 
     #[test]
@@ -550,8 +552,8 @@ mod tests {
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
         let real = "ATCTACACTCTTTCCCTACACGACGCTCTTCCGATCTCGAATGTCAAAGTCAATGCGTTAGGGTTTCTTATATGGTGGTTTCTAACATTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACACGTCTGAACTCCAGTCACATG";
-        println!("{}\n{}",FastaBase::to_string(&merged.read_bases),real);
-        zip_and_convert(&FastaBase::to_string(&merged.read_bases),&String::from(real.clone()));
+        println!("{}\n{}", FastaBase::to_string(&merged.read_bases), real);
+        zip_and_convert(&FastaBase::to_string(&merged.read_bases), &String::from(real.clone()));
         assert_eq!(merged.read_bases, str_to_fasta_vec(real));
     }
 
@@ -571,6 +573,23 @@ mod tests {
         assert_eq!(merged.read_bases, str_to_fasta_vec("GTGGAAAGGACGAAACACCGACGTCTACGTAGACGTACGTTGGAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTCGCATTCTACCGTGACTTTAGCAAGGTGATCATTCGCAACAGTATCGACCTGTACGTCTACGTAGACGTACAGGTCGATGTTTGAATTCGAATTTAAATCGGATCCGCGGCCAA"));
     }
 
+
+    #[test]
+    fn read_merger_real_reads2() {
+        let read1_qls = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF/FFFFFFFFFFFFFFFFAFFFFFFFFF".as_bytes();
+        let read1_fwd = "TTTGTCATCTGCCCTAAAAACACCGGTTTCTTATATGGTGGTGTACGTATGGACTGAACCAGGTGTGCAAGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACAC".as_bytes();
+        let read2_fwd = "AAGCAGTGGTATAAAAGAAGAGTACGCCTTAGGTTAACTTTCTATTTCTAGCTCTAACCCCACTTGCACACCTGGTTCAGTCCATACGTACACCCCCATATAAGAAACCGGTGTTTTTAGGGCAGATGACAAAAGATCGGAAGAGCGTCG".as_bytes();
+        let read2_qls = "/=AFFFFFFFFFFAF/F6FF=FFF6/FAAAFFFFFFFFFF=FFFFFFFFFFFFFFFFFFFFFFFFFFFF6FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF=AFFFFFFFFFFFFFFFFFFFFF/FF/FFFFFFFFFFFFFFFF".as_bytes();
+
+        let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
+        let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
+
+
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+        assert_eq!(merged.read_bases, str_to_fasta_vec("CGACGCTCTTCCGATCTTTTGTCATCTGCCCTAAAAACACCGGTTTCTTATATGGTGGTGTACGTATGGACTGAACCAGGTGTGCAAGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACAC"));
+    }
+
+
     use std::time::{Instant};
     use crate::read_strategies::sequence_layout::ReadPosition::{READ1, READ2, SPACER};
 
@@ -584,6 +603,7 @@ mod tests {
         let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
+        let sld = SequenceLayoutDesign{}
         let start = Instant::now();
 
         for _i in 0..1000 {
