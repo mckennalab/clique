@@ -452,6 +452,17 @@ mod tests {
     use std::collections::BTreeMap;
     use super::*;
 
+
+    fn sld() -> SequenceLayoutDesign {
+        SequenceLayoutDesign {
+            aligner: None,
+            merge: None,
+            reads: vec![],
+            known_strand: false,
+            umi_configurations: Default::default(),
+        }
+    }
+
     fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
         FastaBase::from_vec_u8(&input.as_bytes().to_vec())
     }
@@ -477,7 +488,7 @@ mod tests {
         let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
-        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         assert_eq!(merged.read_bases, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGGGGGGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
     }
 
@@ -492,7 +503,7 @@ mod tests {
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
 
-        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         assert_eq!(merged.read_bases, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"));
     }
 
@@ -507,7 +518,7 @@ mod tests {
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
 
-        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         zip_and_convert(&FastaBase::to_string(&merged.read_bases), &String::from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
 
         assert_eq!(merged.read_bases, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGCGGAACCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
@@ -550,7 +561,7 @@ mod tests {
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
 
-        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         let real = "ATCTACACTCTTTCCCTACACGACGCTCTTCCGATCTCGAATGTCAAAGTCAATGCGTTAGGGTTTCTTATATGGTGGTTTCTAACATTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACACGTCTGAACTCCAGTCACATG";
         println!("{}\n{}", FastaBase::to_string(&merged.read_bases), real);
         zip_and_convert(&FastaBase::to_string(&merged.read_bases), &String::from(real.clone()));
@@ -569,7 +580,7 @@ mod tests {
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
 
-        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         assert_eq!(merged.read_bases, str_to_fasta_vec("GTGGAAAGGACGAAACACCGACGTCTACGTAGACGTACGTTGGAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTCGCATTCTACCGTGACTTTAGCAAGGTGATCATTCGCAACAGTATCGACCTGTACGTCTACGTAGACGTACAGGTCGATGTTTGAATTCGAATTTAAATCGGATCCGCGGCCAA"));
     }
 
@@ -585,7 +596,7 @@ mod tests {
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
 
-        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         assert_eq!(merged.read_bases, str_to_fasta_vec("CGACGCTCTTCCGATCTTTTGTCATCTGCCCTAAAAACACCGGTTTCTTATATGGTGGTGTACGTATGGACTGAACCAGGTGTGCAAGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACAC"));
     }
 
@@ -603,11 +614,11 @@ mod tests {
         let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
-        let sld = SequenceLayoutDesign{}
+
         let start = Instant::now();
 
         for _i in 0..1000 {
-            merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme());
+            merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         }
         let duration = start.elapsed();
         println!("Time elapsed in expensive_function() is: {:?}", duration);

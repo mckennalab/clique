@@ -1,16 +1,17 @@
-extern crate rust_spoa;
+extern crate spoa;
 
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
-use rust_spoa::poa_consensus;
+use std::ffi::CString;
 use shardio::{Range, ShardReader};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use counter::Counter;
+use spoa::{AlignmentEngine,Graph,AlignmentType};
 use indicatif::ProgressBar;
 use rust_htslib::bam::record::{CigarString};
-use crate::alignment::alignment_matrix::AlignmentTag;
+use crate::alignment::alignment_matrix::{AlignmentTag};
 use crate::alignment_functions::{create_sam_record, perform_rust_bio_alignment, setup_sam_writer, simplify_cigar_string};
 use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
@@ -235,8 +236,21 @@ pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downs
         base_sequences = base_sequences.into_iter().choose_multiple(&mut rng, *downsample_to);
     }
 
-    poa_consensus(&base_sequences, max_length.clone(), 1, 5, -4, -3, -1).
-        iter().filter(|x| *x != &b'-').map(|x| *x).collect::<Vec<u8>>()
+    let mut eng = AlignmentEngine::new(AlignmentType::kNW, 5, -4, -3, -1, -3, -1);
+    let mut graph = Graph::new();
+
+    for seq in &base_sequences {
+        let cseq = CString::new(seq.clone()).unwrap();
+        let qual = {
+            let mut qual = vec![34u8; seq.len()];
+            qual.push(0);
+            CString::from_vec_with_nul(qual).unwrap()
+        };
+        let aln = eng.align(cseq.as_c_str(), &graph);
+        graph.add_alignment(&aln, cseq.as_c_str(), &qual);
+    }
+
+    graph.consensus().to_str().unwrap().to_owned().into_bytes()
 }
 
 
