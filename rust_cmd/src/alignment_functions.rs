@@ -206,6 +206,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
                 let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
                 let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
+                
                 let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.1.sequence_u8);
                 let ets = extract_tagged_sequences(&read_al, &full_ref);
 
@@ -302,6 +303,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
                          local: bool,
                          ref_name: Option<&Vec<u8>>,
                          referenceManager: Option<&ReferenceManager>) -> AlignmentResult {
+
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
         rev_comp_read2.len() + 1,
@@ -349,7 +351,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
 
 
 pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
-                                       rev_comp_read2: &Vec<FastaBase>,
+                                       read2_seq: &Vec<FastaBase>,
                                        scoring_function: &dyn AffineScoringFunction,
                                        local: bool,
                                        ref_name: Option<&Vec<u8>>,
@@ -362,15 +364,15 @@ pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
             let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
 
             let ref_seq = FastaBase::to_vec_u8(read1_seq);
-            let read_seq = FastaBase::to_vec_u8(rev_comp_read2);
+            let read_seq = FastaBase::to_vec_u8(read2_seq);
 
             let shared_segs = find_greedy_non_overlapping_segments(
-                &ref_seq,
                 &read_seq,
+                &ref_seq,
                 shared_segments);
 
-            align_string_with_anchors(read1_seq,
-                                      rev_comp_read2,
+            align_string_with_anchors(read2_seq,
+                                      read1_seq,
                                       &shared_segs,
                                       None,
                                       scoring_function,
@@ -381,14 +383,14 @@ pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
             perform_affine_alignment(
                 alignment_mat,
                 read1_seq,
-                rev_comp_read2,
+                read2_seq,
                 scoring_function);
 
             perform_3d_global_traceback(
                 alignment_mat,
                 None,
                 read1_seq,
-                rev_comp_read2,
+                read2_seq,
                 None)
         }
     }

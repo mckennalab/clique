@@ -98,7 +98,7 @@ fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
             assert_eq!(vector.len(),input[0].len(),"string {} is not the same length as the first string {}",
                        String::from_utf8(vector.clone()).unwrap(),
                        String::from_utf8(input[0].clone()).unwrap());
-            
+
             *counter.entry(&vector[i]).or_insert(0) += 1;
         });
 
@@ -187,10 +187,8 @@ impl DegenerateBuffer {
         let string_set = Vec::from_iter(self.hash_map.keys()).iter().map(|s| s.as_bytes().to_vec()).collect::<Vec<Vec<u8>>>();
         let collection = InputList { strings: string_set, max_dist: self.tag.max_distance.clone() };
         let graph = vantage_point_string_graph(&collection, self.hash_map.len() > 50000);
-        //let graph = input_list_to_graph(&collection, string_distance_break, self.hash_map.len() > 50000);
 
         let cc = get_connected_components(&graph);
-        //println!("raw connected components has {} components from {} underlying strings",cc.len(), collection.strings.len());
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {
@@ -264,6 +262,7 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                              reader: &ShardReader<SortingReadSetContainer>,
                              tag: &UMIConfiguration,
                              iteration: &usize, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
+
     info!("Sorting degenerate level {}",tag.symbol);
     // create a new output
     let mut all_read_count: usize = 0;

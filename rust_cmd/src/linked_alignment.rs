@@ -405,7 +405,50 @@ mod tests {
 
         let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, Some(&my_score), &my_aff_score, &mut alignment_mat);
 
-        trace!("CIGAR: {:?}",results.read_aligned);
+        println!("{} from {} reference {}",FastaBase::to_string(&results.read_aligned),String::from_utf8(test_read).unwrap(),String::from_utf8(reference).unwrap());
+    }
+
+    #[test]
+    fn test_anchor_alignment() {
+
+
+        let my_aff_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -11.0,
+            special_character_score: 8.0,
+            gap_open: -15.0,
+            gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
+        };
+
+        let reference = String::from("CATGGTNNNNNNNNNNNNNNNNNNCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGA").as_bytes().to_owned();
+        let ref_fasta = str_to_fasta_vec(str::from_utf8(reference.as_slice()).unwrap());
+        let reference_lookup = ReferenceManager::find_seeds(&reference, 20);
+
+        let test_read = String::from("CATGGTCCTGCTGGAGTTCGTGACCGCCGCCGGGATCAACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGTGCGA").as_bytes().to_owned();
+        let test_read_fasta = str_to_fasta_vec(str::from_utf8(test_read.as_slice()).unwrap());
+
+        let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+
+        let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, None, &my_aff_score, &mut alignment_mat);
+
+        println!("{} from {} reference {}",FastaBase::to_string(&results.read_aligned),String::from_utf8(test_read).unwrap(),String::from_utf8(reference.clone()).unwrap());
+        assert_eq!(String::from("CATGGTCCTGCTGGAGTTCGTGACCGCCGCCGGGATCA------------ACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCT---------------------GAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAG------TGCGA"),FastaBase::to_string(&results.read_aligned));
+
+
+        // big dup
+        let test_read = String::from("CATGGTAAAAAAAAAAAAAAAAAACGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGA").as_bytes().to_owned();
+        let test_read_fasta = str_to_fasta_vec(str::from_utf8(test_read.as_slice()).unwrap());
+
+        let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+
+        let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, None, &my_aff_score, &mut alignment_mat);
+
+        println!("{} from {} reference {}",FastaBase::to_string(&results.read_aligned),String::from_utf8(test_read).unwrap(),String::from_utf8(reference.clone()).unwrap());
+        assert_eq!(String::from("CATGGTAAAAAAAAAAAAAAAAAACGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGA"),FastaBase::to_string(&results.read_aligned));
+        assert_eq!(String::from("CATGGTNNNNNNNNNNNNNNNNNNCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATA-------------------------TGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGA"),FastaBase::to_string(&results.reference_aligned));
     }
 }
 
