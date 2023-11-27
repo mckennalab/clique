@@ -3,7 +3,7 @@ extern crate spoa;
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use shardio::{Range, ShardReader};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
@@ -180,14 +180,16 @@ fn poa_consensus(base_sequences: Vec<Vec<u8>>) -> Vec<u8> {
     let mut graph = Graph::new();
 
     for seq in &base_sequences {
-        let cseq = CString::new(seq.clone()).unwrap();
-        let qual = {
-            let mut qual = vec![34u8; seq.len()];
-            qual.push(0);
-            CString::from_vec_with_nul(qual).unwrap()
+        assert!(seq.len() > 0);
+
+        let cseq = CString::from_vec_with_nul(seq.clone()).unwrap_or_else(|_| panic!("CString::new failed from {}", String::from_utf8(seq.clone()).unwrap()));
+        let cqual = {
+            let mut qual = vec![34u8; seq.len() - 1];
+            CString::new(qual).unwrap()
         };
+
         let aln = eng.align(cseq.as_c_str(), &graph);
-        graph.add_alignment(&aln, cseq.as_c_str(), &qual);
+        graph.add_alignment(&aln, cseq.as_c_str(), &cqual);
     }
 
     graph.consensus().to_str().unwrap().to_owned().into_bytes()
@@ -215,30 +217,30 @@ mod tests {
 
     #[test]
     fn test_consensus_string() {
-        let read1 = "ACGTACGT".as_bytes().to_vec();
-        let read2 = "ACGTACGT".as_bytes().to_vec();
-        let read3 = "ACGTAC-T".as_bytes().to_vec();
+        let read1 = "ACGTACGT\0".as_bytes().to_vec();
+        let read2 = "ACGTACGT\0".as_bytes().to_vec();
+        let read3 = "ACGTAC-T\0".as_bytes().to_vec();
         let vec_of_reads = vec![read1,read2, read3];
         let result = poa_consensus(vec_of_reads);
         assert_eq!(result,"ACGTACGT".as_bytes().to_vec());
 
-        let read1 = "ACGTACGT".as_bytes().to_vec();
-        let read2 = "ACGTAC-T".as_bytes().to_vec();
-        let read3 = "ACGTAC-T".as_bytes().to_vec();
+        let read1 = "ACGTACGT\0".as_bytes().to_vec();
+        let read2 = "ACGTAC-T\0".as_bytes().to_vec();
+        let read3 = "ACGTAC-T\0".as_bytes().to_vec();
         let vec_of_reads = vec![read1,read2, read3];
         let result = poa_consensus(vec_of_reads);
         assert_eq!(result,"ACGTAC-T".as_bytes().to_vec());
 
-        let read1 = "ACGTACGT".as_bytes().to_vec();
-        let read2 = "AAAAAACGTAC-T".as_bytes().to_vec();
-        let read3 = "ACGTAC-T".as_bytes().to_vec();
+        let read1 = "ACGTACGT\0".as_bytes().to_vec();
+        let read2 = "AAAAAACGTAC-T\0".as_bytes().to_vec();
+        let read3 = "ACGTAC-T\0".as_bytes().to_vec();
         let vec_of_reads = vec![read1,read2, read3];
         let result = poa_consensus(vec_of_reads);
         assert_eq!(result,"AAAAAACGTAC-T".as_bytes().to_vec());
 
-        let read1 = "ACGTACGTTTT".as_bytes().to_vec();
-        let read2 = "AAAAAACGTAC-TTTT".as_bytes().to_vec();
-        let read3 = "ACGTAC-T".as_bytes().to_vec();
+        let read1 = "ACGTACGTTTT\0".as_bytes().to_vec();
+        let read2 = "AAAAAACGTAC-TTTT\0".as_bytes().to_vec();
+        let read3 = "ACGTAC-T\0".as_bytes().to_vec();
         let vec_of_reads = vec![read1,read2, read3];
         let result = poa_consensus(vec_of_reads);
         assert_eq!(result,"AAAAAACGTAC-TTTT".as_bytes().to_vec());

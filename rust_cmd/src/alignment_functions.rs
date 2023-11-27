@@ -153,6 +153,16 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                                                                                     256,
                                                                                     1 << 16).unwrap();
 
+
+    type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
+
+    lazy_static! {
+        static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());
+    }
+    thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
+
+    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1) * 2, (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
+
     let sender = Arc::new(Mutex::new(sharded_output.get_sender()));
 
     let mut sorting_order = read_structure.umi_configurations.iter().map(|x| x.1.clone()).collect::<Vec<UMIConfiguration>>();
@@ -173,80 +183,86 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     let gap_rejected = Arc::new(Mutex::new(0 as usize));
 
     read_iterator.par_bridge().for_each(|mut xx| {
-        if (xx.seq().len() as f64) < ((*max_reference_multiplier) * reference_bases.len() as f64) {
-            let forward_oriented_seq = if !read_structure.known_strand {
-                let orientation = orient_by_longest_segment(&xx.seq(), &reference_seq.1.sequence_u8, &reference_seq.1.suffix_table).0;
-                if orientation {
-                    xx.seq().clone()
-                } else {
-                    reverse_complement(&xx.seq())
-                }
-            } else {
-                xx.seq().clone()
-            };
-
-            let alignment = align_using_selected_aligner(read_structure, rm, &reference_seq.1.name, &reference_bases, &forward_oriented_seq);
-
-            let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
-            let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
-            let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.1.sequence_u8);
-            let ets = extract_tagged_sequences(&read_al, &full_ref);
-
-            //println!("Alignment results: {} {}",FastaBase::to_string(&alignment.read_aligned),FastaBase::to_string(&alignment.reference_aligned));
-            let gap_proportion = gap_proportion_per_tag(&ets);
-
-            if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
-
-
-                let mut invalid_read = false;
-                let read_tags_ordered = VecDeque::from(sorted_tags.iter().
-                    map(|x| {
-                        let ets_hit = ets.get(&x.to_string().as_bytes()[0]);
-                        match ets_hit {
-                            Some(e) => {
-                                Some((x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>()))
-                            }
-                            None => {
-                                warn!("Unable to find tag {} for read {}, dropping read", x, String::from_utf8(xx.name().clone()).unwrap());
-                                invalid_read = true;
-                                None
-                            }
-                        }
-                    }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
-
-                if !invalid_read {
-                    let new_sorted_read_container = SortingReadSetContainer {
-                        ordered_sorting_keys: vec![],
-                        ordered_unsorted_keys: read_tags_ordered,
-
-                        aligned_read: SortedAlignment {
-                            aligned_read: alignment.read_aligned.clone(),
-                            aligned_ref: alignment.reference_aligned,
-                            ref_name: reference_name.clone(),
-                            read_name: String::from_utf8(xx.name().clone()).unwrap(),
-                            cigar_string: alignment.cigar_string.clone(),
-                            score: alignment.score,
-                        },
-                    };
-                    assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
-
-                    let sender = Arc::clone(&sender);
-
-                    sender.lock().unwrap().send(new_sorted_read_container).unwrap();
-                } else {
-                    *skipped_count.lock().unwrap() += 1;
-                }
-            } else {
-                *gap_rejected.lock().unwrap() += 1;
+        STORE.with(|arc_mtx| {
+            let mut local_alignment = arc_mtx.lock().unwrap();
+            if local_alignment.is_none() {
+                *local_alignment = Some(alignment_mat.clone());
+                STORE_CLONES.lock().unwrap().push(arc_mtx.clone());
             }
-        } else {
-            *skipped_count.lock().unwrap() += 1;
-        }
-        *read_count.lock().unwrap() += 1;
-        if *read_count.lock().unwrap() % 10000 == 0 {
-            let duration = start.elapsed();
-            info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
-        }
+
+            if (xx.seq().len() as f64) < ((*max_reference_multiplier) * reference_bases.len() as f64) {
+                let forward_oriented_seq = if !read_structure.known_strand {
+                    let orientation = orient_by_longest_segment(&xx.seq(), &reference_seq.1.sequence_u8, &reference_seq.1.suffix_table).0;
+                    if orientation {
+                        xx.seq().clone()
+                    } else {
+                        reverse_complement(&xx.seq())
+                    }
+                } else {
+                    xx.seq().clone()
+                };
+
+                let alignment = align_using_selected_aligner(read_structure, rm, &reference_seq.1.name, &reference_bases, &forward_oriented_seq, &mut local_alignment.as_mut().unwrap());
+
+                let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
+                let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
+                let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.1.sequence_u8);
+                let ets = extract_tagged_sequences(&read_al, &full_ref);
+
+                //println!("Alignment results: {} {}",FastaBase::to_string(&alignment.read_aligned),FastaBase::to_string(&alignment.reference_aligned));
+                let gap_proportion = gap_proportion_per_tag(&ets);
+
+                if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
+                    let mut invalid_read = false;
+                    let read_tags_ordered = VecDeque::from(sorted_tags.iter().
+                        map(|x| {
+                            let ets_hit = ets.get(&x.to_string().as_bytes()[0]);
+                            match ets_hit {
+                                Some(e) => {
+                                    Some((x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>()))
+                                }
+                                None => {
+                                    warn!("Unable to find tag {} for read {}, dropping read", x, String::from_utf8(xx.name().clone()).unwrap());
+                                    invalid_read = true;
+                                    None
+                                }
+                            }
+                        }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
+
+                    if !invalid_read {
+                        let new_sorted_read_container = SortingReadSetContainer {
+                            ordered_sorting_keys: vec![],
+                            ordered_unsorted_keys: read_tags_ordered,
+
+                            aligned_read: SortedAlignment {
+                                aligned_read: alignment.read_aligned.clone(),
+                                aligned_ref: alignment.reference_aligned,
+                                ref_name: reference_name.clone(),
+                                read_name: String::from_utf8(xx.name().clone()).unwrap(),
+                                cigar_string: alignment.cigar_string.clone(),
+                                score: alignment.score,
+                            },
+                        };
+                        assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
+
+                        let sender = Arc::clone(&sender);
+
+                        sender.lock().unwrap().send(new_sorted_read_container).unwrap();
+                    } else {
+                        *skipped_count.lock().unwrap() += 1;
+                    }
+                } else {
+                    *gap_rejected.lock().unwrap() += 1;
+                }
+            } else {
+                *skipped_count.lock().unwrap() += 1;
+            }
+            *read_count.lock().unwrap() += 1;
+            if *read_count.lock().unwrap() % 10000 == 0 {
+                let duration = start.elapsed();
+                info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
+            }
+        });
     });
 
     sender.lock().unwrap().finished().unwrap();
@@ -261,11 +277,12 @@ pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
                                     reference_manager: &ReferenceManager,
                                     reference_name: &Vec<u8>,
                                     reference_bases: &Vec<FastaBase>,
-                                    xx: &Vec<FastaBase>) -> AlignmentResult {
+                                    xx: &Vec<FastaBase>,
+                                    alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
     match &read_structure.aligner {
         None => {
             let score = AffineScoring::default();
-            align_two_strings(&reference_bases, &xx, &score, false, Some(reference_name), Some(reference_manager))
+            align_two_strings_passed_matrix(&reference_bases, &xx, &score, false, Some(reference_name), Some(reference_manager), alignment_mat)
             //perform_rust_bio_alignment(&reference_bases, &xx) // current default
         }
         Some(x) => {
@@ -285,7 +302,6 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
                          local: bool,
                          ref_name: Option<&Vec<u8>>,
                          referenceManager: Option<&ReferenceManager>) -> AlignmentResult {
-
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
         rev_comp_read2.len() + 1,
@@ -323,6 +339,53 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
 
             perform_3d_global_traceback(
                 &mut alignment_mat,
+                None,
+                read1_seq,
+                rev_comp_read2,
+                None)
+        }
+    }
+}
+
+
+pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
+                                       rev_comp_read2: &Vec<FastaBase>,
+                                       scoring_function: &dyn AffineScoringFunction,
+                                       local: bool,
+                                       ref_name: Option<&Vec<u8>>,
+                                       referenceManager: Option<&ReferenceManager>,
+                                       alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
+
+    match (referenceManager, ref_name) {
+        (Some(x), Some(y)) => {
+            let ref_id = x.reference_name_to_ref.get(y).unwrap();
+            let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
+
+            let ref_seq = FastaBase::to_vec_u8(read1_seq);
+            let read_seq = FastaBase::to_vec_u8(rev_comp_read2);
+
+            let shared_segs = find_greedy_non_overlapping_segments(
+                &ref_seq,
+                &read_seq,
+                shared_segments);
+
+            align_string_with_anchors(read1_seq,
+                                      rev_comp_read2,
+                                      &shared_segs,
+                                      None,
+                                      scoring_function,
+                                      alignment_mat)
+        }
+
+        _ => {
+            perform_affine_alignment(
+                alignment_mat,
+                read1_seq,
+                rev_comp_read2,
+                scoring_function);
+
+            perform_3d_global_traceback(
+                alignment_mat,
                 None,
                 read1_seq,
                 rev_comp_read2,
