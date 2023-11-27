@@ -198,18 +198,21 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
             if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
 
 
+                let mut invalid_read = false;
                 let read_tags_ordered = VecDeque::from(sorted_tags.iter().
                     map(|x| {
                         let ets_hit = ets.get(&x.to_string().as_bytes()[0]);
                         match ets_hit {
                             Some(e) => {
-                                (x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>())
+                                Some((x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>()))
                             }
                             None => {
-                                panic!("Unable to find tag {} for read {}", x, String::from_utf8(xx.name().clone()).unwrap())
+                                warn!("Unable to find tag {} for read {}, dropping read", x, String::from_utf8(xx.name().clone()).unwrap());
+                                invalid_read = true;
+                                None
                             }
                         }
-                    }).collect::<Vec<(char, Vec<FastaBase>)>>());
+                    }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
 
                 let new_sorted_read_container = SortingReadSetContainer {
                     ordered_sorting_keys: vec![],
