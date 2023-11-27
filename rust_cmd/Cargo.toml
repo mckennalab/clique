@@ -8,7 +8,6 @@ edition = "2021"
 bio = "*"
 clap = { version = "3.1.6", features = ["derive"] }
 lazy_static = "1.4.0"
-csv = "1.1"
 rand = "*"
 needletail = "0.4"
 rayon = "1.5.1"
@@ -48,7 +47,6 @@ actix = "0.13"
 sift4 = "*"
 colored = "*"
 vpsearch = "*"
-libwfa = "0.1"
 
 [profile.release]
 lto = true

@@ -27,7 +27,7 @@ pub fn collapse(reference: &String,
                 threads: &usize) {
 
     // load up the reference files
-    let rm = ReferenceManager::from(&reference, 8);
+    let rm = ReferenceManager::from(&reference, 12, 6);
 
     // validate that each reference has the specified capture groups
     let validated_references = rm.references.iter().

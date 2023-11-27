@@ -470,8 +470,9 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<FastaBase>, s
     (_update_x, _update_y, _update_z)
 }
 
-/// This was a hot point in the function above; we did a 3-way comparison using vectors which was really costly, mostly due to mallocs and frees.
-/// This does a three-way comparison and returns both the value and the traversal direction for alignment. It's about a 2X speedup over the previous version
+/// This was a hot point in the function above; we did a 3-way comparison using vectors which was really costly,
+/// mostly due to mallocs and frees. This does a three-way comparison and returns both the value and the
+/// traversal direction for alignment. It's about a 2X speedup over the previous version
 pub fn three_way_max_and_direction(up_value: &f64, left_value: &f64, diag_value: &f64) -> (f64, AlignmentDirection) {
     if up_value > left_value {
         if up_value > diag_value {
@@ -517,7 +518,7 @@ pub struct AlignmentResult {
 }
 
 impl AlignmentResult {
-    pub fn from_match_segment(str1: &Vec<FastaBase>, str2: &Vec<FastaBase>, start_x: usize, start_y: usize, af_score: &AffineScoring) -> AlignmentResult {
+    pub fn from_match_segment(str1: &Vec<FastaBase>, str2: &Vec<FastaBase>, start_x: usize, start_y: usize, af_score: &dyn AffineScoringFunction) -> AlignmentResult {
         let cigar_string: Vec<AlignmentTag> = vec![AlignmentTag::MatchMismatch(str1.len())];
         let path = (start_x..(start_x + str1.len())).zip(start_y..(start_y + str1.len())).map(|(x, y)| AlignmentLocation { x, y }).collect();
         let score = str1.iter().zip(str2.iter()).map(|(xb, yb)| af_score.match_mismatch(xb, yb)).sum();
@@ -723,7 +724,7 @@ pub struct BoundedAlignment {
     bounding_box: (AlignmentLocation, AlignmentLocation),
 }
 
-pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, my_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
+pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, inversion_score: &InversionScoring, my_aff_score: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::AFFINE, local);
     let mut inversion_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::AFFINE, true);
 
@@ -741,7 +742,7 @@ pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
             let bounding = converted_path.bounding_box.unwrap().clone();
             let b_alignment = BoundedAlignment { alignment_result: converted_path, bounding_box: bounding };
             let true_position = AlignmentLocation { x: bounding.1.x, y: bounding.1.y };
-            aligned_inv = if length >= my_score.min_inversion_length {
+            aligned_inv = if length >= inversion_score.min_inversion_length {
                 clean_and_find_next_best_match_3d(&mut inversion_mat, &reference, &rev_comp_read, my_aff_score, &aligned_inv_local);
                 long_enough_hits.insert(true_position, b_alignment);
                 Some(perform_3d_global_traceback(&mut inversion_mat, None, &reference, &rev_comp_read, None))
@@ -752,7 +753,7 @@ pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
             aligned_inv = None
         }
     }
-    perform_inversion_aware_alignment(&mut alignment_mat, &mut long_enough_hits, &reference, &read, my_score);
+    perform_inversion_aware_alignment(&mut alignment_mat, &mut long_enough_hits, &reference, &read, inversion_score);
     perform_3d_global_traceback(&mut alignment_mat, Some(&long_enough_hits), &reference, &read, None)
 }
 

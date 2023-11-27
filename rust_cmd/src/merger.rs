@@ -355,7 +355,8 @@ pub fn merge_fasta_bases_by_alignment(read1_seq: &Vec<FastaBase>,
                                       read2_seq: &Vec<FastaBase>,
                                       read2_quals: &Vec<u8>,
                                       merge_initial_scoring: &dyn AffineScoringFunction) -> MergedSequence {
-    let results = align_two_strings(&read1_seq, &read2_seq, merge_initial_scoring, false);
+
+    let results = align_two_strings(&read1_seq, &read2_seq, merge_initial_scoring, false, None, None);
 
     alignment_rate_and_consensus(
         &results.reference_aligned,

@@ -17,70 +17,6 @@ use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
 use rust_htslib::bam::{Writer};
 
-
-/*
-#[derive(Message)]
-#[rtype(result = "()")]
-struct ReadBundle {
-    reads: VecDeque<SortingReadSetContainer>,
-    max_reads: usize,
-}
-#[derive(Message)]
-#[rtype(result = "()")]
-struct AlignedRead {
-    read: Record
-}
-
-// Actor definition
-struct ConsensusActor {
-    reference: Vec<FastaBase>,
-    reference_u8: Vec<u8>,
-    writer: Arc<Mutex<Writer>>
-}
-
-impl Actor for ConsensusActor {
-    type Context = Context<ConsensusActor>;
-}
-impl Handler<ReadBundle> for ConsensusActor {
-    type Result = AlignedRead; // <- Message response type
-
-    fn handle(&mut self, msg: ReadBundle, ctx: &mut Context<bool>) -> Self::Result {
-        let read = self.output_buffered_read_set_to_sam_file(msg);
-        ctx.recipient.do_send(AlignedRead { read })
-    }
-}
-
-impl ConsensusActor {
-
-    fn output_buffered_read_set_to_sam_file(&self,
-                                            sg: ReadBundle) -> Record {
-
-        let mut added_tags = HashMap::new();
-        let mut buffered_reads = sg.reads.clone();
-        added_tags.insert((b'r', b'c'), buffered_reads.len().to_string());
-        added_tags.insert((b'd', b'c'), cmp::min(*sg.max_reads,buffered_reads.len()).to_string());
-
-        let mut consensus_reads = create_poa_consensus(&buffered_reads, *sg.max_reads);
-        let consensus_reference = Counter::<Vec<u8>, usize>::init(buffered_reads.iter().map(|x| x.aligned_read.ref_name.clone().as_bytes().to_vec()).collect::<Vec<Vec<u8>>>()).most_common_ordered();
-
-        // TODO: this needs to be tied to their aligner choice!!!
-        let new_alignment = perform_rust_bio_alignment(&self.reference, &FastaBase::from_vec_u8(&consensus_reads));
-        let read_names = buffered_reads.iter().map(|x| x.aligned_read.read_name.clone()).collect::<Vec<String>>();
-
-        added_tags.insert((b'a', b'r'), read_names.join(","));
-        added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&new_alignment.reference_aligned,&new_alignment.read_aligned).to_string());
-
-
-        create_sam_record(read_names.get(0).clone().unwrap(),
-                                         &new_alignment.read_aligned,
-                                         &new_alignment.reference_aligned,
-                                         &self.reference_u8,
-                                         &reference_read_to_cigar_string(&new_alignment.reference_aligned, &new_alignment.read_aligned),
-                                         &true,
-                                         added_tags)
-    }
-}*/
-
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
                              output_file: &String,
                              levels: usize,
@@ -235,6 +171,10 @@ pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downs
         let mut rng = rand::thread_rng();
         base_sequences = base_sequences.into_iter().choose_multiple(&mut rng, *downsample_to);
     }
+    poa_consensus(base_sequences)
+}
+
+fn poa_consensus(base_sequences: Vec<Vec<u8>>) -> Vec<u8> {
 
     let mut eng = AlignmentEngine::new(AlignmentType::kNW, 5, -4, -3, -1, -3, -1);
     let mut graph = Graph::new();
@@ -271,5 +211,37 @@ mod tests {
         // CGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG-----------------------------------------------------------------------------------------------------------------------------------------------------------------GTAGGAGCCGTTACCAGGATGA------AGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAACAAGCTAACGGTGCAGGATCTTGGGTTTCTGTCTCTTATTCACATCTGACGCTGCCGACGACGAGGTATAAGTGTAGATATCGGTGGTCGCCGTATCATT
         // AAACCCAAGATCCTGCACCGTTAGCTTGCGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAGGTAGGAGCCGTTACCAGGATGAAGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAACAAGCTAACGGTGCAGGATCTTGGGTTTCTGTCTCTTATTCACATCTGACGCTGCCGACGACGAGGTATAAGTGTAGATATCGGTGGTCGCCGTATCATTACAAAAGTGGGTGGGGGGGGGGGGGGGGC
         // CGTACGCTAGACATTGTGCCGCATC22222222222222TAGGAAATGACGGCTATACAAGGCATCGCGGTGTCTCGTCAATACACCTTACGGAGGCATTGGATGATAATGTCGCAAGGAGGTCTCAAGATTCTGTACCACACGTCGGCACGCGATTGAACCAATGGACAGAGGACAGGATACGTAGGATCACCAACTAGGTCATTAGGTGGAAGGTGATACGTAGGAGCCGTTACCAGGATGAACGATGAGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAANNNNNNNNNNNNNNNNNNNNNNNNNNNNCTGTCTCTTATACACATCTGACGCTGCCGACGANNNNNNNNNNGTGTAGATCTCGGTGGTCGCCGTATCATT
+    }
+
+    #[test]
+    fn test_consensus_string() {
+        let read1 = "ACGTACGT".as_bytes().to_vec();
+        let read2 = "ACGTACGT".as_bytes().to_vec();
+        let read3 = "ACGTAC-T".as_bytes().to_vec();
+        let vec_of_reads = vec![read1,read2, read3];
+        let result = poa_consensus(vec_of_reads);
+        assert_eq!(result,"ACGTACGT".as_bytes().to_vec());
+
+        let read1 = "ACGTACGT".as_bytes().to_vec();
+        let read2 = "ACGTAC-T".as_bytes().to_vec();
+        let read3 = "ACGTAC-T".as_bytes().to_vec();
+        let vec_of_reads = vec![read1,read2, read3];
+        let result = poa_consensus(vec_of_reads);
+        assert_eq!(result,"ACGTAC-T".as_bytes().to_vec());
+
+        let read1 = "ACGTACGT".as_bytes().to_vec();
+        let read2 = "AAAAAACGTAC-T".as_bytes().to_vec();
+        let read3 = "ACGTAC-T".as_bytes().to_vec();
+        let vec_of_reads = vec![read1,read2, read3];
+        let result = poa_consensus(vec_of_reads);
+        assert_eq!(result,"AAAAAACGTAC-T".as_bytes().to_vec());
+
+        let read1 = "ACGTACGTTTT".as_bytes().to_vec();
+        let read2 = "AAAAAACGTAC-TTTT".as_bytes().to_vec();
+        let read3 = "ACGTAC-T".as_bytes().to_vec();
+        let vec_of_reads = vec![read1,read2, read3];
+        let result = poa_consensus(vec_of_reads);
+        assert_eq!(result,"AAAAAACGTAC-TTTT".as_bytes().to_vec());
+
     }
 }

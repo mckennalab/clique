@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::str;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
-use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
+use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment, SharedSegments};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, stretch_sequence_to_alignment};
-use crate::linked_alignment::{orient_by_longest_segment};
+use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator};
 use crate::reference::fasta_reference::{Reference, ReferenceManager};
 use std::time::{Instant};
@@ -142,7 +142,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         index2: &String,
                         max_gaps_proportion: &f64,
                         threads: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
-
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
                                           Some(PathBuf::from(&read2)),
                                           Some(PathBuf::from(&index1)),
@@ -186,7 +185,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 xx.seq().clone()
             };
 
-            let alignment = align_using_selected_aligner(read_structure, &reference_bases, &forward_oriented_seq);
+            let alignment = align_using_selected_aligner(read_structure, rm, &reference_seq.1.name, &reference_bases, &forward_oriented_seq);
 
             let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
             let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
@@ -240,12 +239,14 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 }
 
 pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
+                                    reference_manager: &ReferenceManager,
+                                    reference_name: &Vec<u8>,
                                     reference_bases: &Vec<FastaBase>,
                                     xx: &Vec<FastaBase>) -> AlignmentResult {
     match &read_structure.aligner {
         None => {
             let score = AffineScoring::default();
-            align_two_strings(&reference_bases, &xx, &score, false)
+            align_two_strings(&reference_bases, &xx, &score, false, Some(reference_name), Some(reference_manager))
             //perform_rust_bio_alignment(&reference_bases, &xx) // current default
         }
         Some(x) => {
@@ -259,27 +260,58 @@ pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
     }
 }
 
-#[allow(dead_code)]
-pub fn align_two_strings(read1_seq: &Vec<FastaBase>, rev_comp_read2: &Vec<FastaBase>, scoring_function: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
+pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
+                         rev_comp_read2: &Vec<FastaBase>,
+                         scoring_function: &dyn AffineScoringFunction,
+                         local: bool,
+                         ref_name: Option<&Vec<u8>>,
+                         referenceManager: Option<&ReferenceManager>) -> AlignmentResult {
+
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
         rev_comp_read2.len() + 1,
         AlignmentType::AFFINE,
         local);
 
-    perform_affine_alignment(
-        &mut alignment_mat,
-        read1_seq,
-        rev_comp_read2,
-        scoring_function);
 
-    perform_3d_global_traceback(
-        &mut alignment_mat,
-        None,
-        read1_seq,
-        rev_comp_read2,
-        None)
+    match (referenceManager, ref_name) {
+        (Some(x), Some(y)) => {
+            let ref_id = x.reference_name_to_ref.get(y).unwrap();
+            let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
+
+            let ref_seq = FastaBase::to_vec_u8(read1_seq);
+            let read_seq = FastaBase::to_vec_u8(rev_comp_read2);
+
+            let shared_segs = find_greedy_non_overlapping_segments(
+                &ref_seq,
+                &read_seq,
+                shared_segments);
+
+            align_string_with_anchors(read1_seq,
+                                      rev_comp_read2,
+                                      &shared_segs,
+                                      None,
+                                      scoring_function,
+                                      &mut alignment_mat)
+        }
+
+        _ => {
+            perform_affine_alignment(
+                &mut alignment_mat,
+                read1_seq,
+                rev_comp_read2,
+                scoring_function);
+
+            perform_3d_global_traceback(
+                &mut alignment_mat,
+                None,
+                read1_seq,
+                rev_comp_read2,
+                None)
+        }
+    }
 }
+
 
 pub fn best_reference(read: &Vec<FastaBase>,
                       references: &HashMap<usize, Reference>,
@@ -401,17 +433,15 @@ fn cigar_to_alignment(reference: &Vec<FastaBase>,
 
 pub fn perform_rust_bio_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     // TODO: do a better look at scoring here!
-    let score = |a: u8, b: u8| if a == b  { 2i32 } else if a == 'N' as u8 || b == 'N' as u8 {2i32} else { -2i32 };
+    let score = |a: u8, b: u8| if a == b { 2i32 } else if a == 'N' as u8 || b == 'N' as u8 { 2i32 } else { -2i32 };
 
-    let alignment_scoring = Scoring::new(-20,-2, &score).xclip_prefix(0).xclip_suffix(0).yclip_suffix(0).yclip_suffix(0);
+    let alignment_scoring = Scoring::new(-20, -2, &score).xclip_prefix(0).xclip_suffix(0).yclip_suffix(0).yclip_suffix(0);
     let mut aligner = Aligner::with_capacity_and_scoring(reference.len(), read.len(), alignment_scoring);
     let x = FastaBase::to_vec_u8(&reference);
     let y = FastaBase::to_vec_u8(&read);
     let alignment = aligner.global(y.as_slice(), x.as_slice());
     bio_to_alignment_result(alignment, reference, read)
 }
-
-
 
 
 pub fn bio_to_alignment_result(alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {

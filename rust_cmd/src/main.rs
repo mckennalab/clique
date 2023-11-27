@@ -228,7 +228,7 @@ fn main() {
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
 
             // load up the reference files
-            let rm = ReferenceManager::from(&reference, 8);
+            let rm = ReferenceManager::from(&reference, 12, 6);
 
             let output_path = Path::new(&output);
 

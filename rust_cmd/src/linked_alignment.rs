@@ -138,19 +138,15 @@ pub struct AlignmentResults {
 pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
                                  reference: &Vec<FastaBase>,
                                  overlaps: &SharedSegments,
-                                 my_score: &InversionScoring,
-                                 my_aff_score: &AffineScoring,
-                                 use_inversions: &bool,
-                                 alignment_mat: &mut Alignment<Ix3>) -> AlignmentResults {
+                                 my_inv_score: Option<&InversionScoring>,
+                                 my_aff_score: &dyn AffineScoringFunction,
+                                 alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
+
     let mut alignment_ref: Vec<FastaBase> = Vec::new();
     let mut alignment_read: Vec<FastaBase> = Vec::new();
     let mut alignment_cigar = Vec::new();
     let mut read_alignment_last_position: usize = 0;
     let mut ref_alignment_last_position: usize = 0;
-
-    // reuse this throughout the alignments
-    //let mut alignment_mat = create_scoring_record_3d(search_string.len() + 1, reference.len() + 1, AlignmentType::AFFINE, false);
-
 
     for overlap in &overlaps.alignment_segments {
         assert!(read_alignment_last_position <= overlap.search_start,"READ START FAILURE: {} and {}",read_alignment_last_position,overlap.search_start);
@@ -161,12 +157,12 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
         let ref_slice  = slice_for_alignment(reference, ref_alignment_last_position, overlap.ref_start);
 
         let alignment =
-            match (read_slice.len(),ref_slice.len(), use_inversions) {
-                (x ,y, _invert) if x < 5 && y < 5 && x == y => {
-                    AlignmentResult::from_match_segment(&ref_slice, &read_slice, ref_alignment_last_position,read_alignment_last_position,&my_aff_score)
+            match (read_slice.len(),ref_slice.len(), my_inv_score) {
+                (x ,y, None) if x < 5 && y < 5 && x == y => {
+                    AlignmentResult::from_match_segment(&ref_slice, &read_slice, ref_alignment_last_position,read_alignment_last_position,my_aff_score)
                 },
-                (_x, _y ,true) => inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false),
-                (_x, _y ,false) => {
+                (_x, _y ,Some(inv_score)) => inversion_alignment(&ref_slice, &read_slice, inv_score, my_aff_score, false),
+                (_x, _y ,None) => {
                     perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
                     perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, None)
@@ -197,9 +193,9 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
             let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, search_string.len());
             let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, reference.len());
             let alignment=
-            match use_inversions {
-                true => inversion_alignment(&ref_slice, &read_slice, my_score, my_aff_score,false),
-                false => {
+            match my_inv_score {
+                Some(x) => inversion_alignment(&ref_slice, &read_slice, x, my_aff_score,false),
+                None => {
                     //let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
                     perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
@@ -211,16 +207,21 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
             alignment_cigar.extend(alignment.cigar_string);
         }
     } else {
-        let alignment = inversion_alignment(&reference, &search_string, my_score, my_aff_score,true);
+        let alignment = inversion_alignment(&reference, &search_string, my_inv_score.unwrap(), my_aff_score,true);
 
         alignment_ref.extend(alignment.reference_aligned);
         alignment_read.extend(alignment.read_aligned);
         alignment_cigar.extend(alignment.cigar_string);
     }
-    AlignmentResults {
-        aligned_read: alignment_read,
-        aligned_ref: alignment_ref,
-        cigar_tags: alignment_cigar,
+    AlignmentResult {
+        reference_aligned: alignment_ref,
+        read_aligned: alignment_read,
+        cigar_string: alignment_cigar,
+        path: vec![],
+        score: 0.0,
+        reference_start: 0,
+        read_start: 0,
+        bounding_box: None,
     }
 }
 
@@ -366,9 +367,9 @@ mod tests {
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
         let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
 
-        let results = align_string_with_anchors(&test_read_fasta, &ref_fasta,  &fwd_score_mp, &my_score, &my_aff_score, &true, &mut alignment_mat);
+        let results = align_string_with_anchors(&test_read_fasta, &ref_fasta,  &fwd_score_mp, Some(&my_score), &my_aff_score,  &mut alignment_mat);
 
-        trace!("CIGAR: {:?}",results.aligned_read);
+        trace!("CIGAR: {:?}",results.read_aligned);
     }
 
     #[test]
@@ -402,9 +403,9 @@ mod tests {
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
         let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
 
-        let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, &my_score, &my_aff_score, &true, &mut alignment_mat);
+        let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, Some(&my_score), &my_aff_score, &mut alignment_mat);
 
-        trace!("CIGAR: {:?}",results.aligned_read);
+        trace!("CIGAR: {:?}",results.read_aligned);
     }
 }
 
