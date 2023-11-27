@@ -5,7 +5,8 @@ use crate::fasta_comparisons::DEGENERATEBASES;
 use std::convert::TryFrom;
 use ndarray::Ix3;
 use crate::*;
-use crate::alignment::fasta_bit_encoding::FastaBase;
+use crate::alignment::alignment_matrix::AlignmentTag::Del;
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::reference::fasta_reference::SuffixTableLookup;
 
 /// find a read's orientation using the greatest total number of matching bases
@@ -205,10 +206,25 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
             alignment_ref.extend(alignment.reference_aligned);
             alignment_read.extend(alignment.read_aligned);
             alignment_cigar.extend(alignment.cigar_string);
+        } else if ref_alignment_last_position < reference.len() {
+            let gap_len = reference.len() - ref_alignment_last_position;
+            alignment_ref.extend(reference[ref_alignment_last_position..reference.len()].to_vec());
+            alignment_read.extend(vec![FASTA_UNSET; gap_len]);
+            alignment_cigar.push(Del(gap_len));
         }
     } else {
-        let alignment = inversion_alignment(&reference, &search_string, my_inv_score.unwrap(), my_aff_score,true);
+        let alignment=
+            match my_inv_score {
+                Some(x) => {
+                    inversion_alignment(&reference, &search_string, my_inv_score.unwrap(), my_aff_score,true)
+                }
+                None => {
+                    let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, search_string.len() + 1, AlignmentType::AFFINE, false);
+                    perform_affine_alignment(&mut alignment_mat, &reference, &search_string, my_aff_score);
 
+                    perform_3d_global_traceback(&mut alignment_mat, None, &reference, &search_string, None)
+                }
+            };
         alignment_ref.extend(alignment.reference_aligned);
         alignment_read.extend(alignment.read_aligned);
         alignment_cigar.extend(alignment.cigar_string);
@@ -437,7 +453,7 @@ mod tests {
         assert_eq!(String::from("CATGGTCCTGCTGGAGTTCGTGACCGCCGCCGGGATCA------------ACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCT---------------------GAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAG------TGCGA"),FastaBase::to_string(&results.read_aligned));
 
 
-        // big dup
+        // bigger dup
         let test_read = String::from("CATGGTAAAAAAAAAAAAAAAAAACGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGA").as_bytes().to_owned();
         let test_read_fasta = str_to_fasta_vec(str::from_utf8(test_read.as_slice()).unwrap());
 
@@ -449,6 +465,20 @@ mod tests {
         println!("{} from {} reference {}",FastaBase::to_string(&results.read_aligned),String::from_utf8(test_read).unwrap(),String::from_utf8(reference.clone()).unwrap());
         assert_eq!(String::from("CATGGTAAAAAAAAAAAAAAAAAACGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGA"),FastaBase::to_string(&results.read_aligned));
         assert_eq!(String::from("CATGGTNNNNNNNNNNNNNNNNNNCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATA-------------------------TGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGA"),FastaBase::to_string(&results.reference_aligned));
+
+        // trailing gap
+        let test_read = String::from("CATGGTAAAAAAAAAAAAAAAAAACGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAG").as_bytes().to_owned();
+        let test_read_fasta = str_to_fasta_vec(str::from_utf8(test_read.as_slice()).unwrap());
+
+        let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+
+        let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, None, &my_aff_score, &mut alignment_mat);
+
+        println!("{} from {} reference {}",FastaBase::to_string(&results.read_aligned),String::from_utf8(test_read).unwrap(),String::from_utf8(reference.clone()).unwrap());
+        assert_eq!(String::from("CATGGTAAAAAAAAAAAAAAAAAACGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATAGTAACCGTTGCTAGGAGAGACCATATGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAG----------------------"),FastaBase::to_string(&results.read_aligned));
+        assert_eq!(String::from("CATGGTNNNNNNNNNNNNNNNNNNCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAACGAAGAGTAACCGTTGCTAGGAGAGACCATA-------------------------TGTCTAGAGAAAGGTACCCTATCCTTTCGAATGGTCCACGCGTAGAAGAAAGTTAGCTCTTGTGCGA"),FastaBase::to_string(&results.reference_aligned));
+
     }
 }
 

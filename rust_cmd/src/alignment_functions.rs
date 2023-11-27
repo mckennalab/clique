@@ -206,11 +206,12 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
                 let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
                 let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
-                
+                //println!("Alignment results: {} {}",FastaBase::to_string(&alignment.read_aligned),FastaBase::to_string(&alignment.reference_aligned));
+
                 let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.1.sequence_u8);
                 let ets = extract_tagged_sequences(&read_al, &full_ref);
 
-                //println!("Alignment results: {} {}",FastaBase::to_string(&alignment.read_aligned),FastaBase::to_string(&alignment.reference_aligned));
+
                 let gap_proportion = gap_proportion_per_tag(&ets);
 
                 if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
