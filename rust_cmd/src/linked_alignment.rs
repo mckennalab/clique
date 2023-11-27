@@ -196,10 +196,10 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
             match my_inv_score {
                 Some(x) => inversion_alignment(&ref_slice, &read_slice, x, my_aff_score,false),
                 None => {
-                    //let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
-                    perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
+                    let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
+                    perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
-                    perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, None)
+                    perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, None)
                 }
             };
             alignment_ref.extend(alignment.reference_aligned);
