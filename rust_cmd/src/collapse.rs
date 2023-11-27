@@ -89,10 +89,16 @@ pub fn collapse(reference: &String,
 fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
     let mut consensus = Vec::new();
 
+    // for each position
     for i in 0..input[0].len() {
         let mut counter = HashMap::new();
 
+        // for each input string
         input.iter().for_each(|vector| {
+            assert_eq!(vector.len(),input[0].len(),"string {} is not the same length as the first string {}",
+                       String::from_utf8(vector.clone()).unwrap(),
+                       String::from_utf8(input[0].clone()).unwrap());
+            
             *counter.entry(&vector[i]).or_insert(0) += 1;
         });
 
