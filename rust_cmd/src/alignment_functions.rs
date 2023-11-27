@@ -294,7 +294,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
 
 
     match (referenceManager, ref_name) {
-        /*(Some(x), Some(y)) => {
+        (Some(x), Some(y)) => {
             let ref_id = x.reference_name_to_ref.get(y).unwrap();
             let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
 
@@ -312,7 +312,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
                                       None,
                                       scoring_function,
                                       &mut alignment_mat)
-        }*/
+        }
 
         _ => {
             perform_affine_alignment(
