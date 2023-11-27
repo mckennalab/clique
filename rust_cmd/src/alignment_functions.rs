@@ -222,7 +222,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                                     Some((x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>()))
                                 }
                                 None => {
-                                    warn!("Unable to find tag {} for read {}, dropping read", x, String::from_utf8(xx.name().clone()).unwrap());
+                                    //warn!("Unable to find tag {} for read {}, dropping read", x, String::from_utf8(xx.name().clone()).unwrap());
                                     invalid_read = true;
                                     None
                                 }
@@ -258,7 +258,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 *skipped_count.lock().unwrap() += 1;
             }
             *read_count.lock().unwrap() += 1;
-            if *read_count.lock().unwrap() % 10000 == 0 {
+            if *read_count.lock().unwrap() % 100000 == 0 {
                 let duration = start.elapsed();
                 info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
             }
