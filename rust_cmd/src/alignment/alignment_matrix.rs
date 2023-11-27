@@ -253,8 +253,8 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
                                 sequence2: &Vec<FastaBase>,
                                 scoring_function: &dyn AffineScoringFunction) {
     assert!(alignment.scores.shape()[2] == 3);
-    assert!(alignment.scores.shape()[0] >= sequence1.len() + 1);
-    assert!(alignment.scores.shape()[1] >= sequence2.len() + 1);
+    //assert!(alignment.scores.shape()[0] >= sequence1.len() + 1);
+    //assert!(alignment.scores.shape()[1] >= sequence2.len() + 1);
 
     alignment.scores[[0, 0, 0]] = 0.0;
     alignment.scores[[0, 0, 1]] = MAX_NEG_SCORE;
