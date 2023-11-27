@@ -214,24 +214,28 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         }
                     }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
 
-                let new_sorted_read_container = SortingReadSetContainer {
-                    ordered_sorting_keys: vec![],
-                    ordered_unsorted_keys: read_tags_ordered,
+                if !invalid_read {
+                    let new_sorted_read_container = SortingReadSetContainer {
+                        ordered_sorting_keys: vec![],
+                        ordered_unsorted_keys: read_tags_ordered,
 
-                    aligned_read: SortedAlignment {
-                        aligned_read: alignment.read_aligned.clone(),
-                        aligned_ref: alignment.reference_aligned,
-                        ref_name: reference_name.clone(),
-                        read_name: String::from_utf8(xx.name().clone()).unwrap(),
-                        cigar_string: alignment.cigar_string.clone(),
-                        score: alignment.score,
-                    },
-                };
-                assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
+                        aligned_read: SortedAlignment {
+                            aligned_read: alignment.read_aligned.clone(),
+                            aligned_ref: alignment.reference_aligned,
+                            ref_name: reference_name.clone(),
+                            read_name: String::from_utf8(xx.name().clone()).unwrap(),
+                            cigar_string: alignment.cigar_string.clone(),
+                            score: alignment.score,
+                        },
+                    };
+                    assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
 
-                let sender = Arc::clone(&sender);
+                    let sender = Arc::clone(&sender);
 
-                sender.lock().unwrap().send(new_sorted_read_container).unwrap();
+                    sender.lock().unwrap().send(new_sorted_read_container).unwrap();
+                } else {
+                    *skipped_count.lock().unwrap() += 1;
+                }
             } else {
                 *gap_rejected.lock().unwrap() += 1;
             }
