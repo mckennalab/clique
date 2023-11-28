@@ -265,24 +265,24 @@ pub fn validate_cigar_string(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, 
         debug!("CIGAR: {}",c.clone());
        match c {
            AlignmentTag::MatchMismatch(length) => {
-               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
-               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
+               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (M({})): {}",length, FastaBase::to_string(&reference[cigar_pos..cigar_pos + length].to_vec()));
+               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on read (M({})): {}",length, FastaBase::to_string(&read[cigar_pos..cigar_pos + length].to_vec()));
                cigar_pos += length;
            }
            Del(length) => {
                debug!("bit {}",FastaBase::to_string(&read[cigar_pos..cigar_pos + length].to_vec()));
-               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
-               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length);
+               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (D({})): {}",length, FastaBase::to_string(&reference[cigar_pos..cigar_pos + length].to_vec()));
+               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on read (D({})): {}",length, FastaBase::to_string(&read[cigar_pos..cigar_pos + length].to_vec()));
                cigar_pos += length;
            }
            AlignmentTag::Ins(length) => {
-               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length);
-               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
+               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on reference (I({})): {}",length, FastaBase::to_string(&reference[cigar_pos..cigar_pos + length].to_vec()));
+               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (I({})): {}",length, FastaBase::to_string(&read[cigar_pos..cigar_pos + length].to_vec()));
                cigar_pos += length;
            }
            AlignmentTag::SoftClip(length) => {
-               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
-               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length);
+               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (S({})): {}",length, FastaBase::to_string(&reference[cigar_pos..cigar_pos + length].to_vec()));
+               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on reference (S({})): {}",length, FastaBase::to_string(&read[cigar_pos..cigar_pos + length].to_vec()));
                cigar_pos += length;
            }
            AlignmentTag::InversionOpen => {}
