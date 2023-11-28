@@ -91,7 +91,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
             &reference_pointer.sequence_u8,
             shared_segments);
 
-        info!("read{} ref {}",String::from_utf8(consensus_reads.clone()).unwrap(),FastaBase::to_string(&reference_pointer.sequence));
+        debug!("read{} ref {}",String::from_utf8(consensus_reads.clone()).unwrap(),FastaBase::to_string(&reference_pointer.sequence));
         let new_alignment = align_string_with_anchors(&FastaBase::from_vec_u8(&consensus_reads),
                                                       &reference_pointer.sequence,
                                                       &shared_segs,
