@@ -90,8 +90,8 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
             &reference_pointer.sequence_u8,
             shared_segments);
 
-        let new_alignment = align_string_with_anchors(&reference_pointer.sequence,
-                                                      &FastaBase::from_vec_u8(&consensus_reads),
+        let new_alignment = align_string_with_anchors(&FastaBase::from_vec_u8(&consensus_reads),
+                                                      &reference_pointer.sequence,
                                                       &shared_segs,
                                                       None,
                                                       my_aff_score,
