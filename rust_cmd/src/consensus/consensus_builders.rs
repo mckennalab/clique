@@ -11,6 +11,7 @@ use counter::Counter;
 use spoa::{AlignmentEngine, Graph, AlignmentType};
 use indicatif::ProgressBar;
 use ndarray::Ix3;
+use needletail::parser::Format::Fasta;
 use rust_htslib::bam::record::{CigarString};
 use crate::alignment::alignment_matrix::{Alignment, AlignmentTag, AlignmentType as LocalAlignmentType, create_scoring_record_3d};
 use crate::alignment_functions::{create_sam_record, perform_rust_bio_alignment, setup_sam_writer, simplify_cigar_string};
@@ -90,6 +91,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
             &reference_pointer.sequence_u8,
             shared_segments);
 
+        !info("read{} ref {}",String::from_utf8(consensus_reads.clone()).unwrap(),FastaBase::to_string(&reference_pointer.sequence));
         let new_alignment = align_string_with_anchors(&FastaBase::from_vec_u8(&consensus_reads),
                                                       &reference_pointer.sequence,
                                                       &shared_segs,
