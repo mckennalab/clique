@@ -110,7 +110,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                             let output = Arc::clone(&output);
                             let mut read_count = read_count.lock().unwrap();
                             *read_count += 1;
-                            if *read_count % 1000 == 0 {
+                            if *read_count % 1000000 == 0 {
                                 let duration = start.elapsed();
                                 info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count, duration);
                             }
@@ -259,7 +259,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 *skipped_count.lock().unwrap() += 1;
             }
             *read_count.lock().unwrap() += 1;
-            if *read_count.lock().unwrap() % 100000 == 0 {
+            if *read_count.lock().unwrap() % 1000000 == 0 {
                 let duration = start.elapsed();
                 info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
             }
