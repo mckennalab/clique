@@ -8,14 +8,17 @@ use shardio::{Range, ShardReader};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use counter::Counter;
-use spoa::{AlignmentEngine,Graph,AlignmentType};
+use spoa::{AlignmentEngine, Graph, AlignmentType};
 use indicatif::ProgressBar;
+use ndarray::Ix3;
 use rust_htslib::bam::record::{CigarString};
-use crate::alignment::alignment_matrix::{AlignmentTag};
+use crate::alignment::alignment_matrix::{Alignment, AlignmentTag, AlignmentType as LocalAlignmentType, create_scoring_record_3d};
 use crate::alignment_functions::{create_sam_record, perform_rust_bio_alignment, setup_sam_writer, simplify_cigar_string};
 use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
 use rust_htslib::bam::{Writer};
+use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
+use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments};
 
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
                              output_file: &String,
@@ -23,7 +26,6 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
                              read_counts: &usize,
                              reference_manager: &ReferenceManager,
                              maximum_reads_before_downsampling: &usize) {
-
     info!("Writing consensus reads to {}", output_file);
 
     let mut writer = setup_sam_writer(output_file, reference_manager).unwrap();
@@ -35,6 +37,9 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     let mut written_buffers = 0;
     let mut processed_reads = 0;
 
+    let score = AffineScoring::default();
+    let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference_manager.longest_ref + 1) * 2, (reference_manager.longest_ref + 1) * 2, LocalAlignmentType::AFFINE, false);
+
     reader.iter_range(&Range::all()).unwrap().for_each(|x| {
         if processed_reads % 10000 == 0 {
             bar.set_position(processed_reads as u64);
@@ -42,7 +47,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
         let x = x.unwrap();
         assert_eq!(x.ordered_sorting_keys.len(), levels);
         if !(last_read.is_some() && &x.cmp(last_read.as_ref().unwrap()) == &Ordering::Equal) && buffered_reads.len() > 0 {
-            output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads);
+            output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
             written_buffers += 1;
             buffered_reads = VecDeque::new();
         }
@@ -52,7 +57,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     });
 
     if buffered_reads.len() > 0 {
-        output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads);
+        output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
         written_buffers += 1;
     }
     bar.set_position(processed_reads as u64);
@@ -62,11 +67,14 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
 fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
                                         maximum_reads_before_downsampling: &usize,
                                         writer: &mut Writer,
-                                        buffered_reads: &mut VecDeque<SortingReadSetContainer>) {
+                                        buffered_reads: &mut VecDeque<SortingReadSetContainer>,
+                                        my_aff_score: &dyn AffineScoringFunction,
+                                        mut alignment_mat: &mut Alignment<Ix3>) {
+
     let mut added_tags = HashMap::new();
     added_tags.insert((b'r', b'c'), buffered_reads.len().to_string());
 
-    added_tags.insert((b'd', b'c'), cmp::min(*maximum_reads_before_downsampling,buffered_reads.len()).to_string());
+    added_tags.insert((b'd', b'c'), cmp::min(*maximum_reads_before_downsampling, buffered_reads.len()).to_string());
 
 
     if buffered_reads.len() > 1 {
@@ -75,14 +83,24 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
         let top_ref = &consensus_reference.get(0).unwrap().clone().0;
         let reference_pointer = reference_manager.references.get(reference_manager.reference_name_to_ref.get(top_ref).unwrap()).unwrap();
+        let shared_segments = &reference_pointer.suffix_table;
 
-        // TODO: this needs to be tied to their aligner choice!!!
-        let new_alignment = perform_rust_bio_alignment(&reference_pointer.sequence, &FastaBase::from_vec_u8(&consensus_reads));
+        let shared_segs = find_greedy_non_overlapping_segments(
+            &consensus_reads,
+            &reference_pointer.sequence_u8,
+            shared_segments);
+
+        let new_alignment = align_string_with_anchors(&reference_pointer.sequence,
+                                                      &FastaBase::from_vec_u8(&consensus_reads),
+                                                      &shared_segs,
+                                                      None,
+                                                      my_aff_score,
+                                                      &mut alignment_mat);
 
         let read_names = buffered_reads.iter().map(|x| x.aligned_read.read_name.clone()).collect::<Vec<String>>();
 
         added_tags.insert((b'a', b'r'), read_names.join(","));
-        added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&new_alignment.reference_aligned,&new_alignment.read_aligned).to_string());
+        added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&new_alignment.reference_aligned, &new_alignment.read_aligned).to_string());
         added_tags.insert((b'a', b's'), new_alignment.score.to_string());
 
 
@@ -115,7 +133,6 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
         writer.write(&sam_read).unwrap();
     };
-
 }
 
 pub fn get_reference_alignment_rate(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> f64 {
@@ -135,6 +152,7 @@ pub fn get_reference_alignment_rate(reference: &Vec<FastaBase>, read: &Vec<Fasta
 
     (matches as f64) / ((matches + mismatches) as f64)
 }
+
 pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: &Vec<FastaBase>) -> CigarString {
     let mut result: Vec<AlignmentTag> = Vec::new();
 
@@ -175,7 +193,6 @@ pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downs
 }
 
 fn poa_consensus(base_sequences: Vec<Vec<u8>>) -> Vec<u8> {
-
     let mut eng = AlignmentEngine::new(AlignmentType::kNW, 5, -4, -3, -1, -3, -1);
     let mut graph = Graph::new();
 
@@ -206,10 +223,10 @@ mod tests {
     #[test]
     fn test_cigar_string() {
         let reference = FastaBase::from_string(&"CGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAA-------TATACAAG".to_string());
-        let read      = FastaBase::from_string(&"CGT-----AGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG".to_string());
+        let read = FastaBase::from_string(&"CGT-----AGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG".to_string());
         let cigar = reference_read_to_cigar_string(&reference, &read);
-        let true_cigar = CigarString(vec![Cigar::Match(3),Cigar::Del(5), Cigar::Match(38),Cigar::Ins(7),Cigar::Match(8)]);
-        assert_eq!(cigar,true_cigar);
+        let true_cigar = CigarString(vec![Cigar::Match(3), Cigar::Del(5), Cigar::Match(38), Cigar::Ins(7), Cigar::Match(8)]);
+        assert_eq!(cigar, true_cigar);
         // CGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG-----------------------------------------------------------------------------------------------------------------------------------------------------------------GTAGGAGCCGTTACCAGGATGA------AGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAACAAGCTAACGGTGCAGGATCTTGGGTTTCTGTCTCTTATTCACATCTGACGCTGCCGACGACGAGGTATAAGTGTAGATATCGGTGGTCGCCGTATCATT
         // AAACCCAAGATCCTGCACCGTTAGCTTGCGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAGGTAGGAGCCGTTACCAGGATGAAGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAACAAGCTAACGGTGCAGGATCTTGGGTTTCTGTCTCTTATTCACATCTGACGCTGCCGACGACGAGGTATAAGTGTAGATATCGGTGGTCGCCGTATCATTACAAAAGTGGGTGGGGGGGGGGGGGGGGC
         // CGTACGCTAGACATTGTGCCGCATC22222222222222TAGGAAATGACGGCTATACAAGGCATCGCGGTGTCTCGTCAATACACCTTACGGAGGCATTGGATGATAATGTCGCAAGGAGGTCTCAAGATTCTGTACCACACGTCGGCACGCGATTGAACCAATGGACAGAGGACAGGATACGTAGGATCACCAACTAGGTCATTAGGTGGAAGGTGATACGTAGGAGCCGTTACCAGGATGAACGATGAGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAANNNNNNNNNNNNNNNNNNNNNNNNNNNNCTGTCTCTTATACACATCTGACGCTGCCGACGANNNNNNNNNNGTGTAGATCTCGGTGGTCGCCGTATCATT
@@ -220,30 +237,29 @@ mod tests {
         let read1 = "ACGTACGT\0".as_bytes().to_vec();
         let read2 = "ACGTACGT\0".as_bytes().to_vec();
         let read3 = "ACGTAC-T\0".as_bytes().to_vec();
-        let vec_of_reads = vec![read1,read2, read3];
+        let vec_of_reads = vec![read1, read2, read3];
         let result = poa_consensus(vec_of_reads);
-        assert_eq!(result,"ACGTACGT".as_bytes().to_vec());
+        assert_eq!(result, "ACGTACGT".as_bytes().to_vec());
 
         let read1 = "ACGTACGT\0".as_bytes().to_vec();
         let read2 = "ACGTAC-T\0".as_bytes().to_vec();
         let read3 = "ACGTAC-T\0".as_bytes().to_vec();
-        let vec_of_reads = vec![read1,read2, read3];
+        let vec_of_reads = vec![read1, read2, read3];
         let result = poa_consensus(vec_of_reads);
-        assert_eq!(result,"ACGTAC-T".as_bytes().to_vec());
+        assert_eq!(result, "ACGTAC-T".as_bytes().to_vec());
 
         let read1 = "ACGTACGT\0".as_bytes().to_vec();
         let read2 = "AAAAAACGTAC-T\0".as_bytes().to_vec();
         let read3 = "ACGTAC-T\0".as_bytes().to_vec();
-        let vec_of_reads = vec![read1,read2, read3];
+        let vec_of_reads = vec![read1, read2, read3];
         let result = poa_consensus(vec_of_reads);
-        assert_eq!(result,"AAAAAACGTAC-T".as_bytes().to_vec());
+        assert_eq!(result, "AAAAAACGTAC-T".as_bytes().to_vec());
 
         let read1 = "ACGTACGTTTT\0".as_bytes().to_vec();
         let read2 = "AAAAAACGTAC-TTTT\0".as_bytes().to_vec();
         let read3 = "ACGTAC-T\0".as_bytes().to_vec();
-        let vec_of_reads = vec![read1,read2, read3];
+        let vec_of_reads = vec![read1, read2, read3];
         let result = poa_consensus(vec_of_reads);
-        assert_eq!(result,"AAAAAACGTAC-TTTT".as_bytes().to_vec());
-
+        assert_eq!(result, "AAAAAACGTAC-TTTT".as_bytes().to_vec());
     }
 }
