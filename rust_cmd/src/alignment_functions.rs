@@ -211,7 +211,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.1.sequence_u8);
                 let ets = extract_tagged_sequences(&read_al, &full_ref);
 
-
                 let gap_proportion = gap_proportion_per_tag(&ets);
 
                 if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {

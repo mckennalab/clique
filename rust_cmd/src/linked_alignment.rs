@@ -3,6 +3,7 @@ use std::{str, cmp};
 use crate::fasta_comparisons::DEGENERATEBASES;
 
 use std::convert::TryFrom;
+use itertools::Itertools;
 use ndarray::Ix3;
 use crate::*;
 use crate::alignment::alignment_matrix::AlignmentTag::Del;
@@ -143,6 +144,8 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
                                  my_aff_score: &dyn AffineScoringFunction,
                                  alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
 
+    debug!("ref {} read {}",FastaBase::to_string(reference),FastaBase::to_string(search_string));
+
     let mut alignment_ref: Vec<FastaBase> = Vec::new();
     let mut alignment_read: Vec<FastaBase> = Vec::new();
     let mut alignment_cigar = Vec::new();
@@ -172,14 +175,16 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
         read_alignment_last_position += read_slice.len();
         ref_alignment_last_position += ref_slice.len();
 
+        debug!("Pushing {:?}",alignment.cigar_string.clone());
         alignment_ref.extend(alignment.reference_aligned);
         alignment_read.extend(alignment.read_aligned);
-        alignment_cigar.extend(alignment.cigar_string);
+        alignment_cigar.extend(alignment.cigar_string.into_iter().rev().collect::<Vec<AlignmentTag>>());
 
         alignment_ref.extend_from_slice(&reference[overlap.ref_start..overlap.ref_start+overlap.length]);
         alignment_read.extend_from_slice(&search_string[overlap.search_start..overlap.search_start+overlap.length]);
         // now add the matching segment
 
+        debug!("Pushing {:?}",AlignmentTag::MatchMismatch(overlap.length));
         read_alignment_last_position += overlap.length;
         ref_alignment_last_position += overlap.length;
         alignment_cigar.push(AlignmentTag::MatchMismatch(overlap.length));
@@ -203,13 +208,18 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
                     perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, None)
                 }
             };
+            debug!("Pushing {:?}",alignment.cigar_string.clone());
+
             alignment_ref.extend(alignment.reference_aligned);
             alignment_read.extend(alignment.read_aligned);
-            alignment_cigar.extend(alignment.cigar_string);
+            alignment_cigar.extend(alignment.cigar_string.into_iter().rev().collect::<Vec<AlignmentTag>>());
+
         } else if ref_alignment_last_position < reference.len() {
             let gap_len = reference.len() - ref_alignment_last_position;
             alignment_ref.extend(reference[ref_alignment_last_position..reference.len()].to_vec());
             alignment_read.extend(vec![FASTA_UNSET; gap_len]);
+            debug!("Pushing {:?}",Del(gap_len));
+
             alignment_cigar.push(Del(gap_len));
         }
     } else {
@@ -227,18 +237,79 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
             };
         alignment_ref.extend(alignment.reference_aligned);
         alignment_read.extend(alignment.read_aligned);
-        alignment_cigar.extend(alignment.cigar_string);
+        debug!("Pushing {:?}",alignment.cigar_string.clone());
+        alignment_cigar.extend(alignment.cigar_string.into_iter().rev().collect::<Vec<AlignmentTag>>());
     }
+
+    let score = calculate_score_from_strings(&alignment_ref, &alignment_read, my_aff_score);
+    validate_cigar_string(&alignment_ref, &alignment_read, &alignment_cigar);
+
     AlignmentResult {
         reference_aligned: alignment_ref,
         read_aligned: alignment_read,
         cigar_string: alignment_cigar,
         path: vec![],
-        score: 0.0,
+        score,
         reference_start: 0,
         read_start: 0,
         bounding_box: None,
     }
+}
+
+pub fn validate_cigar_string(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, cigars: &Vec<AlignmentTag>) {
+    assert_eq!(reference.len(),read.len());
+    debug!("CIGARS: {:?}",cigars);
+
+    let mut cigar_pos = 0;
+    cigars.iter().for_each(|c| {
+        debug!("CIGAR: {}",c.clone());
+       match c {
+           AlignmentTag::MatchMismatch(length) => {
+               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
+               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
+               cigar_pos += length;
+           }
+           Del(length) => {
+               debug!("bit {}",FastaBase::to_string(&read[cigar_pos..cigar_pos + length].to_vec()));
+               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
+               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length);
+               cigar_pos += length;
+           }
+           AlignmentTag::Ins(length) => {
+               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length);
+               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
+               cigar_pos += length;
+           }
+           AlignmentTag::SoftClip(length) => {
+               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0);
+               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length);
+               cigar_pos += length;
+           }
+           AlignmentTag::InversionOpen => {}
+           AlignmentTag::InversionClose => {}
+       }
+    });
+    assert_eq!(cigar_pos,reference.len());
+}
+
+pub fn calculate_score_from_strings(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, my_aff_score: &dyn AffineScoringFunction) -> f64 {
+    assert_eq!(reference.len(),read.len());
+    let mut in_indel = false;
+    reference.iter().zip(read.iter()).map(|(a,b)| {
+        match (a,b, in_indel) {
+            (a, b, _) if !FASTA_UNSET.identity(a) && FASTA_UNSET.identity(b) => {
+                in_indel = false;
+                my_aff_score.match_mismatch(a, b)
+            },
+            (_, _, true) => {
+                my_aff_score.gap_extend()
+            },
+            (_, _, false) => {
+                in_indel = true;
+                my_aff_score.gap_open()
+            },
+        }
+    }).sum()
 }
 
 pub fn slice_for_alignment(read: &Vec<FastaBase>, read_start: usize, read_stop: usize) -> Vec<FastaBase> {
