@@ -258,7 +258,7 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
 
 pub fn validate_cigar_string(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, cigars: &Vec<AlignmentTag>) {
     assert_eq!(reference.len(),read.len());
-    println!("CIGARS: {:?}",cigars);
+    info!("CIGARS: {:?}",cigars);
 
     let mut cigar_pos = 0;
     cigars.iter().for_each(|c| {
@@ -313,7 +313,7 @@ pub fn calculate_score_from_strings(reference: &Vec<FastaBase>, read: &Vec<Fasta
 }
 
 pub fn slice_for_alignment(read: &Vec<FastaBase>, read_start: usize, read_stop: usize) -> Vec<FastaBase> {
-    assert!(read_stop <= read.len(),"Read position requested {} when our length is only {}",read_stop,read.len());
+    assert!(read_stop <= read.len(),"Read position requested {} when our length is only {} for read {} ",read_stop,read.len(), FastaBase::to_string(read));
     read[read_start..read_stop].to_vec()
 }
 
