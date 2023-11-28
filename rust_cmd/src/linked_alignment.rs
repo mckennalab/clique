@@ -258,7 +258,7 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
 
 pub fn validate_cigar_string(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, cigars: &Vec<AlignmentTag>) {
     assert_eq!(reference.len(),read.len());
-    info!("CIGARS: {:?}",cigars);
+    debug!("CIGARS: {:?}",cigars);
 
     let mut cigar_pos = 0;
     cigars.iter().for_each(|c| {
