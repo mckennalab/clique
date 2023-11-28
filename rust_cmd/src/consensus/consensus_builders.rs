@@ -180,7 +180,7 @@ pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downs
     let max_length = max_length.iter().max().unwrap();
 
     let mut base_sequences = sequences.iter().map(|n| {
-        let mut y = FastaBase::to_vec_u8(&n.aligned_read.aligned_read);
+        let mut y = FastaBase::to_vec_u8(&FastaBase::strip_gaps(&n.aligned_read.aligned_read));
         y.push(b'\0');
         y
     }).collect::<Vec<Vec<u8>>>();
