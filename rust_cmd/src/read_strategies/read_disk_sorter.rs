@@ -51,15 +51,21 @@ impl PartialOrd for SortingReadSetContainer {
 /// you could argue alphabetical, but we simply sort on their underlying bit encoding
 impl Ord for SortingReadSetContainer {
     fn cmp(&self, other: &Self) -> Ordering {
-        for (a, b) in self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()) {
-            assert_eq!(a.0, b.0, "SortingReadSetContainer: mismatched sorting keys");
-            if a.1 > b.1 {
-                return Ordering::Greater;
-            } else if a.1 < b.1 {
-                return Ordering::Less;
+        match self.aligned_read.ref_name.cmp(&other.aligned_read.ref_name) {
+            Ordering::Less => Ordering::Less,
+            Ordering::Equal => {
+                for (a, b) in self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()) {
+                    assert_eq!(a.0, b.0, "SortingReadSetContainer: mismatched sorting keys");
+                    if a.1 > b.1 {
+                        return Ordering::Greater;
+                    } else if a.1 < b.1 {
+                        return Ordering::Less;
+                    }
+                }
+                Ordering::Equal
             }
+            Ordering::Greater => Ordering::Greater,
         }
-        Ordering::Equal
     }
 }
 
