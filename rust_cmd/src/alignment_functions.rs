@@ -195,7 +195,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     // keep track of timing for progress output
     let start = Instant::now();
 
-    assert_eq!(rm.references.len(), 1);
     let read_count = Arc::new(Mutex::new(0 as usize));
     let skipped_count = Arc::new(Mutex::new(0 as usize));
     let gap_rejected = Arc::new(Mutex::new(0 as usize));
