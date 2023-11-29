@@ -107,7 +107,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         added_tags.insert((b'a', b's'), new_alignment.score.to_string());
 
         let bin = reference_to_sam_bin.get(&reference_pointer.name).unwrap();
-        println!("TV2 READ {} Ref {} bin {}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin);
+        //println!("TV2 READ {} Ref {} bin {}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin);
         let mut sam_read = create_sam_record(bin,
                                          read_names.get(0).clone().unwrap(),
                                          &new_alignment.read_aligned,
