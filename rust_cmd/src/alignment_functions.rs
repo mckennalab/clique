@@ -35,7 +35,9 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
-    let output_file = setup_sam_writer(&output.to_str().unwrap().to_string(), rm).expect("Unable to create output bam file");
+
+    let (reference_mapper,output_file) = setup_sam_writer(&output.to_str().unwrap().to_string(), rm);
+    let mut output_file = output_file.expect("Unable to create output bam file");
 
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
                                           Some(PathBuf::from(&read2)),
@@ -637,20 +639,25 @@ pub fn matching_read_bases_prop(read: &Vec<FastaBase>, reference: &Vec<FastaBase
     }
 }
 
-pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) -> Result<bam::Writer, rust_htslib::errors::Error> {
+pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) -> (HashMap<Vec<u8>,u16>, Result<bam::Writer, rust_htslib::errors::Error>) {
     let mut header = bam::Header::new();
-    reference_manger.references.iter().for_each(|reference| {
+
+    let mut reference_to_bin = HashMap::new();
+
+    reference_manger.references.iter().enumerate().for_each(|(index,reference)| {
         let mut header_record = bam::header::HeaderRecord::new(b"SQ");
         header_record.push_tag(b"SN", String::from_utf8(reference.1.name.clone()).unwrap());
         header_record.push_tag(b"LN", &reference.1.sequence.len());
         header.push_record(&header_record);
+        reference_to_bin.insert(reference.1.name.clone(),index as u16);
     });
 
-    bam::Writer::from_path(&filename, &header, bam::Format::Bam)
+    (reference_to_bin,bam::Writer::from_path(&filename, &header, bam::Format::Bam))
 }
 
 
 pub fn create_sam_record(
+    reference_bin: &u16,
     read_name: &str,
     read_seq: &Vec<FastaBase>,
     reference_aligned_seq: &Vec<FastaBase>,
@@ -658,6 +665,7 @@ pub fn create_sam_record(
     cigar_string: &CigarString,
     extract_capture_tags: &bool,
     additional_tags: HashMap<(u8, u8), String>) -> Record {
+
     let mut record = Record::new();
 
     let seq = FastaBase::to_vec_u8_strip_gaps(&read_seq);
@@ -666,7 +674,7 @@ pub fn create_sam_record(
     let quals = vec![255 as u8; seq.len()];
 
     record.set(read_name.as_bytes(), Some(&cigar_string), &seq.as_slice(), &quals.as_slice());
-
+    record.set_bin(*reference_bin);
     additional_tags.iter().for_each(|(x, y)| {
         record.push_aux(vec![x.0, x.1].as_slice(), Aux::String(y)).unwrap();
     });

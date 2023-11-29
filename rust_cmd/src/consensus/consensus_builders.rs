@@ -28,7 +28,8 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
                              maximum_reads_before_downsampling: &usize) {
     info!("Writing consensus reads to {}", output_file);
 
-    let mut writer = setup_sam_writer(output_file, reference_manager).unwrap();
+    let  (mut reference_to_bin, mut writer) = setup_sam_writer(output_file, reference_manager);
+    let mut writer = writer.unwrap();
 
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
@@ -47,7 +48,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
         let x = x.unwrap();
         assert_eq!(x.ordered_sorting_keys.len(), levels);
         if !(last_read.is_some() && &x.cmp(last_read.as_ref().unwrap()) == &Ordering::Equal) && buffered_reads.len() > 0 {
-            output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
+            output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
             written_buffers += 1;
             buffered_reads = VecDeque::new();
         }
@@ -57,7 +58,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     });
 
     if buffered_reads.len() > 0 {
-        output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
+        output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
         written_buffers += 1;
     }
     bar.set_position(processed_reads as u64);
@@ -65,6 +66,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
 }
 
 fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
+                                        reference_to_sam_bin: &HashMap<Vec<u8>,u16>,
                                         maximum_reads_before_downsampling: &usize,
                                         writer: &mut Writer,
                                         buffered_reads: &mut VecDeque<SortingReadSetContainer>,
@@ -104,8 +106,9 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&new_alignment.reference_aligned, &new_alignment.read_aligned).to_string());
         added_tags.insert((b'a', b's'), new_alignment.score.to_string());
 
-
-        let sam_read = create_sam_record(read_names.get(0).clone().unwrap(),
+        let bin = reference_to_sam_bin.get(&reference_pointer.name).unwrap();
+        let sam_read = create_sam_record(bin,
+                                         read_names.get(0).clone().unwrap(),
                                          &new_alignment.read_aligned,
                                          &new_alignment.reference_aligned,
                                          &reference_pointer.sequence_u8,
@@ -125,8 +128,10 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
         println!("TV READ {} Ref {} ",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone());
 
+        let bin = reference_to_sam_bin.get(single_read.aligned_read.ref_name.as_bytes()).unwrap();
 
-        let sam_read = create_sam_record(single_read.aligned_read.read_name.as_str(),
+        let sam_read = create_sam_record(bin,
+                                         single_read.aligned_read.read_name.as_str(),
                                          &single_read.aligned_read.aligned_read,
                                          &single_read.aligned_read.aligned_ref,
                                          original_reference,
