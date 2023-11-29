@@ -107,7 +107,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         added_tags.insert((b'a', b's'), new_alignment.score.to_string());
 
         let bin = reference_to_sam_bin.get(&reference_pointer.name).unwrap();
-        let sam_read = create_sam_record(bin,
+        let mut sam_read = create_sam_record(bin,
                                          read_names.get(0).clone().unwrap(),
                                          &new_alignment.read_aligned,
                                          &new_alignment.reference_aligned,
@@ -116,6 +116,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
                                          &true,
                                          added_tags);
 
+        sam_read.set_bin(*bin);
         writer.write(&sam_read).unwrap();
     } else {
         let single_read = buffered_reads.get(0).unwrap();
@@ -130,7 +131,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
         let bin = reference_to_sam_bin.get(single_read.aligned_read.ref_name.as_bytes()).unwrap();
 
-        let sam_read = create_sam_record(bin,
+        let mut sam_read = create_sam_record(bin,
                                          single_read.aligned_read.read_name.as_str(),
                                          &single_read.aligned_read.aligned_read,
                                          &single_read.aligned_read.aligned_ref,
@@ -138,6 +139,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
                                          &single_read.aligned_read.to_cigar_string(),
                                          &true,
                                          added_tags);
+        sam_read.set_bin(*bin);
 
         writer.write(&sam_read).unwrap();
     };
