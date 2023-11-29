@@ -1,10 +1,10 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 use std::str;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
-use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment, SharedSegments};
+use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
 use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, stretch_sequence_to_alignment};
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment};
@@ -96,7 +96,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                                          &my_aff_score,
                                          &my_score,
                                          inversions,
-                                         *max_reference_multiplier,
+                                         *max_reference_multiplier as f64,
                                          *min_read_length);
 
             match aligned {
@@ -128,6 +128,8 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
     });
 }
 
+type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
+
 pub fn fast_align_reads(_use_capture_sequences: &bool,
                         read_structure: &SequenceLayoutDesign,
                         _only_output_captured_ref: &bool,
@@ -135,49 +137,65 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         rm: &ReferenceManager,
                         output: &Path,
                         max_reference_multiplier: &f64,
-                        _min_read_length: &usize,
+                        min_read_length: &usize,
                         read1: &String,
                         read2: &String,
                         index1: &String,
                         index2: &String,
                         max_gaps_proportion: &f64,
-                        threads: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
-    let read_iterator = ReadIterator::new(PathBuf::from(&read1),
-                                          Some(PathBuf::from(&read2)),
-                                          Some(PathBuf::from(&index1)),
-                                          Some(PathBuf::from(&index2)));
-
-    let read_iterator = MergedReadSequence::new(read_iterator, read_structure);
+                        threads: &usize,
+                        inversions: &bool) -> (usize, ShardReader<SortingReadSetContainer>) {
+    let read_iterator = MergedReadSequence::new(ReadIterator::new(PathBuf::from(&read1),
+                                                                  Some(PathBuf::from(&read2)),
+                                                                  Some(PathBuf::from(&index1)),
+                                                                  Some(PathBuf::from(&index2))), read_structure);
 
     let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&output, 32,
                                                                                     256,
                                                                                     1 << 16).unwrap();
 
 
-    type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
+    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1) * 2, (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
 
+    let sender = Arc::new(Mutex::new(sharded_output.get_sender()));
+
+
+    let sorted_tags = get_sorting_order(read_structure);
+
+
+    // setup local thread-safe storage for our alignment matricies
     lazy_static! {
         static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());
     }
     thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
 
-    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1) * 2, (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
-
-    let sender = Arc::new(Mutex::new(sharded_output.get_sender()));
-
-    let mut sorting_order = read_structure.umi_configurations.iter().map(|x| x.1.clone()).collect::<Vec<UMIConfiguration>>();
-    sorting_order.sort_by(|a, b| a.order.cmp(&b.order));
-    let sorted_tags = sorting_order.iter().map(|x| x.symbol).collect::<Vec<char>>();
-
     // setup our thread pool
     rayon::ThreadPoolBuilder::new().num_threads(*threads).build_global().unwrap();
 
+
+    let my_score = InversionScoring {
+        match_score: 9.0,
+        mismatch_score: -21.0,
+        gap_open: -25.0,
+        gap_extend: -1.0,
+        inversion_penalty: -40.0,
+        min_inversion_length: 20,
+    };
+
+    let my_aff_score = AffineScoring {
+        match_score: 10.0,
+        mismatch_score: -9.0,
+        special_character_score: 9.0,
+        gap_open: -20.0,
+        gap_extend: -1.0,
+        final_gap_multiplier: 1.0,
+
+    };
+
+    // keep track of timing for progress output
     let start = Instant::now();
 
     assert_eq!(rm.references.len(), 1);
-    let reference_seq = rm.references.iter().next().unwrap();
-    let reference_bases = FastaBase::from_vec_u8_default_ns(&reference_seq.1.sequence_u8);
-    let reference_name = String::from_utf8(reference_seq.1.name.clone()).unwrap();
     let read_count = Arc::new(Mutex::new(0 as usize));
     let skipped_count = Arc::new(Mutex::new(0 as usize));
     let gap_rejected = Arc::new(Mutex::new(0 as usize));
@@ -190,74 +208,61 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 STORE_CLONES.lock().unwrap().push(arc_mtx.clone());
             }
 
-            if (xx.seq().len() as f64) < ((*max_reference_multiplier) * reference_bases.len() as f64) {
-                let forward_oriented_seq = if !read_structure.known_strand {
-                    let orientation = orient_by_longest_segment(&xx.seq(), &reference_seq.1.sequence_u8, &reference_seq.1.suffix_table).0;
-                    if orientation {
-                        xx.seq().clone()
-                    } else {
-                        reverse_complement(&xx.seq())
-                    }
-                } else {
-                    xx.seq().clone()
-                };
+            let aligned = best_reference(&xx.seq(),
+                                         &rm.references,
+                                         read_structure,
+                                         &mut local_alignment.as_mut().unwrap(),
+                                         &my_aff_score,
+                                         &my_score,
+                                         inversions,
+                                         *max_reference_multiplier,
+                                         *min_read_length);
 
-                let alignment = align_using_selected_aligner(read_structure, rm, &reference_seq.1.name, &reference_bases, &forward_oriented_seq, &mut local_alignment.as_mut().unwrap());
-
-                let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
-                let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
-                //println!("Alignment results: {} {}",FastaBase::to_string(&alignment.read_aligned),FastaBase::to_string(&alignment.reference_aligned));
-
-                let full_ref = stretch_sequence_to_alignment(&ref_al, &reference_seq.1.sequence_u8);
-                let ets = extract_tagged_sequences(&read_al, &full_ref);
-
-                let gap_proportion = gap_proportion_per_tag(&ets);
-
-                if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
-                    let mut invalid_read = false;
-                    let read_tags_ordered = VecDeque::from(sorted_tags.iter().
-                        map(|x| {
-                            let ets_hit = ets.get(&x.to_string().as_bytes()[0]);
-                            match ets_hit {
-                                Some(e) => {
-                                    Some((x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>()))
-                                }
-                                None => {
-                                    //warn!("Unable to find tag {} for read {}, dropping read", x, String::from_utf8(xx.name().clone()).unwrap());
-                                    invalid_read = true;
-                                    None
-                                }
-                            }
-                        }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
-
-                    if !invalid_read {
-                        let new_sorted_read_container = SortingReadSetContainer {
-                            ordered_sorting_keys: vec![],
-                            ordered_unsorted_keys: read_tags_ordered,
-
-                            aligned_read: SortedAlignment {
-                                aligned_read: alignment.read_aligned.clone(),
-                                aligned_ref: alignment.reference_aligned,
-                                ref_name: reference_name.clone(),
-                                read_name: String::from_utf8(xx.name().clone()).unwrap(),
-                                cigar_string: alignment.cigar_string.clone(),
-                                score: alignment.score,
-                            },
-                        };
-                        assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
-
-                        let sender = Arc::clone(&sender);
-
-                        sender.lock().unwrap().send(new_sorted_read_container).unwrap();
-                    } else {
-                        *skipped_count.lock().unwrap() += 1;
-                    }
-                } else {
-                    *gap_rejected.lock().unwrap() += 1;
+            match aligned {
+                None | Some((None, _, _)) => {
+                    warn!("Unable to create alignment for read {}",String::from_utf8(xx.name().clone()).unwrap());
                 }
-            } else {
-                *skipped_count.lock().unwrap() += 1;
-            }
+                Some((Some(alignment), ref_seq, ref_name)) => {
+                    let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
+                    let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
+
+                    let full_ref = stretch_sequence_to_alignment(&ref_al, &ref_seq);
+                    let ets = extract_tagged_sequences(&read_al, &full_ref);
+
+                    let gap_proportion = gap_proportion_per_tag(&ets);
+
+                    if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
+                        let (invalid_read,read_tags_ordered) = extract_tag_sequences(&sorted_tags, ets);
+
+                        if !invalid_read {
+                            let new_sorted_read_container = SortingReadSetContainer {
+                                ordered_sorting_keys: vec![], // for future use
+                                ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
+
+                                aligned_read: SortedAlignment {
+                                    aligned_read: alignment.read_aligned.clone(),
+                                    aligned_ref: alignment.reference_aligned,
+                                    ref_name: String::from_utf8(ref_name.clone()).unwrap(),
+                                    read_name: String::from_utf8(xx.name().clone()).unwrap(),
+                                    cigar_string: alignment.cigar_string.clone(),
+                                    score: alignment.score,
+                                },
+                            };
+
+                            // sanity check that we have the right number of tags
+                            assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
+
+                            let sender = Arc::clone(&sender);
+                            sender.lock().unwrap().send(new_sorted_read_container).unwrap();
+                        } else {
+                            *skipped_count.lock().unwrap() += 1;
+                        }
+                    } else {
+                        *gap_rejected.lock().unwrap() += 1;
+                    }
+                }
+            };
+
             *read_count.lock().unwrap() += 1;
             if *read_count.lock().unwrap() % 1000000 == 0 {
                 let duration = start.elapsed();
@@ -270,10 +275,36 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     sharded_output.finish().unwrap();
 
     let final_count = (read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone()) - gap_rejected.lock().unwrap().clone();
-    info!("Aligned {} reads; {} gap-rejected and {} skipped for being longer than {}", final_count, gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),(*max_reference_multiplier) * reference_bases.len() as f64,);
+    info!("Aligned {} reads; {} gap-rejected and {} skipped for being longer than {} their reference size", final_count, gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),*max_reference_multiplier);
     (final_count, ShardReader::open(output).unwrap())
 }
 
+fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {
+    let mut invalid_read = false;
+    let queue = VecDeque::from(sorted_tags.iter().
+        map(|x| {
+            let ets_hit = ets.get(&x.to_string().as_bytes()[0]);
+            match ets_hit {
+                Some(e) => {
+                    Some((x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>()))
+                }
+                None => {
+                    invalid_read = true;
+                    None
+                }
+            }
+        }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
+    (invalid_read,queue)
+}
+
+fn get_sorting_order(read_structure: &SequenceLayoutDesign) -> Vec<char> {
+    let mut sorting_order = read_structure.umi_configurations.iter().map(|x| x.1.clone()).collect::<Vec<UMIConfiguration>>();
+    sorting_order.sort_by(|a, b| a.order.cmp(&b.order));
+    let sorted_tags = sorting_order.iter().map(|x| x.symbol).collect::<Vec<char>>();
+    sorted_tags
+}
+
+#[allow(dead_code)]
 pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
                                     reference_manager: &ReferenceManager,
                                     reference_name: &Vec<u8>,
@@ -283,7 +314,7 @@ pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
     match &read_structure.aligner {
         None => {
             let score = AffineScoring::default();
-            align_two_strings_passed_matrix(&reference_bases, &xx, &score, false, Some(reference_name), Some(reference_manager), alignment_mat)
+            align_two_strings_passed_matrix(&reference_bases, &xx, &score, Some(reference_name), Some(reference_manager), alignment_mat)
             //perform_rust_bio_alignment(&reference_bases, &xx) // current default
         }
         Some(x) => {
@@ -302,8 +333,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
                          scoring_function: &dyn AffineScoringFunction,
                          local: bool,
                          ref_name: Option<&Vec<u8>>,
-                         referenceManager: Option<&ReferenceManager>) -> AlignmentResult {
-
+                         reference_manager: Option<&ReferenceManager>) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
         rev_comp_read2.len() + 1,
@@ -311,7 +341,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
         local);
 
 
-    match (referenceManager, ref_name) {
+    match (reference_manager, ref_name) {
         (Some(x), Some(y)) => {
             let ref_id = x.reference_name_to_ref.get(y).unwrap();
             let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
@@ -350,15 +380,14 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
 }
 
 
+#[allow(dead_code)]
 pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
                                        read2_seq: &Vec<FastaBase>,
                                        scoring_function: &dyn AffineScoringFunction,
-                                       local: bool,
                                        ref_name: Option<&Vec<u8>>,
-                                       referenceManager: Option<&ReferenceManager>,
+                                       reference_manager: Option<&ReferenceManager>,
                                        alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
-
-    match (referenceManager, ref_name) {
+    match (reference_manager, ref_name) {
         (Some(x), Some(y)) => {
             let ref_id = x.reference_name_to_ref.get(y).unwrap();
             let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
@@ -404,7 +433,7 @@ pub fn best_reference(read: &Vec<FastaBase>,
                       my_aff_score: &AffineScoring,
                       my_score: &InversionScoring,
                       use_inversions: &bool,
-                      max_reference_multiplier: usize,
+                      max_reference_multiplier: f64,
                       min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
     match references.len() {
         0 => {
@@ -446,7 +475,7 @@ pub fn alignment(x: &Vec<FastaBase>,
                  _my_aff_score: &AffineScoring,
                  _my_score: &InversionScoring,
                  _use_inversions: &bool,
-                 max_reference_multiplier: usize,
+                 max_reference_multiplier: f64,
                  min_read_length: usize) -> Option<AlignmentResult> {
     let forward_oriented_seq = if !read_structure.known_strand {
         let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
@@ -459,7 +488,7 @@ pub fn alignment(x: &Vec<FastaBase>,
         x.clone()
     };
 
-    if forward_oriented_seq.len() > reference.sequence.len() * max_reference_multiplier || forward_oriented_seq.len() < min_read_length {
+    if forward_oriented_seq.len() > f64::round(reference.sequence.len() as f64 * max_reference_multiplier) as usize || forward_oriented_seq.len() < min_read_length {
         warn!("Dropping read of length {}",forward_oriented_seq.len());
         None
     } else {

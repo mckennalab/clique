@@ -462,7 +462,6 @@ mod tests {
     use std::io::BufRead;
     use std::path::Path;
     use std::time::Instant;
-    use petgraph::visit::Walker;
     use rand::distributions::Slice;
     use crate::utils::base_utils::edit_distance;
     use super::*;
@@ -506,7 +505,7 @@ mod tests {
     // build a string of 10 vowels
         let vowel_string: String = rng
             .sample_iter(&vowels_dist)
-            .take(10)
+            .take(*length)
             .collect();
         vowel_string.into_bytes()
     }
@@ -527,12 +526,7 @@ mod tests {
                      String::from_utf8(vec_of_vecs.get(1).unwrap().clone()).unwrap());
 
             let collection = InputList { strings: vec_of_vecs, max_dist: 1 };
-            //let graph = input_list_to_graph(&collection, string_distance_no_break, false);
-            //assert_eq!(6, graph.graph.edge_count()); // paths are
-            //println!("string_distance_break high/low {}", now.elapsed().as_millis());
-
-            let now = Instant::now();
-            let graph = vantage_point_string_graph(&collection, false);
+            let _graph = vantage_point_string_graph(&collection, false);
             println!("string_distance_break high/low {}", now.elapsed().as_millis());
         }
     }
@@ -578,13 +572,6 @@ mod tests {
         process_cliques(&graph);
     }
 
-    /*
-    #[test]
-    fn test_10x_whitelist() {
-        let valid_list = load_knownlist(&"test_data/3M-february-2018.txt.gz".to_string());
-
-    }*/
-
     #[test]
     fn test_edit_distance() {
         let str1 = vec![b'A', b'C', b'G', b'T', b'A'];
@@ -626,7 +613,7 @@ mod tests {
         }
     }
 
-    // #[test] -- a test for optimization
+    #[test]
     fn test_sift4_vs_string_dist() {
         let low_match = "AAAAAAAA";
         let low_match_bytes = low_match.to_string().into_bytes();
@@ -635,7 +622,6 @@ mod tests {
         let close_match = "AATAAAAA";
         let close_match_bytes = close_match.to_string().into_bytes();
 
-        use std::time::Instant;
         let iterations = 1000000;
         for _i in 0..4 {
             let now = Instant::now();

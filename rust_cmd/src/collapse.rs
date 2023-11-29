@@ -24,7 +24,8 @@ pub fn collapse(reference: &String,
                 read2: &String,
                 index1: &String,
                 index2: &String,
-                threads: &usize) {
+                threads: &usize,
+                find_inversions: &bool) {
 
     // load up the reference files
     let rm = ReferenceManager::from(&reference, 12, 6);
@@ -53,7 +54,8 @@ pub fn collapse(reference: &String,
                                index1,
                                index2,
                                &0.2,
-                               threads);
+                               threads,
+                               find_inversions);
 
     info!("Sorting the aligned reads");
 
@@ -95,7 +97,7 @@ fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
 
         // for each input string
         input.iter().for_each(|vector| {
-            assert_eq!(vector.len(),input[0].len(),"string {} is not the same length as the first string {}",
+            assert_eq!(vector.len(), input[0].len(), "string {} is not the same length as the first string {}",
                        String::from_utf8(vector.clone()).unwrap(),
                        String::from_utf8(input[0].clone()).unwrap());
 
@@ -262,7 +264,6 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                              reader: &ShardReader<SortingReadSetContainer>,
                              tag: &UMIConfiguration,
                              iteration: &usize, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
-
     info!("Sorting degenerate level {}",tag.symbol);
     // create a new output
     let mut all_read_count: usize = 0;

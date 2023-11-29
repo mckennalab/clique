@@ -124,7 +124,8 @@ enum Cmd {
         #[clap(long, default_value = "NONE")]
         index2: String,
 
-
+        #[clap(long)]
+        find_inversions: bool,
     },
     Align {
         #[clap(long)]
@@ -193,7 +194,8 @@ fn main() {
             read1,
             read2,
             index1,
-            index2
+            index2,
+            find_inversions
         } => {
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
 
@@ -209,7 +211,8 @@ fn main() {
                      read2,
                      index1,
                      index2,
-                     threads);
+                     threads,
+                     &find_inversions);
         }
 
         Cmd::Align {

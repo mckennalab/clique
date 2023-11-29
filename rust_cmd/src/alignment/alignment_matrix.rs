@@ -1047,7 +1047,7 @@ mod tests {
         let now = Instant::now();
         for _i in 0..iterations {
             perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
-            let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
+            let _results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
         }
         let elapsed = now.elapsed();
         println!("Elapsed affine: {:.2?}", elapsed);

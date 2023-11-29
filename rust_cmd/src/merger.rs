@@ -1,4 +1,3 @@
-use bio::bio_types::sequence::SequenceRead;
 use bio::io::fastq::Record;
 use needletail::Sequence;
 use crate::alignment::fasta_bit_encoding::{encoding_to_u8, FASTA_UNSET, FastaBase, reverse_complement};
@@ -188,22 +187,17 @@ lazy_static! {
 pub struct MergedReadSequence {
     underlying_iterator: ReadIterator,
     read_structure: SequenceLayoutDesign,
-    read_content: (bool, bool, bool, bool), // a shortcut to save figuring this out for every iteration
 }
 
 impl MergedReadSequence {
     pub fn new(iterator: ReadIterator, read_structure: &SequenceLayoutDesign) -> MergedReadSequence {
         MergedReadSequence {
             underlying_iterator: iterator,
-            read_content: (MergedReadSequence::contains_read1(read_structure),
-                           MergedReadSequence::contains_read2(read_structure),
-                           MergedReadSequence::contains_index1(read_structure),
-                           MergedReadSequence::contains_index2(read_structure)),
             read_structure: read_structure.clone(),
         }
     }
 
-    // these functions are very dump, but save us from using a macro crate to do this for us
+    // these functions are very dumb but save us from using a macro crate to do this for us
     fn contains_read1(read_structure: &SequenceLayoutDesign) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::READ1 { chain_align: _, orientation: _ } => true,
@@ -532,16 +526,16 @@ mod tests {
         str1.as_bytes().iter().zip(str2.as_bytes().iter()).for_each(|(x, y)| {
             match (x, y) {
                 (x, y) if x == y => {
-                    let xUpper = x.to_ascii_uppercase();
-                    let yUpper = y.to_ascii_uppercase();
-                    res1.push(xUpper);
-                    res2.push(yUpper);
+                    let x_upper = x.to_ascii_uppercase();
+                    let y_upper = y.to_ascii_uppercase();
+                    res1.push(x_upper);
+                    res2.push(y_upper);
                 }
                 (x, y) if x != y => {
-                    let xUpper = x.to_ascii_lowercase();
-                    let yUpper = y.to_ascii_lowercase();
-                    res1.push(xUpper);
-                    res2.push(yUpper);
+                    let x_upper = x.to_ascii_lowercase();
+                    let y_upper = y.to_ascii_lowercase();
+                    res1.push(x_upper);
+                    res2.push(y_upper);
                 }
                 _ => {
                     panic!("what?");
@@ -565,7 +559,7 @@ mod tests {
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         let real = "ATCTACACTCTTTCCCTACACGACGCTCTTCCGATCTCGAATGTCAAAGTCAATGCGTTAGGGTTTCTTATATGGTGGTTTCTAACATTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACACGTCTGAACTCCAGTCACATG";
         println!("{}\n{}", FastaBase::to_string(&merged.read_bases), real);
-        zip_and_convert(&FastaBase::to_string(&merged.read_bases), &String::from(real.clone()));
+        zip_and_convert(&FastaBase::to_string(&merged.read_bases), &String::from(real));
         assert_eq!(merged.read_bases, str_to_fasta_vec(real));
     }
 

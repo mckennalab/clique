@@ -183,7 +183,7 @@ mod tests {
         let rm = ReferenceManager::from(&order_fastas,15, 5 );
         assert_eq!(rm.references.len(),2);
 
-        for (reference_index,kmers) in rm.unique_kmers.reference_to_kmer.iter().enumerate() {
+        for (_reference_index,kmers) in rm.unique_kmers.reference_to_kmer.iter().enumerate() {
             println!("kmers {} {}",String::from_utf8(kmers.0.name.clone()).unwrap(),kmers.1.iter().map(|c| String::from_utf8(c.clone()).unwrap()).join(","));
             assert!(!kmers.1.contains(&"TCACCTATTAGCGGCTAA".as_bytes().to_vec()));
             if kmers.0.name == "cas_tag".as_bytes().to_vec() {

@@ -226,7 +226,7 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
         let alignment=
             match my_inv_score {
                 Some(x) => {
-                    inversion_alignment(&reference, &search_string, my_inv_score.unwrap(), my_aff_score,true)
+                    inversion_alignment(&reference, &search_string, x, my_aff_score,true)
                 }
                 None => {
                     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, search_string.len() + 1, AlignmentType::AFFINE, false);

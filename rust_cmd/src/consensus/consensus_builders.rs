@@ -3,7 +3,7 @@ extern crate spoa;
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
-use std::ffi::{CStr, CString};
+use std::ffi::{CString};
 use shardio::{Range, ShardReader};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
@@ -11,10 +11,9 @@ use counter::Counter;
 use spoa::{AlignmentEngine, Graph, AlignmentType};
 use indicatif::ProgressBar;
 use ndarray::Ix3;
-use needletail::parser::Format::Fasta;
 use rust_htslib::bam::record::{CigarString};
 use crate::alignment::alignment_matrix::{Alignment, AlignmentTag, AlignmentType as LocalAlignmentType, create_scoring_record_3d};
-use crate::alignment_functions::{create_sam_record, perform_rust_bio_alignment, setup_sam_writer, simplify_cigar_string};
+use crate::alignment_functions::{create_sam_record, setup_sam_writer, simplify_cigar_string};
 use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
 use rust_htslib::bam::{Writer};
@@ -176,9 +175,6 @@ pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: 
 
 
 pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downsample_to: &usize) -> Vec<u8> {
-    let max_length = sequences.iter().map(|n| n.aligned_read.aligned_read.len()).collect::<Vec<usize>>();
-    let max_length = max_length.iter().max().unwrap();
-
     let mut base_sequences = sequences.iter().map(|n| {
         let mut y = FastaBase::to_vec_u8(&FastaBase::strip_gaps(&n.aligned_read.aligned_read));
         y.push(b'\0');
@@ -202,10 +198,7 @@ fn poa_consensus(base_sequences: Vec<Vec<u8>>) -> Vec<u8> {
         assert!(seq.len() > 0);
 
         let cseq = CString::from_vec_with_nul(seq.clone()).unwrap_or_else(|_| panic!("CString::new failed from {}", String::from_utf8(seq.clone()).unwrap()));
-        let cqual = {
-            let mut qual = vec![34u8; seq.len() - 1];
-            CString::new(qual).unwrap()
-        };
+        let cqual = CString::new(vec![34u8; seq.len() - 1]).unwrap();
 
         let aln = eng.align(cseq.as_c_str(), &graph);
         graph.add_alignment(&aln, cseq.as_c_str(), &cqual);
