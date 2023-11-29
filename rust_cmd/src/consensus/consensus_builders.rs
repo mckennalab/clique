@@ -120,7 +120,6 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&single_read.aligned_read.aligned_ref,
                                                                      &single_read.aligned_read.aligned_read).to_string());
         added_tags.insert((b'a', b's'), single_read.aligned_read.score.to_string());
-        //println!("FINAL results: {} {}",FastaBase::to_string(&single_read.aligned_read.aligned_read),FastaBase::to_string(&single_read.aligned_read.aligned_ref));
 
         let original_reference = reference_manager.references.get(reference_manager.reference_name_to_ref.get(single_read.aligned_read.ref_name.as_bytes()).unwrap()).unwrap().sequence_u8.as_ref();
 

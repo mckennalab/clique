@@ -234,10 +234,10 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         let (invalid_read,read_tags_ordered) = extract_tag_sequences(&sorted_tags, ets);
 
                         if !invalid_read {
+                            println("Ref {}",String::from_utf8(ref_name).unwrap());
                             let new_sorted_read_container = SortingReadSetContainer {
                                 ordered_sorting_keys: vec![], // for future use
                                 ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
-
                                 aligned_read: SortedAlignment {
                                     aligned_read: alignment.read_aligned.clone(),
                                     aligned_ref: alignment.reference_aligned,
