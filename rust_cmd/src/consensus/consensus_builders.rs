@@ -130,7 +130,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
 
         let bin = reference_to_sam_bin.get(single_read.aligned_read.ref_name.as_bytes()).unwrap();
-        println!("TV READ {} Ref {} bin {}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin);
+        debug!("TV READ {} Ref {} bin {}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin);
 
         let mut sam_read = create_sam_record(bin,
                                          single_read.aligned_read.read_name.as_str(),

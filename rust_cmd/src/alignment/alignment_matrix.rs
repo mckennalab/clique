@@ -538,7 +538,7 @@ impl AlignmentResult {
 
 
     pub fn to_sam_record(&self, read_name: &str, original_reference: &Vec<u8>, extract_capture_tags: &bool) -> Record {
-        // TODO: Fix reference pointer here
+        // TODO: Fix reference pointer here - set the t index!!!!
         let mut record = Record::new();
         let seq = FastaBase::to_vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>());
         let cigar_string_rep = if self.read_start > 0 {
