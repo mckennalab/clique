@@ -82,7 +82,7 @@ pub fn correct_to_known_list(barcode: &Vec<FastaBase>, kl: &mut KnownList, max_d
             }
         }
         kl.known_list_map.insert(barcode.clone(), BestHits { hits: hits.clone(), distance });
-        warn!("Scanned {} keys for barcode {} and found {} hits", scanned, FastaBase::to_string(barcode), hits.len());
+        info!("Scanned {} keys for barcode {} and found {} hits", scanned, FastaBase::to_string(barcode), hits.len());
         BestHits { hits, distance }
     }
 }
