@@ -123,6 +123,9 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
         let original_reference = reference_manager.references.get(reference_manager.reference_name_to_ref.get(single_read.aligned_read.ref_name.as_bytes()).unwrap()).unwrap().sequence_u8.as_ref();
 
+        println!("TV READ {} Ref {} ",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone());
+
+
         let sam_read = create_sam_record(single_read.aligned_read.read_name.as_str(),
                                          &single_read.aligned_read.aligned_read,
                                          &single_read.aligned_read.aligned_ref,
