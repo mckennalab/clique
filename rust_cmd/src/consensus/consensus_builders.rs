@@ -117,7 +117,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
                                          &true,
                                          added_tags);
 
-        sam_read.set_tid(*bin);
+        sam_read.set_tid(*bin as i32);
         writer.write(&sam_read).unwrap();
     } else {
         let single_read = buffered_reads.get(0).unwrap();
@@ -140,7 +140,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
                                          &single_read.aligned_read.to_cigar_string(),
                                          &true,
                                          added_tags);
-        sam_read.set_tid(*bin);
+        sam_read.set_tid(*bin as i32);
 
         writer.write(&sam_read).unwrap();
     };
