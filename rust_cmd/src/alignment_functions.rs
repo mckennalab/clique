@@ -723,6 +723,7 @@ pub fn create_sam_record(
 
     record.set(read_name.as_bytes(), Some(&cigar_string), &seq.as_slice(), &quals.as_slice());
     record.set_bin(*reference_bin);
+    record.set_mate_unmapped();
     additional_tags.iter().for_each(|(x, y)| {
         record.push_aux(vec![x.0, x.1].as_slice(), Aux::String(y)).unwrap();
     });
