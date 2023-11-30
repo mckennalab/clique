@@ -16,6 +16,7 @@ use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_comp
 
 pub fn collapse(reference: &String,
                 final_output: &String,
+                fast_reference_lookup: &bool,
                 temp_directory: &mut InstanceLivedTempDir,
                 read_structure: &SequenceLayoutDesign,
                 max_reference_multiplier: &f64,
@@ -44,7 +45,7 @@ pub fn collapse(reference: &String,
     let ret = fast_align_reads(&true,
                                read_structure,
                                &false,
-                               &false,
+                               &fast_reference_lookup,
                                &rm,
                                aligned_temp.as_path(),
                                max_reference_multiplier,
@@ -196,7 +197,7 @@ impl DegenerateBuffer {
         for group in cc {
             let minilist = InputList { strings: group, max_dist: self.tag.max_distance.clone() };
 
-            // TODO this is a hack to get around the fact that the graph is not being split correctly -- need to fix this
+            // TODO enable this for a future improvement -- spliting connected components -- but a lot of work needs to go into validation here
             /*let mut minigraph = input_list_to_graph(&minilist, string_distance, false);
 
             let is_subgroups = split_subgroup(&mut minigraph);
@@ -316,7 +317,7 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                         // don't write the previous bin, but add the current read to the next bin
                         bin.clean();
                         bin.push(current_read);
-                        warn!("dropping bin due to overflow, check that this is intentional!")
+                        warn!("dropping bin due to overflow, please check that this is intentional!!!")
                     }
                     (true, false) => {
                         // add the current read to the bin

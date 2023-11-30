@@ -126,6 +126,9 @@ enum Cmd {
 
         #[clap(long)]
         find_inversions: bool,
+
+        #[clap(long)]
+        fast_reference_lookup: bool,
     },
     Align {
         #[clap(long)]
@@ -195,7 +198,8 @@ fn main() {
             read2,
             index1,
             index2,
-            find_inversions
+            find_inversions,
+            fast_reference_lookup
         } => {
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
 
@@ -203,9 +207,10 @@ fn main() {
 
             collapse(reference,
                      outbam,
+                     fast_reference_lookup,
                      &mut tmp,
                      &my_yaml,
-                     &1.2,
+                     &1.5,
                      &50,
                      read1,
                      read2,

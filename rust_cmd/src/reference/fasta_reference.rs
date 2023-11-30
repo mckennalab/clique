@@ -63,10 +63,10 @@ pub struct ReferenceManager<'a, 's, 't> {
 
 #[allow(dead_code)]
 pub struct UniqueKmerLookup<'s, 't> {
-    kmer_length: usize,
-    kmer_to_reference: HashMap<Vec<u8>,Reference<'s, 't>>,
-    reference_to_kmer: HashMap<Reference<'s, 't>,Vec<Vec<u8>>>,
-    all_have_unique_mappings: bool,
+    pub kmer_length: usize,
+    pub kmer_to_reference: HashMap<Vec<u8>,Reference<'s, 't>>,
+    pub reference_to_kmer: HashMap<Reference<'s, 't>,Vec<Vec<u8>>>,
+    pub all_have_unique_mappings: bool,
 
 }
 

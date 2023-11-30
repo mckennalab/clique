@@ -22,6 +22,7 @@ use rust_htslib::bam::{Record};
 use rust_htslib::bam::record::{Aux, CigarString};
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
 use bio::alignment::pairwise::{Aligner, Scoring};
+use itertools::Itertools;
 
 
 pub fn align_reads(read_structure: &SequenceLayoutDesign,
@@ -74,12 +75,10 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
 
     type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 
-    lazy_static! {
-        static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());
-    }
+    lazy_static!{static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());}
     thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
 
-    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1) * 2, (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
+    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1), (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
 
     read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
         STORE.with(|arc_mtx| {
@@ -92,7 +91,8 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
             let name = &String::from_utf8(xx.name().clone()).unwrap();
 
             let aligned = best_reference(&xx.seq(),
-                                         &rm.references,
+                                         &rm,
+                                         &true,
                                          read_structure,
                                          &mut local_alignment.as_mut().unwrap(),
                                          &my_aff_score,
@@ -103,11 +103,16 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
 
             match aligned {
                 None => {
-                    warn!("Unable to create alignment for read {}",name);
+                    // TODO: we should track this and provide a final summary
+                    debug!("Unable to create alignment for read {}",name);
                 }
                 Some((results, orig_ref_seq, _ref_name)) => {
                     match results {
-                        None => { warn!("Unable to create alignment for read {}",name); }
+                        None => {
+                            // TODO: we should track this and provide a final summary
+
+                            debug!("Unable to create alignment for read {}",name);
+                        }
                         Some(aln) => {
                             let output = Arc::clone(&output);
                             let mut read_count = read_count.lock().unwrap();
@@ -128,6 +133,8 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
             }
         });
     });
+
+
 }
 
 type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
@@ -135,7 +142,7 @@ type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 pub fn fast_align_reads(_use_capture_sequences: &bool,
                         read_structure: &SequenceLayoutDesign,
                         _only_output_captured_ref: &bool,
-                        _to_fake_fastq: &bool,
+                        fast_lookup: &bool,
                         rm: &ReferenceManager,
                         output: &Path,
                         max_reference_multiplier: &f64,
@@ -210,7 +217,8 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
             }
 
             let aligned = best_reference(&xx.seq(),
-                                         &rm.references,
+                                         &rm,
+                                         &fast_lookup,
                                          read_structure,
                                          &mut local_alignment.as_mut().unwrap(),
                                          &my_aff_score,
@@ -221,7 +229,8 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
             match aligned {
                 None | Some((None, _, _)) => {
-                    warn!("Unable to create alignment for read {}",String::from_utf8(xx.name().clone()).unwrap());
+                    // TODO: track and output summary
+                    debug!("Unable to create alignment for read {}",String::from_utf8(xx.name().clone()).unwrap());
                 }
                 Some((Some(alignment), ref_seq, ref_name)) => {
                     let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
@@ -274,6 +283,9 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
     sender.lock().unwrap().finished().unwrap();
     sharded_output.finish().unwrap();
+
+    // explicity release the memory in the common store
+    STORE_CLONES.lock().unwrap().iter_mut().for_each(|x| std::mem::drop(x.lock().unwrap()));
 
     let final_count = (read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone()) - gap_rejected.lock().unwrap().clone();
     info!("Aligned {} reads; {} gap-rejected and {} skipped for being longer than {} their reference size", final_count, gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),*max_reference_multiplier);
@@ -428,7 +440,8 @@ pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
 
 
 pub fn best_reference(read: &Vec<FastaBase>,
-                      references: &HashMap<usize, Reference>,
+                      rm: &ReferenceManager,
+                      fast_lookup: &bool,
                       read_structure: &SequenceLayoutDesign,
                       alignment_mat: &mut Alignment<Ix3>,
                       my_aff_score: &AffineScoring,
@@ -436,35 +449,81 @@ pub fn best_reference(read: &Vec<FastaBase>,
                       use_inversions: &bool,
                       max_reference_multiplier: f64,
                       min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
-    match references.len() {
+    match rm.references.len() {
         0 => {
+            // TODO: we should track this and provide a final summary
             warn!("Unable to align read {} as it has no candidate references",FastaBase::to_string(read));
             None
         }
         1 => {
-            let aln = alignment(read, &references.get(&0).unwrap(), read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length);
-            Some((aln, references.get(&0).unwrap().sequence_u8.clone(), references.get(&0).unwrap().name.clone()))
+            let aln = align_two_strings_passed_matrix(&rm.references.get(&0).unwrap().sequence, read, my_aff_score, Some(&rm.references.get(&0).unwrap().name),Some(rm), alignment_mat);
+            Some((Some(aln), rm.references.get(&0).unwrap().sequence_u8.clone(), rm.references.get(&0).unwrap().name.clone()))
         }
         x if x > 1 => {
-            let ranked_alignments = references.iter().map(|reference| {
-                match alignment(read, reference.1, read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length) {
-                    None => None,
-                    Some(aln) => Some((aln, reference.1.sequence_u8.clone(), reference.1.name.clone())),
-                }
-            }).filter(|x| x.is_some()).map(|c| c.unwrap());
-
-            let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2|
-                matching_read_bases_prop(&al.1.0.read_aligned, &al.1.0.reference_aligned).
-                    partial_cmp(&matching_read_bases_prop(&al2.1.0.read_aligned, &al2.1.0.reference_aligned)).unwrap());
-
-            match ranked_alignments.iter().next() {
-                None => { None }
-                Some((_x, y)) => {
-                    Some((Some(y.0.clone()), y.1.clone(), y.2.clone()))
-                }
+            if *fast_lookup {
+                quick_alignment_search(read, &rm, read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length)
+            } else {
+                exhaustive_alignment_search(read, &rm, read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length)
             }
         }
         x => { panic!("we dont know what to do with a reference count of {}", x) }
+    }
+}
+
+
+fn quick_alignment_search(read: &Vec<FastaBase>,
+                          rm: &ReferenceManager,
+                          read_structure: &SequenceLayoutDesign,
+                          alignment_mat: &mut Alignment<Ix3>,
+                          my_aff_score: &AffineScoring,
+                          my_score: &InversionScoring,
+                          use_inversions: &bool,
+                          max_reference_multiplier: f64,
+                          min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
+
+    let read_u8 = FastaBase::to_vec_u8(read);
+    let read_kmers = ReferenceManager::sequence_to_kmers(&read_u8, &rm.kmer_size, &rm.kmer_skip);
+
+    let max_ref = read_kmers.iter().map(|(kmer,c)| {
+       rm.unique_kmers.kmer_to_reference.get(kmer)
+    }).flatten().counts();
+    let max_ref = max_ref.iter().max_by(|x, y| x.1.cmp(y.1));
+
+    match max_ref {
+        None => {
+            None
+        }
+        Some(x) => {
+            Some((Some(align_two_strings_passed_matrix(&x.0.sequence,
+                                            read,
+                                            my_aff_score,
+                                            Some(&x.0.name),
+                                            Some(rm),
+                                            alignment_mat)),x.0.sequence_u8.clone(),x.0.name.clone()))
+        }
+    }
+
+}
+
+fn exhaustive_alignment_search(read: &Vec<FastaBase>, rm: &&ReferenceManager, read_structure: &SequenceLayoutDesign, alignment_mat: &mut Alignment<Ix3>, my_aff_score: &AffineScoring, my_score: &InversionScoring, use_inversions: &bool, max_reference_multiplier: f64, min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
+    let references = &rm.references;
+
+    let ranked_alignments = references.iter().map(|reference| {
+        match alignment(read, reference.1, read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length) {
+            None => None,
+            Some(aln) => Some((aln, reference.1.sequence_u8.clone(), reference.1.name.clone())),
+        }
+    }).filter(|x| x.is_some()).map(|c| c.unwrap());
+
+    let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2|
+        matching_read_bases_prop(&al.1.0.read_aligned, &al.1.0.reference_aligned).
+            partial_cmp(&matching_read_bases_prop(&al2.1.0.read_aligned, &al2.1.0.reference_aligned)).unwrap());
+
+    match ranked_alignments.iter().next() {
+        None => { None }
+        Some((_x, y)) => {
+            Some((Some(y.0.clone()), y.1.clone(), y.2.clone()))
+        }
     }
 }
 
@@ -478,6 +537,7 @@ pub fn alignment(x: &Vec<FastaBase>,
                  _use_inversions: &bool,
                  max_reference_multiplier: f64,
                  min_read_length: usize) -> Option<AlignmentResult> {
+
     let forward_oriented_seq = if !read_structure.known_strand {
         let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
         if orientation {
@@ -490,22 +550,10 @@ pub fn alignment(x: &Vec<FastaBase>,
     };
 
     if forward_oriented_seq.len() > f64::round(reference.sequence.len() as f64 * max_reference_multiplier) as usize || forward_oriented_seq.len() < min_read_length {
-        warn!("Dropping read of length {}",forward_oriented_seq.len());
+        // TODO: we should track this and provide a final summary
+        debug!("Dropping read of length {}",forward_oriented_seq.len());
         None
     } else {
-        /*perform_affine_alignment(
-            alignment_mat,
-            &reference.sequence,
-            &forward_oriented_seq,
-            my_aff_score);
-
-        let results = perform_3d_global_traceback(
-            alignment_mat,
-            None,
-            &reference.sequence,
-            &forward_oriented_seq,
-            None);
-        Some(results)*/
         // TODO: allow the users to pick which aligner to use
         Some(perform_rust_bio_alignment(&reference.sequence,
                                         &forward_oriented_seq))
