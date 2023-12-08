@@ -90,16 +90,16 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
 
             let name = &String::from_utf8(xx.name().clone()).unwrap();
 
-            let aligned = best_reference(&xx.seq(),
-                                         &rm,
-                                         &true,
-                                         read_structure,
-                                         &mut local_alignment.as_mut().unwrap(),
-                                         &my_aff_score,
-                                         &my_score,
-                                         inversions,
-                                         *max_reference_multiplier as f64,
-                                         *min_read_length);
+            let aligned = align_to_reference_choices(&xx.seq(),
+                                                     &rm,
+                                                     &true,
+                                                     read_structure,
+                                                     &mut local_alignment.as_mut().unwrap(),
+                                                     &my_aff_score,
+                                                     &my_score,
+                                                     inversions,
+                                                     *max_reference_multiplier as f64,
+                                                     *min_read_length);
 
             match aligned {
                 None => {
@@ -216,16 +216,16 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 STORE_CLONES.lock().unwrap().push(arc_mtx.clone());
             }
 
-            let aligned = best_reference(&xx.seq(),
-                                         &rm,
-                                         &fast_lookup,
-                                         read_structure,
-                                         &mut local_alignment.as_mut().unwrap(),
-                                         &my_aff_score,
-                                         &my_score,
-                                         inversions,
-                                         *max_reference_multiplier,
-                                         *min_read_length);
+            let aligned = align_to_reference_choices(&xx.seq(),
+                                                     &rm,
+                                                     &fast_lookup,
+                                                     read_structure,
+                                                     &mut local_alignment.as_mut().unwrap(),
+                                                     &my_aff_score,
+                                                     &my_score,
+                                                     inversions,
+                                                     *max_reference_multiplier,
+                                                     *min_read_length);
 
             match aligned {
                 None | Some((None, _, _)) => {
@@ -392,8 +392,66 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
     }
 }
 
-
-#[allow(dead_code)]
+/// Aligns two sequences based on a provided matrix, using either specialized or affine alignment methods.
+///
+/// This function aligns two DNA or RNA sequences (`read1_seq` and `read2_seq`) and utilizes an
+/// affine scoring function. It can optionally use a reference manager and a reference name to
+/// perform specialized alignment using shared segments. If these are not provided, it defaults
+/// to affine alignment.
+///
+/// # Arguments
+///
+/// * `read1_seq` - A reference to the vector containing the first sequence (as `FastaBase` elements) to be aligned.
+/// * `read2_seq` - A reference to the vector containing the second sequence to be aligned.
+/// * `scoring_function` - A reference to an object implementing the `AffineScoringFunction` trait for scoring alignments.
+/// * `ref_name` - An optional reference to a vector of bytes representing the name of the reference sequence.
+/// * `reference_manager` - An optional reference to a `ReferenceManager` object managing reference sequences.
+/// * `alignment_mat` - A mutable reference to an `Alignment` object, a 3D matrix (`Ix3`) used for storing alignment scores.
+///
+/// # Returns
+///
+/// An `AlignmentResult` that may contain details such as the alignment score, the aligned sequences, and other relevant information.
+///
+/// # Behavior
+///
+/// The function operates in two modes depending on the availability of `reference_manager` and `ref_name`:
+///
+/// 1. **With Reference Manager and Reference Name**:
+///    - Retrieves a reference ID and shared segments from the reference manager using the provided `ref_name`.
+///    - Converts both sequences to `Vec<u8>`.
+///    - Finds greedy non-overlapping segments between the sequences using the shared segments.
+///    - Performs alignment of `read2_seq` with `read1_seq` using these segments and the scoring function.
+///
+/// 2. **Without Reference Manager and Reference Name**:
+///    - Performs an affine alignment between `read1_seq` and `read2_seq` using the provided scoring function.
+///    - Executes a 3D global traceback on the alignment matrix to produce the final alignment result.
+///
+/// # Panics
+///
+/// The function may panic if invalid references or indices are encountered, particularly when unwrapping
+/// `Option` types or retrieving references from the reference manager.
+///
+/// # Example
+///
+/// ```
+/// let read1 = vec![/* ... FastaBase elements ... */];
+/// let read2 = vec![/* ... FastaBase elements ... */];
+/// let scoring_function = /* ... implementation of AffineScoringFunction ... */;
+/// let ref_name = Some(&vec![/* reference name as Vec<u8> */]);
+/// let reference_manager = Some(&/* ReferenceManager instance */);
+/// let mut alignment_matrix = Alignment::new(/* ... dimensions ... */);
+///
+/// let alignment_result = align_two_strings_passed_matrix(
+///     &read1,
+///     &read2,
+///     &scoring_function,
+///     ref_name,
+///     reference_manager,
+///     &mut alignment_matrix
+/// );
+///
+/// // Use `alignment_result` here
+/// ```
 pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
                                        read2_seq: &Vec<FastaBase>,
                                        scoring_function: &dyn AffineScoringFunction,
@@ -438,17 +496,76 @@ pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
     }
 }
 
-
-pub fn best_reference(read: &Vec<FastaBase>,
-                      rm: &ReferenceManager,
-                      fast_lookup: &bool,
-                      read_structure: &SequenceLayoutDesign,
-                      alignment_mat: &mut Alignment<Ix3>,
-                      my_aff_score: &AffineScoring,
-                      my_score: &InversionScoring,
-                      use_inversions: &bool,
-                      max_reference_multiplier: f64,
-                      min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
+/// Aligns two DNA or RNA sequences using affine alignment or a specialized alignment with anchors.
+///
+/// This function aligns two sequences represented by `Vec<FastaBase>` using either affine alignment
+/// or a specialized alignment with anchors, depending on the availability of a reference manager
+/// and a reference name. It employs a scoring function to evaluate the alignments.
+///
+/// # Arguments
+///
+/// * `read1_seq` - A reference to the first sequence to be aligned, each element being of type `FastaBase`.
+/// * `read2_seq` - A reference to the second sequence to be aligned.
+/// * `scoring_function` - A reference to an object implementing the `AffineScoringFunction` trait,
+///    used for scoring alignments.
+/// * `ref_name` - An optional reference to a byte vector representing the name of the reference sequence.
+/// * `reference_manager` - An optional reference to a `ReferenceManager` object, which manages reference sequences.
+/// * `alignment_mat` - A mutable reference to an `Alignment` object (3D matrix) used for storing alignment scores.
+///
+/// # Returns
+///
+/// An `AlignmentResult` containing the details of the alignment, which may include the alignment score,
+/// aligned sequences, and other relevant information.
+///
+/// # Behavior
+///
+/// If both `reference_manager` and `ref_name` are provided, the function:
+/// - Retrieves a reference ID and shared segments from the reference manager.
+/// - Converts input sequences to `Vec<u8>`.
+/// - Finds greedy non-overlapping segments between the read and reference sequences.
+/// - Aligns `read2_seq` with `read1_seq` using these segments, the scoring function, and the alignment matrix.
+///
+/// If either `reference_manager` or `ref_name` is `None`, the function defaults to:
+/// - Performing an affine alignment between `read1_seq` and `read2_seq`.
+/// - Conducting a 3D global traceback on the alignment matrix for the final alignment result.
+///
+/// # Panics
+///
+/// The function may panic if invalid references or indices are encountered, particularly when unwrapping
+/// `Option` types or retrieving references from the reference manager. Proper exception handling should be
+/// considered in the calling code.
+///
+/// # Example
+///
+/// ```
+/// let read1 = vec![/* ... FastaBase elements ... */];
+/// let read2 = vec![/* ... FastaBase elements ... */];
+/// let scoring_function = /* ... implementation of AffineScoringFunction ... */;
+/// let ref_name = Some(&vec![/* reference name as Vec<u8> */]);
+/// let reference_manager = Some(&/* ReferenceManager instance */);
+/// let mut alignment_matrix = Alignment::new(/* ... dimensions ... */);
+///
+/// let result = align_two_strings_passed_matrix(
+///     &read1,
+///     &read2,
+///     &scoring_function,
+///     ref_name,
+///     reference_manager,
+///     &mut alignment_matrix
+/// );
+///
+/// // Use `result` here
+/// ```
+pub fn align_to_reference_choices(read: &Vec<FastaBase>,
+                                  rm: &ReferenceManager,
+                                  fast_lookup: &bool,
+                                  read_structure: &SequenceLayoutDesign,
+                                  alignment_mat: &mut Alignment<Ix3>,
+                                  my_aff_score: &AffineScoring,
+                                  my_score: &InversionScoring,
+                                  use_inversions: &bool,
+                                  max_reference_multiplier: f64,
+                                  min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
     match rm.references.len() {
         0 => {
             // TODO: we should track this and provide a final summary
@@ -470,7 +587,66 @@ pub fn best_reference(read: &Vec<FastaBase>,
     }
 }
 
-
+/// Performs a quick alignment search for a given read against a reference manager.
+///
+/// This function takes a read sequence and aligns it to the most likely reference sequence
+/// in a reference manager using k-mers. It supports both affine scoring and inversion scoring,
+/// and can optionally include inversions in the alignment process.
+///
+/// # Arguments
+///
+/// * `read` - A reference to the sequence to be aligned, represented as `Vec<FastaBase>`.
+/// * `rm` - A reference to the `ReferenceManager` containing reference sequences and k-mer information.
+/// * `read_structure` - A reference to the `SequenceLayoutDesign` that describes the layout of the read sequence.
+/// * `alignment_mat` - A mutable reference to an `Alignment` object (3D matrix) used for storing alignment scores.
+/// * `my_aff_score` - A reference to an `AffineScoring` object for scoring alignments.
+/// * `my_score` - A reference to an `InversionScoring` object for scoring inversions, if used.
+/// * `use_inversions` - A boolean reference indicating whether inversions should be considered in the alignment.
+/// * `max_reference_multiplier` - A floating-point value representing a multiplier to determine the maximum reference size.
+/// * `min_read_length` - The minimum length of the read sequence for performing the alignment.
+///
+/// # Returns
+///
+/// Returns `Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)>`. The tuple inside the `Option` contains:
+/// - An `Option<AlignmentResult>` which is `None` if no alignment is found, or contains the alignment result.
+/// - A `Vec<u8>` representing the sequence of the matched reference.
+/// - A `Vec<u8>` representing the name of the matched reference.
+///
+/// # Behavior
+///
+/// The function converts the read sequence into a `Vec<u8>` and generates k-mers. It then finds
+/// the reference sequence in the reference manager with the highest count of matching k-mers.
+/// If such a reference is found, it performs an alignment using `align_two_strings_passed_matrix`
+/// and returns the alignment result along with the sequence and name of the matched reference.
+/// If no matching reference is found, it returns `None`.
+///
+/// # Example
+///
+/// ```
+/// let read = vec![/* ... FastaBase elements ... */];
+/// let reference_manager = /* ... ReferenceManager instance ... */;
+/// let read_structure = /* ... SequenceLayoutDesign instance ... */;
+/// let mut alignment_matrix = Alignment::new(/* ... dimensions ... */);
+/// let affine_scoring = /* ... AffineScoring instance ... */;
+/// let inversion_scoring = /* ... InversionScoring instance ... */;
+/// let use_inversions = &true;
+/// let max_reference_multiplier = 1.5;
+/// let min_read_length = 100;
+///
+/// let result = quick_alignment_search(
+///     &read,
+///     &reference_manager,
+///     &read_structure,
+///     &mut alignment_matrix,
+///     &affine_scoring,
+///     &inversion_scoring,
+///     use_inversions,
+///     max_reference_multiplier,
+///     min_read_length
+/// );
+///
+/// // Process `result` here
+/// ```
 fn quick_alignment_search(read: &Vec<FastaBase>,
                           rm: &ReferenceManager,
                           read_structure: &SequenceLayoutDesign,
