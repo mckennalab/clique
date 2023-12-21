@@ -185,11 +185,6 @@ pub fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>
             }
         }
     });
-    //println!("Read pos {} {} {} {} ",read_pos,ref_pos,reference_sequence.len(),ref_start);
-    if ref_pos < reference_sequence.len() as u32 {
-        alignments.push(FullAlignment::Deletion(ref_pos,(reference_sequence.len() as u32 - ref_pos) ));
-        println!("Read2 pos {} {} {} ",read_pos,ref_pos,reference_sequence.len());
-    }
     assert_eq!(reference_sequence.len(), ref_pos.try_into().unwrap());
 
     alignments
@@ -344,8 +339,13 @@ impl FullBAMAlignmentRegistry<'_, '_, '_> {
             }
         }
 
+        let mut read_count = 0;
         // copy reverse reads to new BAM file
         for r in bam.records() {
+            read_count += 1;
+            if read_count % 100000 == 0 {
+                println!("Read count {}",read_count);
+            }
             match r {
                 Ok(record) => {
                     let ref_name = record.contig().as_bytes();
