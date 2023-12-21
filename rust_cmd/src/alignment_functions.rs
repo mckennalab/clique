@@ -570,18 +570,30 @@ pub fn align_to_reference_choices(read: &Vec<FastaBase>,
             None
         }
         1 => {
+            let ref_base = &rm.references.get(&0).unwrap();
+            let forward_oriented_seq = if !read_structure.known_strand {
+                let orientation = orient_by_longest_segment(&read, &ref_base.sequence_u8, &ref_base.suffix_table).0;
+                if orientation {
+                    read.clone()
+                } else {
+                    reverse_complement(&read)
+                }
+            } else {
+                read.clone()
+            };
+
             let aln = align_two_strings_passed_matrix(
-                &rm.references.get(&0).unwrap().sequence,
-                read,
+                &ref_base.sequence,
+                &forward_oriented_seq,
                 my_aff_score,
-                Some(&rm.references.get(&0).unwrap().name),
+                Some(&ref_base.name),
                 Some(rm),
                 alignment_mat);
 
             Some(
                 (Some(aln),
-                 rm.references.get(&0).unwrap().sequence_u8.clone(),
-                 rm.references.get(&0).unwrap().name.clone()))
+                 ref_base.sequence_u8.clone(),
+                 ref_base.name.clone()))
         }
         x if x > 1 => {
             if *fast_lookup {
