@@ -574,6 +574,7 @@ pub fn align_to_reference_choices(read: &Vec<FastaBase>,
             let forward_oriented_seq = if !read_structure.known_strand {
                 let orientation = orient_by_longest_segment(&read, &ref_base.sequence_u8, &ref_base.suffix_table).0;
                 if orientation {
+                    println!("fwd {}", FastaBase::to_string(&read));
                     read.clone()
                 } else {
                     println!("Rev comp {}", FastaBase::to_string(&read));
