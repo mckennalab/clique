@@ -94,7 +94,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
     pub fn sequence_to_kmers(reference: &Vec<u8>, kmer_size: &usize, kmer_spacing: &usize) -> Vec<(Vec<u8>, usize)> {
         let mut kmers: Vec<(Vec<u8>,usize)> = reference.to_ascii_uppercase().windows(*kmer_size).step_by(*kmer_spacing).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect::<Vec<(Vec<u8>,usize)>>();
-        kmers.extend(reference.reverse_complement().to_ascii_uppercase().windows(*kmer_size).step_by(*kmer_spacing).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect::<Vec<(Vec<u8>,usize)>>());
+        //kmers.extend(reference.reverse_complement().to_ascii_uppercase().windows(*kmer_size).step_by(*kmer_spacing).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect::<Vec<(Vec<u8>,usize)>>());
         kmers
     }
 
@@ -113,6 +113,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         let mut unique_kmer_to_reference = HashMap::new();
 
         let mut all_unique = true;
+
         for reference in references {
             let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence_u8, kmer_size, kmer_spacing);
             let unique_kmers = kmers.iter().filter(|(k,_c)| kmer_counts.contains_key(k) && *kmer_counts.get(k).unwrap() == 1).collect_vec();

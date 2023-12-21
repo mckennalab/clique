@@ -36,8 +36,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
-
-    let (reference_mapper,output_file) = setup_sam_writer(&output.to_str().unwrap().to_string(), rm);
+    let (reference_mapper, output_file) = setup_sam_writer(&output.to_str().unwrap().to_string(), rm);
     let mut output_file = output_file.expect("Unable to create output bam file");
 
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
@@ -75,7 +74,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
 
     type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 
-    lazy_static!{static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());}
+    lazy_static! {static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());}
     thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
 
     let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1), (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
@@ -133,8 +132,6 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
             }
         });
     });
-
-
 }
 
 type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
@@ -242,7 +239,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                     let gap_proportion = gap_proportion_per_tag(&ets);
 
                     if gap_proportion.len() == 0 || gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
-                        let (invalid_read,read_tags_ordered) = extract_tag_sequences(&sorted_tags, ets);
+                        let (invalid_read, read_tags_ordered) = extract_tag_sequences(&sorted_tags, ets);
 
                         if !invalid_read {
                             //println!("READ {} Ref {} ",String::from_utf8(xx.name().clone()).unwrap(), String::from_utf8(ref_name.clone()).unwrap());
@@ -307,7 +304,7 @@ fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> 
                 }
             }
         }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
-    (invalid_read,queue)
+    (invalid_read, queue)
 }
 
 fn get_sorting_order(read_structure: &SequenceLayoutDesign) -> Vec<char> {
@@ -573,8 +570,18 @@ pub fn align_to_reference_choices(read: &Vec<FastaBase>,
             None
         }
         1 => {
-            let aln = align_two_strings_passed_matrix(&rm.references.get(&0).unwrap().sequence, read, my_aff_score, Some(&rm.references.get(&0).unwrap().name),Some(rm), alignment_mat);
-            Some((Some(aln), rm.references.get(&0).unwrap().sequence_u8.clone(), rm.references.get(&0).unwrap().name.clone()))
+            let aln = align_two_strings_passed_matrix(
+                &rm.references.get(&0).unwrap().sequence,
+                read,
+                my_aff_score,
+                Some(&rm.references.get(&0).unwrap().name),
+                Some(rm),
+                alignment_mat);
+
+            Some(
+                (Some(aln),
+                 rm.references.get(&0).unwrap().sequence_u8.clone(),
+                 rm.references.get(&0).unwrap().name.clone()))
         }
         x if x > 1 => {
             if *fast_lookup {
@@ -656,12 +663,11 @@ fn quick_alignment_search(read: &Vec<FastaBase>,
                           use_inversions: &bool,
                           max_reference_multiplier: f64,
                           min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
-
     let read_u8 = FastaBase::to_vec_u8(read);
     let read_kmers = ReferenceManager::sequence_to_kmers(&read_u8, &rm.kmer_size, &rm.kmer_skip);
 
-    let max_ref = read_kmers.iter().map(|(kmer,c)| {
-       rm.unique_kmers.kmer_to_reference.get(kmer)
+    let max_ref = read_kmers.iter().map(|(kmer, c)| {
+        rm.unique_kmers.kmer_to_reference.get(kmer)
     }).flatten().counts();
     let max_ref = max_ref.iter().max_by(|x, y| x.1.cmp(y.1));
 
@@ -671,14 +677,13 @@ fn quick_alignment_search(read: &Vec<FastaBase>,
         }
         Some(x) => {
             Some((Some(align_two_strings_passed_matrix(&x.0.sequence,
-                                            read,
-                                            my_aff_score,
-                                            Some(&x.0.name),
-                                            Some(rm),
-                                            alignment_mat)),x.0.sequence_u8.clone(),x.0.name.clone()))
+                                                       read,
+                                                       my_aff_score,
+                                                       Some(&x.0.name),
+                                                       Some(rm),
+                                                       alignment_mat)), x.0.sequence_u8.clone(), x.0.name.clone()))
         }
     }
-
 }
 
 fn exhaustive_alignment_search(read: &Vec<FastaBase>, rm: &&ReferenceManager, read_structure: &SequenceLayoutDesign, alignment_mat: &mut Alignment<Ix3>, my_aff_score: &AffineScoring, my_score: &InversionScoring, use_inversions: &bool, max_reference_multiplier: f64, min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
@@ -713,7 +718,6 @@ pub fn alignment(x: &Vec<FastaBase>,
                  _use_inversions: &bool,
                  max_reference_multiplier: f64,
                  min_read_length: usize) -> Option<AlignmentResult> {
-
     let forward_oriented_seq = if !read_structure.known_strand {
         let orientation = orient_by_longest_segment(x, &reference.sequence_u8, &reference.suffix_table).0;
         if orientation {
@@ -863,20 +867,20 @@ pub fn matching_read_bases_prop(read: &Vec<FastaBase>, reference: &Vec<FastaBase
     }
 }
 
-pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) -> (HashMap<Vec<u8>,u16>, Result<bam::Writer, rust_htslib::errors::Error>) {
+pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) -> (HashMap<Vec<u8>, u16>, Result<bam::Writer, rust_htslib::errors::Error>) {
     let mut header = bam::Header::new();
 
     let mut reference_to_bin = HashMap::new();
 
-    reference_manger.references.iter().enumerate().for_each(|(index,reference)| {
+    reference_manger.references.iter().enumerate().for_each(|(index, reference)| {
         let mut header_record = bam::header::HeaderRecord::new(b"SQ");
         header_record.push_tag(b"SN", String::from_utf8(reference.1.name.clone()).unwrap());
         header_record.push_tag(b"LN", &reference.1.sequence.len());
         header.push_record(&header_record);
-        reference_to_bin.insert(reference.1.name.clone(),index as u16);
+        reference_to_bin.insert(reference.1.name.clone(), index as u16);
     });
 
-    (reference_to_bin,bam::Writer::from_path(&filename, &header, bam::Format::Bam))
+    (reference_to_bin, bam::Writer::from_path(&filename, &header, bam::Format::Bam))
 }
 
 
@@ -889,7 +893,6 @@ pub fn create_sam_record(
     cigar_string: &CigarString,
     extract_capture_tags: &bool,
     additional_tags: HashMap<(u8, u8), String>) -> Record {
-
     let mut record = Record::new();
 
     let seq = FastaBase::to_vec_u8_strip_gaps(&read_seq);
