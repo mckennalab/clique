@@ -241,7 +241,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
                     let gap_proportion = gap_proportion_per_tag(&ets);
 
-                    if gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
+                    if gap_proportion.len() == 0 || gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
                         let (invalid_read,read_tags_ordered) = extract_tag_sequences(&sorted_tags, ets);
 
                         if !invalid_read {

@@ -47,6 +47,7 @@ actix = "0.13"
 sift4 = "*"
 colored = "*"
 vpsearch = "*"
+phf = {version = "0.11", features = ["macros"] }
 
 [profile.release]
 lto = true

@@ -52,6 +52,15 @@ impl Hash for Reference<'_, '_> {
 }
 
 #[allow(dead_code)]
+pub struct UniqueKmerLookup<'s, 't> {
+    pub kmer_length: usize,
+    pub kmer_to_reference: HashMap<Vec<u8>,Reference<'s, 't>>,
+    pub reference_to_kmer: HashMap<Reference<'s, 't>,Vec<Vec<u8>>>,
+    pub all_have_unique_mappings: bool,
+
+}
+
+#[allow(dead_code)]
 pub struct ReferenceManager<'a, 's, 't> {
     pub references: HashMap<usize, Reference<'a, 'a>>,
     pub reference_name_to_ref: HashMap<Vec<u8>, usize>,
@@ -59,15 +68,6 @@ pub struct ReferenceManager<'a, 's, 't> {
     pub kmer_size: usize,
     pub kmer_skip: usize,
     pub longest_ref: usize,
-}
-
-#[allow(dead_code)]
-pub struct UniqueKmerLookup<'s, 't> {
-    pub kmer_length: usize,
-    pub kmer_to_reference: HashMap<Vec<u8>,Reference<'s, 't>>,
-    pub reference_to_kmer: HashMap<Reference<'s, 't>,Vec<Vec<u8>>>,
-    pub all_have_unique_mappings: bool,
-
 }
 
 impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {

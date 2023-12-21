@@ -30,7 +30,7 @@ extern crate derive_more;
 extern crate shardio;
 extern crate anyhow;
 extern crate sift4;
-
+extern crate phf;
 
 use ::std::io::Result;
 use std::path::{Path, PathBuf};
@@ -71,6 +71,9 @@ mod umis {
     pub mod sequence_clustering;
     pub mod bronkerbosch;
     pub mod known_list;
+}
+mod python_interface {
+    pub mod bam_file_to_cell_list;
 }
 
 mod consensus {
