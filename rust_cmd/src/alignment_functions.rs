@@ -576,6 +576,7 @@ pub fn align_to_reference_choices(read: &Vec<FastaBase>,
                 if orientation {
                     read.clone()
                 } else {
+                    println!("Rev comp {}", FastaBase::to_string(&read));
                     reverse_complement(&read)
                 }
             } else {
