@@ -28,7 +28,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
                              maximum_reads_before_downsampling: &usize) {
     info!("Writing consensus reads to {}", output_file);
 
-    let  (mut reference_to_bin, mut writer) = setup_sam_writer(output_file, reference_manager);
+    let  (reference_to_bin, writer) = setup_sam_writer(output_file, reference_manager);
     let mut writer = writer.unwrap();
 
     let mut last_read: Option<SortingReadSetContainer> = None;
@@ -75,7 +75,6 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
     let mut added_tags = HashMap::new();
     added_tags.insert((b'r', b'c'), buffered_reads.len().to_string());
-
     added_tags.insert((b'd', b'c'), cmp::min(*maximum_reads_before_downsampling, buffered_reads.len()).to_string());
 
 

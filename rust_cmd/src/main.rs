@@ -72,7 +72,7 @@ mod umis {
     pub mod bronkerbosch;
     pub mod known_list;
 }
-mod python_interface {
+mod calling {
     pub mod bam_file_to_cell_list;
 }
 
@@ -100,9 +100,6 @@ mod reference {
 #[derive(Subcommand, Debug)]
 enum Cmd {
     Collapse {
-        #[clap(long)]
-        reference: String,
-
         #[clap(long)]
         outbam: String,
 
@@ -192,7 +189,6 @@ fn main() {
 
     match &parameters.cmd {
         Cmd::Collapse {
-            reference,
             outbam,
             read_structure,
             threads,
@@ -208,8 +204,7 @@ fn main() {
 
             let mut tmp = InstanceLivedTempDir::new().unwrap();
 
-            collapse(reference,
-                     outbam,
+            collapse(outbam,
                      fast_reference_lookup,
                      &mut tmp,
                      &my_yaml,

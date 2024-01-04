@@ -51,15 +51,17 @@ impl SequenceLayoutDesign {
 
         let deserialized_map: SequenceLayoutDesign = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
-        // validate that UMIConfigurations have orders and that they're sequential
-        let mut ordering = deserialized_map.umi_configurations.iter().map(|(_name,umi_config)| {
-            umi_config.order.clone()
-        }).collect::<Vec<usize>>();
-        ordering.sort_by(|a,b| a.cmp(b));
+        for (reference_name,reference) in &deserialized_map.references {
+            // validate that UMIConfigurations have orders and that they're sequential
+            let mut ordering = reference.umi_configurations.iter().map(|(_name, umi_config)| {
+                umi_config.order.clone()
+            }).collect::<Vec<usize>>();
+            ordering.sort_by(|a, b| a.cmp(b));
 
-        assert!(ordering.iter().enumerate().all(|(i,order)| {
-            i == *order
-        }), "The UMIConfigurations must have sequential order numbers, starting at 0");
+            assert!(ordering.iter().enumerate().all(|(i, order)| {
+                i == *order
+            }), "The UMIConfigurations must have sequential order numbers, starting at 0");
+        }
 
         Some(deserialized_map)
     }
@@ -70,10 +72,10 @@ impl SequenceLayoutDesign {
     /// # Arguments
     ///    * ref_bases - the reference sequence, as a vector of bases
     ///
-    pub fn validate_reference_sequence(&self, ref_bases: &Vec<u8>) -> bool {
+    pub fn validate_reference_sequence(ref_bases: &Vec<u8>, configurations: &BTreeMap<String,UMIConfiguration>) -> bool {
         let existing_bases = ref_bases.iter().map(|base| (char::from(base.clone()), true)).collect::<BTreeMap<_, _>>();
 
-        self.umi_configurations.iter().map(|(_name,umi_config)| {
+        configurations.iter().map(|(_name,umi_config)| {
             existing_bases.contains_key(&umi_config.symbol)
         }).all(|x| x == true)
     }
@@ -129,21 +131,49 @@ pub struct UMIConfiguration {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub enum TargetType {
+    STATIC,
+    Cas9WT,
+    Cas12AWT,
+    Cas9ABE,
+    Cas9CBE,
+    Cas9ABECBE,
+    Cas12ABE,
+    Cas12CBE,
+    Cas12ABECBE,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub struct ReferenceRecord {
+    pub sequence: String,
+    pub umi_configurations: BTreeMap<String,UMIConfiguration>,
+    pub target_sequences: Option<Vec<String>>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct SequenceLayoutDesign {
     pub aligner: Option<String>,
     pub merge: Option<MergeStrategy>,
     pub reads: Vec<ReadPosition>,
     pub known_strand: bool,
-    pub umi_configurations: BTreeMap<String,UMIConfiguration>,
+    pub references: BTreeMap<String,ReferenceRecord>,
 }
 
 impl SequenceLayoutDesign {
-    pub fn get_sorted_umi_configurations(&self) -> Vec<UMIConfiguration> {
-        let mut presorted = self.umi_configurations.iter().map(|(_name,umi_config)| {
-            umi_config.clone()
-        }).collect::<Vec<UMIConfiguration>>();
-        presorted.sort_by(|a,b| a.order.cmp(&b.order));
-        presorted
+    pub fn get_sorted_umi_configurations(&self, reference_name: &String) -> Vec<UMIConfiguration> {
+        let reference = self.references.get(reference_name);
+        match reference {
+            None => {
+                panic!("Unable to find reference {}",reference_name);
+            }
+            Some(ref_obj) => {
+                let mut presorted = ref_obj.umi_configurations.iter().map(|(_name,umi_config)| {
+                    umi_config.clone()
+                }).collect::<Vec<UMIConfiguration>>();
+                presorted.sort_by(|a,b| a.order.cmp(&b.order));
+                presorted
+            }
+        }
     }
 }
 
@@ -155,8 +185,9 @@ mod tests {
     fn test_basic_yaml_readback() {
         let configuration =
             SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout.yaml")).unwrap();
-        assert!(configuration.umi_configurations.contains_key("cell_id"));
-        assert_eq!(configuration.umi_configurations.get("cell_id").unwrap().symbol,'*');
+        assert!(configuration.references.contains_key("shorter_reference"));
+        assert!(configuration.references.get("shorter_reference").unwrap().umi_configurations.contains_key("cell_id"));
+        assert_eq!(configuration.references.get("shorter_reference").unwrap().umi_configurations.get("cell_id").unwrap().symbol,'*');
     }
 
 
@@ -165,8 +196,6 @@ mod tests {
     fn test_basic_yaml_readback_invalid_ordering() {
         let configuration =
             SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid.yaml")).unwrap();
-        assert!(configuration.umi_configurations.contains_key("cell_id"));
-        assert_eq!(configuration.umi_configurations.get("cell_id").unwrap().symbol,'*');
     }
 
     #[test]
@@ -174,8 +203,6 @@ mod tests {
     fn test_basic_yaml_readback_invalid_ordering2() {
         let configuration =
             SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid2.yaml")).unwrap();
-        assert!(configuration.umi_configurations.contains_key("cell_id"));
-        assert_eq!(configuration.umi_configurations.get("cell_id").unwrap().symbol,'*');
     }
 
 

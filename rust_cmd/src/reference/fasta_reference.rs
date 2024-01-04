@@ -2,21 +2,17 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use bio::io::fasta::*;
 use itertools::Itertools;
-use needletail::Sequence;
 
 use suffix::SuffixTable;
 use crate::alignment::fasta_bit_encoding::{FastaBase};
 use crate::read_strategies::read_set::ReadSetContainer;
+use crate::read_strategies::sequence_layout::SequenceLayoutDesign;
 
 
-pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> Vec<Reference> {
-
-    let reader = Reader::from_file(reference_file).unwrap();
-    let fasta_entries: Vec<Record> = reader.records().map(|f| f.unwrap()).collect();
-
+pub fn reference_sequences_to_structs(reference_sequences: Vec<Record>, kmer_size: usize) -> Vec<Reference<'static, 'static>> {
     let mut references = Vec::new();
 
-    for ref_entry in fasta_entries {
+    for ref_entry in reference_sequences {
         let seeds = ReferenceManager::find_seeds(&ref_entry.seq().to_vec(), kmer_size);
 
         references.push(Reference {
@@ -27,6 +23,19 @@ pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> V
         });
     }
     references
+}
+
+pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> Vec<Reference> {
+    let reader = Reader::from_file(reference_file).unwrap();
+    let fasta_entries: Vec<Record> = reader.records().map(|f| f.unwrap()).collect();
+    reference_sequences_to_structs(fasta_entries,kmer_size)
+}
+
+pub fn reference_yaml_to_structs(yaml_entries: &SequenceLayoutDesign, kmer_size: usize) -> Vec<Reference> {
+    let entries = yaml_entries.references.iter().map(|(rf_name,rf)| {
+        Record::with_attrs(rf_name.as_str(), None, rf.sequence.clone().as_bytes())
+    }).collect();
+    reference_sequences_to_structs(entries, kmer_size)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,8 +79,38 @@ pub struct ReferenceManager<'a, 's, 't> {
     pub longest_ref: usize,
 }
 
+/*
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reference<'s, 't> {
+    pub sequence: Vec<FastaBase>,
+    pub sequence_u8: Vec<u8>,
+    pub name: Vec<u8>,
+    pub suffix_table: SuffixTableLookup<'s, 't>,
+}
+
+ */
+
 impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
+    pub fn from_yaml_input(yaml_input: &SequenceLayoutDesign, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
+
+
+        let references: Vec<Reference> = yaml_input.references.iter().map(|(ref_name, ref_obj)| {
+           Reference{
+               sequence: FastaBase::from_string(&ref_obj.sequence),
+               sequence_u8: ref_obj.sequence.clone().into_bytes().clone(),
+               name: ref_name.clone().into_bytes(),
+               suffix_table: ReferenceManager::find_seeds(&ref_obj.sequence.clone().into_bytes().clone(), kmer_size),
+           }
+        }).collect();
+
+        let longest_ref = references.iter().map(|r| r.sequence.len()).max().unwrap_or(0);
+        let unique_kmers = ReferenceManager::unique_kmers(&references, &kmer_size, &kmer_spacing);
+        let references = references.into_iter().enumerate().collect::<HashMap<usize,Reference>>();
+        let reference_name_to_ref = references.iter().map(|(i,r)| (r.name.clone(),*i)).collect();
+        ReferenceManager{ references, reference_name_to_ref, unique_kmers, kmer_size: kmer_size.clone(), kmer_skip: kmer_spacing.clone(), longest_ref }
+    }
     pub fn from(fasta: &String, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
 
         let references = reference_file_to_structs(&fasta, kmer_size);
@@ -93,7 +132,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
     }
 
     pub fn sequence_to_kmers(reference: &Vec<u8>, kmer_size: &usize, kmer_spacing: &usize) -> Vec<(Vec<u8>, usize)> {
-        let mut kmers: Vec<(Vec<u8>,usize)> = reference.to_ascii_uppercase().windows(*kmer_size).step_by(*kmer_spacing).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect::<Vec<(Vec<u8>,usize)>>();
+        let kmers: Vec<(Vec<u8>,usize)> = reference.to_ascii_uppercase().windows(*kmer_size).step_by(*kmer_spacing).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect::<Vec<(Vec<u8>,usize)>>();
         //kmers.extend(reference.reverse_complement().to_ascii_uppercase().windows(*kmer_size).step_by(*kmer_spacing).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect::<Vec<(Vec<u8>,usize)>>());
         kmers
     }

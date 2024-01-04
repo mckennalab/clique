@@ -454,7 +454,7 @@ mod tests {
             merge: None,
             reads: vec![],
             known_strand: false,
-            umi_configurations: Default::default(),
+            references: Default::default(),
         }
     }
 
@@ -645,7 +645,7 @@ mod tests {
             merge: None,
             reads: vec![READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, READ2 { chain_align: None, orientation: AlignedReadOrientation::ReverseComplement }],
             known_strand: true,
-            umi_configurations: BTreeMap::new(),
+            references: BTreeMap::new(),
         };
 
         let fake_aligned = merge_reads_by_concatenation(&read_set, &sequence_layout);
@@ -656,7 +656,7 @@ mod tests {
             merge: None,
             reads: vec![READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, READ2 { chain_align: None, orientation: AlignedReadOrientation::Reverse }],
             known_strand: true,
-            umi_configurations: BTreeMap::new(),
+            references: BTreeMap::new(),
         };
 
         let fake_aligned = merge_reads_by_concatenation(&read_set, &sequence_layout);
@@ -668,7 +668,7 @@ mod tests {
             merge: None,
             reads: vec![READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, READ2 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
-            umi_configurations: BTreeMap::new(),
+            references: BTreeMap::new(),
         };
         let fake_aligned = merge_reads_by_concatenation(&read_set, &sequence_layout);
         assert_eq!(fake_aligned.read_bases.cmp(&both_fwd) == Ordering::Equal, true);
@@ -703,7 +703,7 @@ mod tests {
                         READ2 { chain_align: None, orientation: AlignedReadOrientation::Forward },
                         SPACER { spacer_sequence: "GGGG".to_string() }, ],
             known_strand: true,
-            umi_configurations: BTreeMap::new(),
+            references: BTreeMap::new(),
         };
 
         let fake_aligned = merge_reads_by_concatenation(&read_set, &sequence_layout);

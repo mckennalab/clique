@@ -1,16 +1,12 @@
 use std::collections::HashMap;
 use bio::bio_types::genome::AbstractInterval;
 use bio::bio_types::sequence::SequenceRead;
-use colored::Colorize;
 use rust_htslib::bam;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{Read, Record};
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView};
 use crate::reference::fasta_reference::ReferenceManager;
-use rust_htslib::bgzf::Reader;
-use crate::extractor;
 use phf::phf_map;
-use std::borrow::BorrowMut;
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq)]
 pub enum ExtractorTag {
@@ -57,12 +53,6 @@ enum FullAlignment {
 struct Reference {
     name: String,
     sequence: String,
-}
-
-struct AlignmentRegistryRead {
-    aligments: Vec<u32>,
-    extractions: Vec<ExtractorPair>,
-    reference: u16,
 }
 
 /// Compares two nucleotide sequences and breaks them up into sections of matches and mismatches.
@@ -145,7 +135,7 @@ fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_off
     sections
 }
 
-pub fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>, read_seq: &Vec<u8>, cigar: &CigarStringView) -> Vec<FullAlignment> {
+fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>, read_seq: &Vec<u8>, cigar: &CigarStringView) -> Vec<FullAlignment> {
     let mut ref_pos = *ref_start;
     let mut read_pos = 0;
     let mut alignments = Vec::new();
@@ -165,22 +155,22 @@ pub fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>
                 alignments.push(FullAlignment::Deletion(ref_pos, ln.clone()));
                 ref_pos += ln;
             }
-            Cigar::RefSkip(ln) => {
+            Cigar::RefSkip(_ln) => {
                 panic!("RefSkip Unsupported")
             }
-            Cigar::SoftClip(ln) => {
+            Cigar::SoftClip(_ln) => {
                 panic!("SoftClip Unsupported")
             }
-            Cigar::HardClip(ln) => {
+            Cigar::HardClip(_ln) => {
                 panic!("HardClip Unsupported")
             }
-            Cigar::Pad(ln) => {
+            Cigar::Pad(_ln) => {
                 panic!("Pad Unsupported")
             }
-            Cigar::Equal(ln) => {
+            Cigar::Equal(_ln) => {
                 panic!("Equal Unsupported")
             }
-            Cigar::Diff(ln) => {
+            Cigar::Diff(_ln) => {
                 panic!("Diff Unsupported")
             }
         }
@@ -189,6 +179,8 @@ pub fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>
 
     alignments
 }
+
+
 
 
 struct ReadTableEntry {
@@ -233,6 +225,20 @@ impl ExtractionTable {
     }
 }
 
+struct BAMStream<'a, 's, 't> {
+    reference_manager: ReferenceManager<'a, 's, 't>,
+
+}
+impl BAMStream<'_, '_, '_>  {
+    pub fn new(fasta_file: &String) -> Box<BAMStream> {
+
+        // read in the fasta file, creating a new BAM registry from the file
+        let rm = ReferenceManager::from(&fasta_file, 12, 6);
+        Box::new(BAMStream {
+            reference_manager: rm,
+        })
+    }
+}
 
 // the goal here is to make a large lookup table for all aspects we want to store for a read; then each
 // read can be (relatively) lightweight
@@ -273,7 +279,7 @@ impl FullBAMAlignmentRegistry<'_, '_, '_> {
         rt
     }
 
-    pub fn extraction_tags(&mut self, bam_entry: &Record) -> Vec<ExtractorPair> {
+    pub fn extraction_tags(&mut self, bam_entry: &Record ) -> Vec<ExtractorPair> {
         let mut extractors = Vec::new();
 
         bam_entry.aux_iter().for_each(|c| {
@@ -372,15 +378,6 @@ impl FullBAMAlignmentRegistry<'_, '_, '_> {
     }
 }
 
-// the goal is to be as compact as possible here --
-pub struct CellEntry {
-    name: String,
-    tags: Vec<ExtractorTag>,
-    alignment: Vec<u32>,
-    ref_id: u32,
-}
-
-
 #[cfg(test)]
 mod tests {
     use rust_htslib::bam::record::CigarString;
@@ -390,15 +387,6 @@ mod tests {
     fn test_breakup_nucleotide_sequences() {
         let reference = b"ACGTACGT"; // Example reference sequence
         let sequence = b"ACGTTGCt"; // Example sequence to compare
-        let reference_offset = 0;
-
-        let alignments = breakup_nucleotide_sequences(&reference.to_vec(), sequence, &reference_offset);
-
-        let expected_alignments = vec![
-            FullAlignment::Match(0, 4), // "ACG" matches
-            FullAlignment::Mismatch(4, vec![b'T', b'G', b'C', b't']), // "TGCt" mismatch
-        ];
-
         let reference_offset = 10;
 
         let alignments = breakup_nucleotide_sequences(&reference.to_vec(), sequence, &reference_offset);

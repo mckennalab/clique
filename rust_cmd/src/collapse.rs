@@ -14,8 +14,7 @@ use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::umis::known_list::KnownList;
 use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, InputList, vantage_point_string_graph};
 
-pub fn collapse(reference: &String,
-                final_output: &String,
+pub fn collapse(final_output: &String,
                 fast_reference_lookup: &bool,
                 temp_directory: &mut InstanceLivedTempDir,
                 read_structure: &SequenceLayoutDesign,
@@ -29,11 +28,14 @@ pub fn collapse(reference: &String,
                 find_inversions: &bool) {
 
     // load up the reference files
-    let rm = ReferenceManager::from(&reference, 12, 6);
+    let rm = ReferenceManager::from_yaml_input(read_structure, 12, 6);
 
     // validate that each reference has the specified capture groups
     let validated_references = rm.references.iter().
-        map(|rf| read_structure.validate_reference_sequence(&rf.1.sequence_u8)).all(|x| x == true);
+        map(|rf| {
+            let reference_config = read_structure.references.get(String::from_utf8(rf.1.name.clone()).unwrap().as_str()).unwrap();
+            SequenceLayoutDesign::validate_reference_sequence(&rf.1.sequence_u8,&reference_config.umi_configurations)
+        }).all(|x| x == true);
 
     assert!(validated_references, "The reference sequences do not match the capture groups specified in the read structure file.");
 
@@ -61,31 +63,36 @@ pub fn collapse(reference: &String,
     info!("Sorting the aligned reads");
 
     let mut read_count = ret.0;
-    let mut sorted_input = ret.1;
 
     info!("Sorting by read tags");
 
     // sort the reads by the tags
     let mut levels = 0;
-    read_structure.get_sorted_umi_configurations().iter().for_each(|tag| {
-        match tag.sort_type {
-            UMISortType::KnownTag => {
-                let ret = sort_known_level(temp_directory, &sorted_input, &tag, &read_count);
-                sorted_input = ret.1;
-                read_count = ret.0;
-            }
-            UMISortType::DegenerateTag => {
-                let ret = sort_degenerate_level(temp_directory, &sorted_input, &tag, &levels, &read_count);
-                sorted_input = ret.1;
-                read_count = ret.0;
-            }
-        }
-        levels += 1;
-    });
-    info!("writing consensus reads");
+    ret.1.into_iter().for_each(|(ref_name,sorted_reads)| {
+        let mut sorted_input = sorted_reads;
 
-    // collapse the final reads down to a single sequence and write everything to the disk
-    write_consensus_reads(&sorted_input, final_output, levels, &read_count, &rm, &40);
+        read_structure.get_sorted_umi_configurations(&ref_name).iter().for_each(|tag| {
+            match tag.sort_type {
+                UMISortType::KnownTag => {
+                    let ret = sort_known_level(temp_directory, &sorted_input, &tag, &read_count);
+                    sorted_input = ret.1;
+                    read_count = ret.0;
+                }
+                UMISortType::DegenerateTag => {
+                    let ret = sort_degenerate_level(temp_directory, &sorted_input, &tag, &levels, &read_count);
+                    sorted_input = ret.1;
+                    read_count = ret.0;
+                }
+            }
+            levels += 1;
+        });
+
+        info!("writing consensus reads for reference {}",ref_name);
+        // collapse the final reads down to a single sequence and write everything to the disk
+        write_consensus_reads(&sorted_input, final_output, levels, &read_count, &rm, &40);
+    });
+
+
 }
 
 
@@ -266,7 +273,7 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                              tag: &UMIConfiguration,
                              iteration: &usize, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
     info!("Sorting degenerate level {}",tag.symbol);
-    // create a new output
+
     let mut all_read_count: usize = 0;
     let mut output_reads: usize = 0;
 
@@ -364,7 +371,7 @@ fn close_and_write_bin(sender: &mut ShardSender<SortingReadSetContainer>, curren
 
 pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &ShardReader<SortingReadSetContainer>, tag: &UMIConfiguration, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
     info!("Sorting known level {}",tag.symbol);
-    // get the known lookup table
+
     info!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
     let mut known_lookup = KnownList::read_known_list_file(&tag, &tag.file.as_ref().unwrap(), &8);
     let mut processed_reads = 0;
@@ -393,14 +400,6 @@ pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &Shar
             assert_eq!(next_key.0, tag.symbol);
 
             let corrected_hits = correct_to_known_list(&next_key.1, &mut known_lookup, &tag.max_distance);
-            /*warn!("{} {} {} for {} and {} named {}",
-                corrected_hits.hits.len(),
-                corrected_hits.distance,
-                tag.max_distance,
-                FastaBase::to_string(&sorting_read_set_container.aligned_read.aligned_read),
-                FastaBase::to_string(&sorting_read_set_container.aligned_read.aligned_ref),
-                sorting_read_set_container.aligned_read.read_name);*/
-
             match (corrected_hits.hits.len(), corrected_hits.distance) {
                 (x, _) if x < 1 => {
                     dropped_reads += 1;
