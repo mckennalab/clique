@@ -526,7 +526,7 @@ impl AlignmentResult {
 
         AlignmentResult {
             reference_aligned: str1.clone(),
-            read_aligned: str1.clone(),
+            read_aligned: str2.clone(),
             cigar_string,
             path,
             score,
@@ -1087,6 +1087,7 @@ mod tests {
         assert_eq!(results.reference_aligned, str_to_fasta_vec("----------------AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
         assert_eq!(results.read_aligned, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
     }
+
 
     #[test]
     fn affine_alignment_test() {
