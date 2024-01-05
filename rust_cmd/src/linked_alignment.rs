@@ -8,6 +8,7 @@ use ndarray::Ix3;
 use crate::*;
 use crate::alignment::alignment_matrix::AlignmentTag::Del;
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
+use crate::alignment_functions::simplify_cigar_string;
 use crate::reference::fasta_reference::SuffixTableLookup;
 
 /// find a read's orientation using the greatest total number of matching bases
@@ -247,7 +248,7 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
     AlignmentResult {
         reference_aligned: alignment_ref,
         read_aligned: alignment_read,
-        cigar_string: alignment_cigar,
+        cigar_string: simplify_cigar_string(&alignment_cigar),
         path: vec![],
         score,
         reference_start: 0,
