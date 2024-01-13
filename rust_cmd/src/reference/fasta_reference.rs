@@ -98,7 +98,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
         let references: Vec<Reference> = yaml_input.references.iter().map(|(ref_name, ref_obj)| {
            Reference{
-               sequence: FastaBase::from_string(&ref_obj.sequence),
+               sequence: FastaBase::from_vec_u8_default_ns(&ref_obj.sequence.clone().into_bytes()),
                sequence_u8: ref_obj.sequence.clone().into_bytes().clone(),
                name: ref_name.clone().into_bytes(),
                suffix_table: ReferenceManager::find_seeds(&ref_obj.sequence.clone().into_bytes().clone(), kmer_size),
