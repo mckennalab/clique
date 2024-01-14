@@ -276,6 +276,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
                                 let subsender = Arc::clone(&sender);
                                 let mut sender_unwrapped = subsender.lock().unwrap();
+                                println!("Writing to {}",new_sorted_read_container.aligned_read.ref_name.as_str());
                                 let mut dispatch: &mut ShardSender<SortingReadSetContainer> = sender_unwrapped.get_mut(new_sorted_read_container.aligned_read.ref_name.as_str()).unwrap();
                                 dispatch.send(new_sorted_read_container).unwrap();
                             } else {
