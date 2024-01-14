@@ -107,7 +107,7 @@ fn get_known_level_lookups(read_structure: &SequenceLayoutDesign) -> HashMap<Str
             match &config.file {
                 None => {}
                 Some(x) => {
-                    if ret.contains_key(x.as_str()) {
+                    if !ret.contains_key(x.as_str()) {
                         let known_lookup = KnownList::read_known_list_file(config, x, &8);
                         ret.insert(x.clone(), known_lookup);
                     }
