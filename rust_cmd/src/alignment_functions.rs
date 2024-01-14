@@ -156,6 +156,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         max_gaps_proportion: &f64,
                         threads: &usize,
                         inversions: &bool) -> (usize, HashMap<String, ShardReader<SortingReadSetContainer>>) {
+
     let read_iterator = MergedReadSequence::new(ReadIterator::new(PathBuf::from(&read1),
                                                                   Some(PathBuf::from(&read2)),
                                                                   Some(PathBuf::from(&index1)),
@@ -291,6 +292,9 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 }
             });
         });
+
+        Arc::clone(&sender).lock().unwrap().iter_mut().for_each(|(_x, y)| {y.finished().unwrap()})
+
     }
 
     sharded_outputs.into_iter().for_each(|(_name, mut sender_obj)| {
