@@ -165,8 +165,8 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     let mut output_files: HashMap<String, String> = HashMap::new();
     let sharded_outputs = read_structure.references.iter().map(|(ref_name, ref_obj)| {
         let mut output_path = output.to_str().unwrap().to_string().clone();
-        output_files.insert(ref_name.clone(), output_path.clone());
         output_path.push_str(ref_name.as_str());
+        output_files.insert(ref_name.clone(), output_path.clone());
         (ref_name.clone(), ShardWriter::new(Path::new(output_path.as_str()), 32,
                                             256,
                                             1 << 16).unwrap())
@@ -303,7 +303,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     sharded_outputs.into_iter().for_each(|(name, mut sender_obj)| {
         sender_obj.finish().unwrap();
     });
-
 
     // explicity release the memory in the common store
     STORE_CLONES.lock().unwrap().iter_mut().for_each(|x| std::mem::drop(x.lock().unwrap()));
