@@ -21,15 +21,12 @@ use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments};
 
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
-                             output_file: &String,
+                             mut writer: &mut Writer,
+                             reference_to_bin: &HashMap<Vec<u8>,u16>,
                              levels: usize,
                              read_counts: &usize,
                              reference_manager: &ReferenceManager,
                              maximum_reads_before_downsampling: &usize) {
-    info!("Writing consensus reads to {}", output_file);
-
-    let  (reference_to_bin, writer) = setup_sam_writer(output_file, reference_manager);
-    let mut writer = writer.unwrap();
 
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
@@ -48,7 +45,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
         let x = x.unwrap();
         assert_eq!(x.ordered_sorting_keys.len(), levels);
         if !(last_read.is_some() && &x.cmp(last_read.as_ref().unwrap()) == &Ordering::Equal) && buffered_reads.len() > 0 {
-            output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
+            output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, writer, &mut buffered_reads, &score, &mut alignment_mat);
             written_buffers += 1;
             buffered_reads = VecDeque::new();
         }
@@ -58,7 +55,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     });
 
     if buffered_reads.len() > 0 {
-        output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
+        output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, writer, &mut buffered_reads, &score, &mut alignment_mat);
         written_buffers += 1;
     }
     bar.set_position(processed_reads as u64);
@@ -66,13 +63,12 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
 }
 
 fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
-                                        reference_to_sam_bin: &HashMap<Vec<u8>,u16>,
+                                        reference_to_sam_bin: &HashMap<Vec<u8>, u16>,
                                         maximum_reads_before_downsampling: &usize,
                                         writer: &mut Writer,
                                         buffered_reads: &mut VecDeque<SortingReadSetContainer>,
                                         my_aff_score: &dyn AffineScoringFunction,
                                         mut alignment_mat: &mut Alignment<Ix3>) {
-
     let mut added_tags = HashMap::new();
     added_tags.insert((b'r', b'c'), buffered_reads.len().to_string());
     added_tags.insert((b'd', b'c'), cmp::min(*maximum_reads_before_downsampling, buffered_reads.len()).to_string());
@@ -108,13 +104,13 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         let bin = reference_to_sam_bin.get(&reference_pointer.name).unwrap();
         //println!("TV2 READ {} Ref {} bin {}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin);
         let mut sam_read = create_sam_record(bin,
-                                         read_names.get(0).clone().unwrap(),
-                                         &new_alignment.read_aligned,
-                                         &new_alignment.reference_aligned,
-                                         &reference_pointer.sequence_u8,
-                                         &reference_read_to_cigar_string(&new_alignment.reference_aligned, &new_alignment.read_aligned),
-                                         &true,
-                                         added_tags);
+                                             read_names.get(0).clone().unwrap(),
+                                             &new_alignment.read_aligned,
+                                             &new_alignment.reference_aligned,
+                                             &reference_pointer.sequence_u8,
+                                             &reference_read_to_cigar_string(&new_alignment.reference_aligned, &new_alignment.read_aligned),
+                                             &true,
+                                             added_tags);
 
         sam_read.set_tid(*bin as i32);
         writer.write(&sam_read).unwrap();
@@ -132,13 +128,13 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         debug!("TV READ {} Ref {} bin {}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin);
 
         let mut sam_read = create_sam_record(bin,
-                                         single_read.aligned_read.read_name.as_str(),
-                                         &single_read.aligned_read.aligned_read,
-                                         &single_read.aligned_read.aligned_ref,
-                                         original_reference,
-                                         &single_read.aligned_read.to_cigar_string(),
-                                         &true,
-                                         added_tags);
+                                             single_read.aligned_read.read_name.as_str(),
+                                             &single_read.aligned_read.aligned_read,
+                                             &single_read.aligned_read.aligned_ref,
+                                             original_reference,
+                                             &single_read.aligned_read.to_cigar_string(),
+                                             &true,
+                                             added_tags);
         sam_read.set_tid(*bin as i32);
 
         writer.write(&sam_read).unwrap();

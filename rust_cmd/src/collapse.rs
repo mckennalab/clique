@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::path::{PathBuf};
-use crate::alignment_functions::{fast_align_reads};
+use crate::alignment_functions::{fast_align_reads, setup_sam_writer};
 use crate::InstanceLivedTempDir;
 use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
@@ -66,6 +66,9 @@ pub fn collapse(final_output: &String,
 
     info!("Sorting by read tags");
 
+    let (reference_to_bin, writer) = setup_sam_writer(final_output, &rm);
+    let mut writer = writer.unwrap();
+
     ret.1.into_iter().for_each(|(ref_name,sorted_reads)| {
         let mut sorted_input = sorted_reads;
         let mut levels = 0;
@@ -87,7 +90,13 @@ pub fn collapse(final_output: &String,
 
         info!("writing consensus reads for reference {}",ref_name);
         // collapse the final reads down to a single sequence and write everything to the disk
-        write_consensus_reads(&sorted_input, final_output, levels, &read_count, &rm, &40);
+        write_consensus_reads(&sorted_input,
+                              &mut writer,
+                              &reference_to_bin,
+                              levels,
+                              &read_count,
+                              &rm,
+                              &40);
     });
 
 
