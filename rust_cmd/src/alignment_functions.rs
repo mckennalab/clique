@@ -174,40 +174,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
     let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1) * 2, (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
 
-    let sender = Arc::new(
-        Mutex::new(
-            sharded_outputs.iter().map(|(name, sharder)| { (name.clone(), sharder.get_sender()) }).collect::<HashMap<String, ShardSender<SortingReadSetContainer>>>()
-        ));
-
-    // setup local thread-safe storage for our alignment matricies
-    lazy_static! {
-        static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());
-    }
-    thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
-
-    // setup our thread pool
-    rayon::ThreadPoolBuilder::new().num_threads(*threads).build_global().unwrap();
-
-
-    let my_score = InversionScoring {
-        match_score: 9.0,
-        mismatch_score: -21.0,
-        gap_open: -25.0,
-        gap_extend: -1.0,
-        inversion_penalty: -40.0,
-        min_inversion_length: 20,
-    };
-
-    let my_aff_score = AffineScoring {
-        match_score: 10.0,
-        mismatch_score: -9.0,
-        special_character_score: 9.0,
-        gap_open: -20.0,
-        gap_extend: -1.0,
-        final_gap_multiplier: 1.0,
-
-    };
-
     // keep track of timing for progress output
     let start = Instant::now();
 
@@ -215,83 +181,124 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     let skipped_count = Arc::new(Mutex::new(0 as usize));
     let gap_rejected = Arc::new(Mutex::new(0 as usize));
 
-    read_iterator.par_bridge().for_each(|mut xx| {
-        STORE.with(|arc_mtx| {
-            let mut local_alignment = arc_mtx.lock().unwrap();
-            if local_alignment.is_none() {
-                *local_alignment = Some(alignment_mat.clone());
-                STORE_CLONES.lock().unwrap().push(arc_mtx.clone());
-            }
 
-            let aligned = align_to_reference_choices(&xx.seq(),
-                                                     &rm,
-                                                     &fast_lookup,
-                                                     read_structure,
-                                                     &mut local_alignment.as_mut().unwrap(),
-                                                     &my_aff_score,
-                                                     &my_score,
-                                                     inversions,
-                                                     *max_reference_multiplier,
-                                                     *min_read_length);
+    // setup local thread-safe storage for our alignment matricies
+    lazy_static! {
+        static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());
+        }
+    thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
 
-            match aligned {
-                None | Some((None, _, _)) => {
-                    // TODO: track and output summary
-                    debug!("Unable to create alignment for read {}",String::from_utf8(xx.name().clone()).unwrap());
+    {
+        let sender = Arc::new(
+            Mutex::new(
+                sharded_outputs.iter().map(|(name, sharder)| { (name.clone(), sharder.get_sender()) }).collect::<HashMap<String, ShardSender<SortingReadSetContainer>>>()
+            ));
+
+        // setup our thread pool
+        rayon::ThreadPoolBuilder::new().num_threads(*threads).build_global().unwrap();
+
+
+        let my_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        let my_aff_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -9.0,
+            special_character_score: 9.0,
+            gap_open: -20.0,
+            gap_extend: -1.0,
+            final_gap_multiplier: 1.0,
+
+        };
+
+
+        read_iterator.par_bridge().for_each(|mut xx| {
+            STORE.with(|arc_mtx| {
+                let mut local_alignment = arc_mtx.lock().unwrap();
+                if local_alignment.is_none() {
+                    *local_alignment = Some(alignment_mat.clone());
+                    STORE_CLONES.lock().unwrap().push(arc_mtx.clone());
                 }
-                Some((Some(alignment), ref_seq, ref_name)) => {
-                    let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
-                    let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
 
-                    let full_ref = stretch_sequence_to_alignment(&ref_al, &ref_seq);
-                    let ets = extract_tagged_sequences(&read_al, &full_ref);
+                let aligned = align_to_reference_choices(&xx.seq(),
+                                                         &rm,
+                                                         &fast_lookup,
+                                                         read_structure,
+                                                         &mut local_alignment.as_mut().unwrap(),
+                                                         &my_aff_score,
+                                                         &my_score,
+                                                         inversions,
+                                                         *max_reference_multiplier,
+                                                         *min_read_length);
 
-                    let gap_proportion = gap_proportion_per_tag(&ets);
-
-                    let sorted_tags = get_sorting_order(read_structure, &String::from_utf8(ref_name.clone()).unwrap());
-
-                    if gap_proportion.len() == 0 || gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
-                        let (invalid_read, read_tags_ordered) = extract_tag_sequences(&sorted_tags, ets);
-
-                        if !invalid_read {
-                            //println!("READ {} Ref {} ",String::from_utf8(xx.name().clone()).unwrap(), String::from_utf8(ref_name.clone()).unwrap());
-                            let new_sorted_read_container = SortingReadSetContainer {
-                                ordered_sorting_keys: vec![], // for future use
-                                ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
-                                aligned_read: SortedAlignment {
-                                    aligned_read: alignment.read_aligned.clone(),
-                                    aligned_ref: alignment.reference_aligned,
-                                    ref_name: String::from_utf8(ref_name.clone()).unwrap(),
-                                    read_name: String::from_utf8(xx.name().clone()).unwrap(),
-                                    cigar_string: alignment.cigar_string.clone(),
-                                    score: alignment.score,
-                                },
-                            };
-
-                            // sanity check that we have the right number of tags
-                            //assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
-
-                            let subsender = Arc::clone(&sender);
-                            let mut sender_unwrapped = subsender.lock().unwrap();
-                            let mut dispatch: &mut ShardSender<SortingReadSetContainer> = sender_unwrapped.get_mut(new_sorted_read_container.aligned_read.ref_name.as_str()).unwrap();
-                            dispatch.send(new_sorted_read_container).unwrap();
-                        } else {
-                            *skipped_count.lock().unwrap() += 1;
-                        }
-                    } else {
-                        *gap_rejected.lock().unwrap() += 1;
+                match aligned {
+                    None | Some((None, _, _)) => {
+                        // TODO: track and output summary
+                        debug!("Unable to create alignment for read {}",String::from_utf8(xx.name().clone()).unwrap());
                     }
+                    Some((Some(alignment), ref_seq, ref_name)) => {
+                        let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
+                        let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
+
+                        let full_ref = stretch_sequence_to_alignment(&ref_al, &ref_seq);
+                        let ets = extract_tagged_sequences(&read_al, &full_ref);
+
+                        let gap_proportion = gap_proportion_per_tag(&ets);
+
+                        let sorted_tags = get_sorting_order(read_structure, &String::from_utf8(ref_name.clone()).unwrap());
+
+                        if gap_proportion.len() == 0 || gap_proportion.iter().max_by(|a, b| a.total_cmp(b)).unwrap() <= max_gaps_proportion {
+                            let (invalid_read, read_tags_ordered) = extract_tag_sequences(&sorted_tags, ets);
+
+                            if !invalid_read {
+                                //println!("READ {} Ref {} ",String::from_utf8(xx.name().clone()).unwrap(), String::from_utf8(ref_name.clone()).unwrap());
+                                let new_sorted_read_container = SortingReadSetContainer {
+                                    ordered_sorting_keys: vec![], // for future use
+                                    ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
+                                    aligned_read: SortedAlignment {
+                                        aligned_read: alignment.read_aligned.clone(),
+                                        aligned_ref: alignment.reference_aligned,
+                                        ref_name: String::from_utf8(ref_name.clone()).unwrap(),
+                                        read_name: String::from_utf8(xx.name().clone()).unwrap(),
+                                        cigar_string: alignment.cigar_string.clone(),
+                                        score: alignment.score,
+                                    },
+                                };
+
+                                // sanity check that we have the right number of tags
+                                //assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
+
+                                let subsender = Arc::clone(&sender);
+                                let mut sender_unwrapped = subsender.lock().unwrap();
+                                let mut dispatch: &mut ShardSender<SortingReadSetContainer> = sender_unwrapped.get_mut(new_sorted_read_container.aligned_read.ref_name.as_str()).unwrap();
+                                dispatch.send(new_sorted_read_container).unwrap();
+                            } else {
+                                *skipped_count.lock().unwrap() += 1;
+                            }
+                        } else {
+                            *gap_rejected.lock().unwrap() += 1;
+                        }
+                    }
+                };
+
+                *read_count.lock().unwrap() += 1;
+                if *read_count.lock().unwrap() % 1000000 == 0 {
+                    let duration = start.elapsed();
+                    info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
                 }
-            };
-
-            *read_count.lock().unwrap() += 1;
-            if *read_count.lock().unwrap() % 1000000 == 0 {
-                let duration = start.elapsed();
-                info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
-            }
+            });
         });
-    });
 
+        //let final_senders = Arc::clone(&sender);
+        //let final_sender_unwrapped = final_senders.lock().unwrap();
+        //final_sender_unwrapped.iter().for_each(|(c, y)| y.finished().unwrap());
+    }
     sharded_outputs.into_iter().for_each(|(name, mut sender_obj)| {
         sender_obj.finish().unwrap();
     });
