@@ -79,7 +79,7 @@ pub fn collapse(final_output: &String,
                     read_count = ret.0;
                 }
                 UMISortType::DegenerateTag => {
-                    let ret = sort_degenerate_level(temp_directory, &sorted_input, &tag, &levels, &read_count);
+                    let ret = sort_degenerate_level(temp_directory, &sorted_input, &tag,  &read_count);
                     sorted_input = ret.1;
                     read_count = ret.0;
                 }
