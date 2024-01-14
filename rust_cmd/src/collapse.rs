@@ -67,7 +67,7 @@ pub fn collapse(final_output: &String,
     info!("Sorting by read tags");
 
     // sort the reads by the tags
-    let mut levels = 0;
+    //let mut levels = 0;
     ret.1.into_iter().for_each(|(ref_name,sorted_reads)| {
         let mut sorted_input = sorted_reads;
 
@@ -84,12 +84,12 @@ pub fn collapse(final_output: &String,
                     read_count = ret.0;
                 }
             }
-            levels += 1;
+            //levels += 1;
         });
 
         info!("writing consensus reads for reference {}",ref_name);
         // collapse the final reads down to a single sequence and write everything to the disk
-        write_consensus_reads(&sorted_input, final_output, levels, &read_count, &rm, &40);
+        write_consensus_reads(&sorted_input, final_output, &read_count, &rm, &40);
     });
 
 
