@@ -313,9 +313,9 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     let outputs = output_files.into_iter().filter(|(ref_name, out)| {
         let exists = Path::new(out).exists();
         if !exists {
-            warn!("Dropping reference {} as no reads were aligned to it", ref_name);
+            warn!("Dropping reference {} as no reads were aligned to it, file {}", ref_name, out);
         } else {
-            warn!("KEEP reference {} as no reads were aligned to it", ref_name);
+            warn!("KEEP reference {} as no reads were aligned to it, file {}", ref_name, out);
         }
         exists
     }).map(|(ref_name, out)| {
