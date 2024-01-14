@@ -72,9 +72,9 @@ mod umis {
     pub mod bronkerbosch;
     pub mod known_list;
 }
-mod calling {
-    pub mod bam_file_to_cell_list;
-}
+//mod calling {
+//    pub mod bam_file_to_cell_list;
+//}
 
 mod consensus {
     pub mod consensus_builders;

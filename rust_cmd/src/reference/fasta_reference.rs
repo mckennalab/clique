@@ -31,19 +31,11 @@ pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> V
     reference_sequences_to_structs(fasta_entries,kmer_size)
 }
 
-pub fn reference_yaml_to_structs(yaml_entries: &SequenceLayoutDesign, kmer_size: usize) -> Vec<Reference> {
-    let entries = yaml_entries.references.iter().map(|(rf_name,rf)| {
-        Record::with_attrs(rf_name.as_str(), None, rf.sequence.clone().as_bytes())
-    }).collect();
-    reference_sequences_to_structs(entries, kmer_size)
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SuffixTableLookup<'s, 't> {
     pub suffix_table: SuffixTable<'s, 't>,
     pub seed_size: usize,
 }
-
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reference<'s, 't> {

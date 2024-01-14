@@ -163,7 +163,8 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
 
     let mut output_files: HashMap<String, String> = HashMap::new();
-    let sharded_outputs = read_structure.references.iter().map(|(ref_name, ref_obj)| {
+
+    let sharded_outputs = read_structure.references.iter().map(|(ref_name, _ref_obj)| {
         let mut output_path = output.to_str().unwrap().to_string().clone();
         output_path.push_str(ref_name.as_str());
         output_files.insert(ref_name.clone(), output_path.clone());
@@ -270,14 +271,9 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                                         score: alignment.score,
                                     },
                                 };
-
-                                // sanity check that we have the right number of tags
-                                //assert_eq!(new_sorted_read_container.ordered_unsorted_keys.len(), read_structure.umi_configurations.len());
-
                                 let subsender = Arc::clone(&sender);
                                 let mut sender_unwrapped = subsender.lock().unwrap();
-                                //println!("Writing to {}",new_sorted_read_container.aligned_read.ref_name.as_str());
-                                let mut dispatch: &mut ShardSender<SortingReadSetContainer> = sender_unwrapped.get_mut(new_sorted_read_container.aligned_read.ref_name.as_str()).unwrap();
+                                let dispatch: &mut ShardSender<SortingReadSetContainer> = sender_unwrapped.get_mut(new_sorted_read_container.aligned_read.ref_name.as_str()).unwrap();
                                 dispatch.send(new_sorted_read_container).unwrap();
                             } else {
                                 *skipped_count.lock().unwrap() += 1;
@@ -295,16 +291,12 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 }
             });
         });
-
-        //let final_senders = Arc::clone(&sender);
-        //let final_sender_unwrapped = final_senders.lock().unwrap();
-        //final_sender_unwrapped.iter().for_each(|(c, y)| y.finished().unwrap());
     }
-    sharded_outputs.into_iter().for_each(|(name, mut sender_obj)| {
+
+    sharded_outputs.into_iter().for_each(|(_name, mut sender_obj)| {
         sender_obj.finish().unwrap();
     });
 
-    // explicity release the memory in the common store
     STORE_CLONES.lock().unwrap().iter_mut().for_each(|x| std::mem::drop(x.lock().unwrap()));
 
     let final_count = (read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone()) - gap_rejected.lock().unwrap().clone();
@@ -321,7 +313,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     }).map(|(ref_name, out)| {
         (ref_name, ShardReader::open(out).unwrap())
     }).collect::<HashMap<String, ShardReader<SortingReadSetContainer>>>();
-    (final_count,outputs)
+    (final_count, outputs)
 }
 
 fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {

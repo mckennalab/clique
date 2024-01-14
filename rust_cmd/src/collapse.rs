@@ -34,7 +34,7 @@ pub fn collapse(final_output: &String,
     let validated_references = rm.references.iter().
         map(|rf| {
             let reference_config = read_structure.references.get(String::from_utf8(rf.1.name.clone()).unwrap().as_str()).unwrap();
-            SequenceLayoutDesign::validate_reference_sequence(&rf.1.sequence_u8,&reference_config.umi_configurations)
+            SequenceLayoutDesign::validate_reference_sequence(&rf.1.sequence_u8, &reference_config.umi_configurations)
         }).all(|x| x == true);
 
     assert!(validated_references, "The reference sequences do not match the capture groups specified in the read structure file.");
@@ -61,21 +61,20 @@ pub fn collapse(final_output: &String,
                                find_inversions);
 
     info!("Sorting the aligned reads");
-
     let mut read_count = ret.0;
 
-    info!("Sorting by read tags");
+    let mut known_level_lookups = get_known_level_lookups(read_structure);
 
     let (reference_to_bin, writer) = setup_sam_writer(final_output, &rm);
     let mut writer = writer.unwrap();
 
-    ret.1.into_iter().for_each(|(ref_name,sorted_reads)| {
+    ret.1.into_iter().for_each(|(ref_name, sorted_reads)| {
         let mut sorted_input = sorted_reads;
         let mut levels = 0;
         read_structure.get_sorted_umi_configurations(&ref_name).iter().for_each(|tag| {
             match tag.sort_type {
                 UMISortType::KnownTag => {
-                    let ret = sort_known_level(temp_directory, &sorted_input, &tag, &read_count);
+                    let ret = sort_known_level(temp_directory, &sorted_input, &tag, &read_count, &mut known_level_lookups);
                     sorted_input = ret.1;
                     read_count = ret.0;
                 }
@@ -98,10 +97,24 @@ pub fn collapse(final_output: &String,
                               &rm,
                               &40);
     });
-
-
 }
 
+fn get_known_level_lookups(read_structure: &SequenceLayoutDesign) -> HashMap<String, KnownList> {
+    let mut ret: HashMap<String, KnownList> = HashMap::new();
+
+    read_structure.references.iter().for_each(|(_name, reference)| {
+        reference.umi_configurations.iter().for_each(|(_name, config)| {
+            match &config.file {
+                None => {}
+                Some(x) => {
+                    let known_lookup = KnownList::read_known_list_file(config, x, &8);
+                    ret.insert(x.clone(),known_lookup);
+                }
+            }
+        })
+    });
+    ret
+}
 
 fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
     let mut consensus = Vec::new();
@@ -376,11 +389,16 @@ fn close_and_write_bin(sender: &mut ShardSender<SortingReadSetContainer>, curren
     ret
 }
 
-pub fn sort_known_level(temp_directory: &mut InstanceLivedTempDir, reader: &ShardReader<SortingReadSetContainer>, tag: &UMIConfiguration, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
+pub fn sort_known_level(temp_directory:
+                        &mut InstanceLivedTempDir,
+                        reader: &ShardReader<SortingReadSetContainer>,
+                        tag: &UMIConfiguration,
+                        read_count: &usize,
+                        known_lookup_obj: &mut HashMap<String, KnownList>) -> (usize, ShardReader<SortingReadSetContainer>) {
     info!("Sorting known level {}",tag.symbol);
 
     info!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
-    let mut known_lookup = KnownList::read_known_list_file(&tag, &tag.file.as_ref().unwrap(), &8);
+    let mut known_lookup = known_lookup_obj.get_mut(&tag.file.as_ref().unwrap().clone()).expect(format!("Unable to find pre-cached lookup table {}",&tag.file.as_ref().clone().unwrap() ).as_str());
     let mut processed_reads = 0;
     let mut dropped_reads = 0;
     let mut collided_reads = 0;

@@ -51,11 +51,11 @@ impl SequenceLayoutDesign {
 
         let deserialized_map: SequenceLayoutDesign = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
-        for (reference_name,reference) in &deserialized_map.references {
-            // validate that UMIConfigurations have orders and that they're sequential
+        for (_reference_name,reference) in &deserialized_map.references {
             let mut ordering = reference.umi_configurations.iter().map(|(_name, umi_config)| {
                 umi_config.order.clone()
             }).collect::<Vec<usize>>();
+
             ordering.sort_by(|a, b| a.cmp(b));
 
             assert!(ordering.iter().enumerate().all(|(i, order)| {

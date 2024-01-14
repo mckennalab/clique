@@ -13,7 +13,7 @@ use indicatif::ProgressBar;
 use ndarray::Ix3;
 use rust_htslib::bam::record::{CigarString};
 use crate::alignment::alignment_matrix::{Alignment, AlignmentTag, AlignmentType as LocalAlignmentType, create_scoring_record_3d};
-use crate::alignment_functions::{create_sam_record, setup_sam_writer, simplify_cigar_string};
+use crate::alignment_functions::{create_sam_record, simplify_cigar_string};
 use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
 use rust_htslib::bam::{Writer};
@@ -21,7 +21,7 @@ use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments};
 
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
-                             mut writer: &mut Writer,
+                             writer: &mut Writer,
                              reference_to_bin: &HashMap<Vec<u8>,u16>,
                              levels: usize,
                              read_counts: &usize,
