@@ -22,6 +22,7 @@ use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlap
 
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
                              output_file: &String,
+                             levels: usize,
                              read_counts: &usize,
                              reference_manager: &ReferenceManager,
                              maximum_reads_before_downsampling: &usize) {
@@ -45,7 +46,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
             bar.set_position(processed_reads as u64);
         }
         let x = x.unwrap();
-        //assert_eq!(x.ordered_sorting_keys.len(), levels);
+        assert_eq!(x.ordered_sorting_keys.len(), levels);
         if !(last_read.is_some() && &x.cmp(last_read.as_ref().unwrap()) == &Ordering::Equal) && buffered_reads.len() > 0 {
             output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, &mut writer, &mut buffered_reads, &score, &mut alignment_mat);
             written_buffers += 1;

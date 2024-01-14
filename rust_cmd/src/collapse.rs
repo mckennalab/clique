@@ -66,11 +66,9 @@ pub fn collapse(final_output: &String,
 
     info!("Sorting by read tags");
 
-    // sort the reads by the tags
-    //let mut levels = 0;
     ret.1.into_iter().for_each(|(ref_name,sorted_reads)| {
         let mut sorted_input = sorted_reads;
-
+        let mut levels = 0;
         read_structure.get_sorted_umi_configurations(&ref_name).iter().for_each(|tag| {
             match tag.sort_type {
                 UMISortType::KnownTag => {
@@ -79,17 +77,17 @@ pub fn collapse(final_output: &String,
                     read_count = ret.0;
                 }
                 UMISortType::DegenerateTag => {
-                    let ret = sort_degenerate_level(temp_directory, &sorted_input, &tag,  &read_count);
+                    let ret = sort_degenerate_level(temp_directory, &sorted_input, &tag, &levels, &read_count);
                     sorted_input = ret.1;
                     read_count = ret.0;
                 }
             }
-            //levels += 1;
+            levels += 1;
         });
 
         info!("writing consensus reads for reference {}",ref_name);
         // collapse the final reads down to a single sequence and write everything to the disk
-        write_consensus_reads(&sorted_input, final_output, &read_count, &rm, &40);
+        write_consensus_reads(&sorted_input, final_output, levels, &read_count, &rm, &40);
     });
 
 
