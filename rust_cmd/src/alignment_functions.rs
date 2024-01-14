@@ -309,7 +309,11 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
     let final_count = (read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone()) - gap_rejected.lock().unwrap().clone();
     info!("Aligned {} reads; {} gap-rejected and {} skipped for being longer than {} their reference size", final_count, gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),*max_reference_multiplier);
-    (final_count, output_files.into_iter().map(|(ref_name, out)| { (ref_name, ShardReader::open(out).unwrap()) }).collect::<HashMap<String, ShardReader<SortingReadSetContainer>>>())
+
+    let outputs = output_files.into_iter().filter(|(ref_name, out)| Path::new(out).exists()).map(|(ref_name, out)| {
+        (ref_name, ShardReader::open(out).unwrap())
+    }).collect::<HashMap<String, ShardReader<SortingReadSetContainer>>>();
+    (final_count,outputs)
 }
 
 fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {
