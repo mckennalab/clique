@@ -107,8 +107,10 @@ fn get_known_level_lookups(read_structure: &SequenceLayoutDesign) -> HashMap<Str
             match &config.file {
                 None => {}
                 Some(x) => {
-                    let known_lookup = KnownList::read_known_list_file(config, x, &8);
-                    ret.insert(x.clone(),known_lookup);
+                    if ret.contains_key(x.as_str()) {
+                        let known_lookup = KnownList::read_known_list_file(config, x, &8);
+                        ret.insert(x.clone(), known_lookup);
+                    }
                 }
             }
         })
@@ -398,7 +400,7 @@ pub fn sort_known_level(temp_directory:
     info!("Sorting known level {}",tag.symbol);
 
     info!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
-    let mut known_lookup = known_lookup_obj.get_mut(&tag.file.as_ref().unwrap().clone()).expect(format!("Unable to find pre-cached lookup table {}",&tag.file.as_ref().clone().unwrap() ).as_str());
+    let mut known_lookup = known_lookup_obj.get_mut(&tag.file.as_ref().unwrap().clone()).expect(format!("Unable to find pre-cached lookup table {}", &tag.file.as_ref().clone().unwrap()).as_str());
     let mut processed_reads = 0;
     let mut dropped_reads = 0;
     let mut collided_reads = 0;
