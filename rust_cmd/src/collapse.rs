@@ -28,7 +28,7 @@ pub fn collapse(final_output: &String,
                 find_inversions: &bool) {
 
     // load up the reference files
-    let rm = ReferenceManager::from_yaml_input(read_structure, 12, 6);
+    let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
 
     // validate that each reference has the specified capture groups
     let validated_references = rm.references.iter().

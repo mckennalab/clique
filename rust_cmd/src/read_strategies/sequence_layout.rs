@@ -194,15 +194,13 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_basic_yaml_readback_invalid_ordering() {
-        let configuration =
-            SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid.yaml")).unwrap();
+        SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid.yaml")).unwrap();
     }
 
     #[test]
     #[should_panic]
     fn test_basic_yaml_readback_invalid_ordering2() {
-        let configuration =
-            SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid2.yaml")).unwrap();
+        SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid2.yaml")).unwrap();
     }
 
 

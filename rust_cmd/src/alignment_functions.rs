@@ -156,7 +156,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         max_gaps_proportion: &f64,
                         threads: &usize,
                         inversions: &bool) -> (usize, HashMap<String, ShardReader<SortingReadSetContainer>>) {
-
     let read_iterator = MergedReadSequence::new(ReadIterator::new(PathBuf::from(&read1),
                                                                   Some(PathBuf::from(&read2)),
                                                                   Some(PathBuf::from(&index1)),
@@ -293,8 +292,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
             });
         });
 
-        Arc::clone(&sender).lock().unwrap().iter_mut().for_each(|(_x, y)| {y.finished().unwrap()})
-
+        Arc::clone(&sender).lock().unwrap().iter_mut().for_each(|(_x, y)| { y.finished().unwrap() })
     }
 
     sharded_outputs.into_iter().for_each(|(_name, mut sender_obj)| {
@@ -736,12 +734,23 @@ fn quick_alignment_search(read: &Vec<FastaBase>,
     }
 }
 
-fn exhaustive_alignment_search(read: &Vec<FastaBase>, rm: &&ReferenceManager, read_structure: &SequenceLayoutDesign, alignment_mat: &mut Alignment<Ix3>, my_aff_score: &AffineScoring, my_score: &InversionScoring, use_inversions: &bool, max_reference_multiplier: f64, min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
+fn exhaustive_alignment_search(read: &Vec<FastaBase>,
+                               rm: &&ReferenceManager,
+                               read_structure: &SequenceLayoutDesign,
+                               alignment_mat: &mut Alignment<Ix3>,
+                               my_aff_score: &AffineScoring,
+                               my_score: &InversionScoring,
+                               use_inversions: &bool,
+                               max_reference_multiplier: f64,
+                               min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
+
     let references = &rm.references;
 
     let ranked_alignments = references.iter().map(|reference| {
         match alignment(read, reference.1, read_structure, alignment_mat, my_aff_score, my_score, use_inversions, max_reference_multiplier, min_read_length) {
-            None => None,
+            None => {
+                None
+            },
             Some(aln) => Some((aln, reference.1.sequence_u8.clone(), reference.1.name.clone())),
         }
     }).filter(|x| x.is_some()).map(|c| c.unwrap());
@@ -1007,10 +1016,55 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use rust_htslib::bam;
-    use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
+    use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d};
     use crate::alignment::fasta_bit_encoding::FastaBase;
-    use crate::alignment_functions::{simplify_cigar_string};
+    use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
+    use crate::alignment_functions::{exhaustive_alignment_search, simplify_cigar_string};
+    use crate::read_strategies::sequence_layout::{AlignedReadOrientation, ReadPosition, SequenceLayoutDesign};
+    use crate::reference::fasta_reference::ReferenceManager;
+
+    #[test]
+    fn test_find_best_reference() {
+        //fn exhaustive_alignment_search(read: &Vec<FastaBase>, rm: &&ReferenceManager, read_structure: &SequenceLayoutDesign, alignment_mat: &mut Alignment<Ix3>, my_aff_score: &AffineScoring, my_score: &InversionScoring, use_inversions: &bool, max_reference_multiplier: f64, min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
+        let ref_location = &"test_data/test_best_alignment.fasta".to_string();
+        let rm = ReferenceManager::from(&ref_location,8,8);
+
+        let read_one = FastaBase::from_string(&"atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTAGCAAACAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAAACCCCGGGgaattcgggcccattggtatggc".to_string().to_ascii_uppercase());
+
+        let read_structure = SequenceLayoutDesign{
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            known_strand: true,
+            references: BTreeMap::new(),
+        };
+
+        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::AFFINE, false);
+
+        let my_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        let my_aff_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -9.0,
+            special_character_score: 9.0,
+            gap_open: -20.0,
+            gap_extend: -1.0,
+            final_gap_multiplier: 1.0,
+
+        };
+
+        let best_ref = exhaustive_alignment_search(&read_one, &&rm, &read_structure, &mut read_mat, &my_aff_score, &my_score, &false, 2.0,30 );
+        assert_eq!(best_ref.unwrap().2,"1_AAACCCCGGG_GGTAGCAAACGTTTGGACGTG".to_string().into_bytes());
+    }
 
     #[test]
     fn simplify_cigar_test() {
