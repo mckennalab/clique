@@ -135,9 +135,6 @@ enum Cmd {
         read_structure: String,
 
         #[clap(long)]
-        reference: String,
-
-        #[clap(long)]
         output_bam_file: String,
 
         #[clap(long, default_value = "2")]
@@ -220,7 +217,6 @@ fn main() {
 
         Cmd::Align {
             read_structure,
-            reference,
             output_bam_file: output,
             max_reference_multiplier,
             min_read_length,
@@ -232,10 +228,8 @@ fn main() {
             find_inversions,
         } => {
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
-
-            // load up the reference files
-            let rm = ReferenceManager::from(&reference, 12, 6);
-
+            let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
+            
             let output_path = Path::new(&output);
 
             align_reads(&my_yaml,
