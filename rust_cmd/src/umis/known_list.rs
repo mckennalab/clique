@@ -19,9 +19,12 @@ pub struct KnownList {
 
 impl KnownList {
 
-    pub fn read_known_list_file(umi_type: &UMIConfiguration, filename: &str, starting_nmer_size: &usize) -> KnownList {
+    pub fn read_known_list_file(umi_type: &UMIConfiguration, starting_nmer_size: &usize) -> KnownList {
 
-        info!("Setting up known list reader for {}", &filename);
+        let filename = umi_type.file.clone().unwrap();
+        let filename = filename.as_str();
+
+        info!("Setting up known list reader for {}", filename);
         let min_max = KnownList::get_min_max_length(filename);
 
         let rev_comp = umi_type.reverse_complement_sequences.clone().unwrap_or(false);

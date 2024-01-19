@@ -108,7 +108,7 @@ fn get_known_level_lookups(read_structure: &SequenceLayoutDesign) -> HashMap<Str
                 None => {}
                 Some(x) => {
                     if !ret.contains_key(x.as_str()) {
-                        let known_lookup = KnownList::read_known_list_file(config, x, &8);
+                        let known_lookup = KnownList::read_known_list_file(config, &8);
                         ret.insert(x.clone(), known_lookup);
                     }
                 }
@@ -405,7 +405,10 @@ pub fn sort_known_level(temp_directory:
     let mut dropped_reads = 0;
     let mut collided_reads = 0;
     info!("Sorting reads");
-    let bar = ProgressBar::new(read_count.clone() as u64);
+    let mut bar : Option<ProgressBar>= match *read_count > 100000 {
+        true => Some(ProgressBar::new(read_count.clone() as u64)),
+        false => None,
+    };
 
     // create a new output
     let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
@@ -418,7 +421,7 @@ pub fn sort_known_level(temp_directory:
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
             processed_reads += 1;
             if processed_reads % 10000 == 0 {
-                bar.set_position(processed_reads as u64);
+                bar.as_mut().map(|b| b.set_position(processed_reads as u64));
             }
             let mut sorting_read_set_container = x.unwrap();
             assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), tag.order);
@@ -449,7 +452,7 @@ pub fn sort_known_level(temp_directory:
         sender.finished().unwrap();
         sharded_output.finish().unwrap();
     }
-    bar.set_position(processed_reads as u64);
+    bar.as_mut().map(|b| b.set_position(processed_reads as u64));
 
     info!("For known tag {} we processed {} reads", &tag.symbol, processed_reads);
 

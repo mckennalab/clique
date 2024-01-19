@@ -459,10 +459,11 @@ pub fn generate_simulated_data(length: usize, groups: usize, error_strings_per_s
 mod tests {
     use std::fs::File;
     use std::io;
-    use std::io::BufRead;
+    use std::io::{BufRead, BufReader};
     use std::path::Path;
     use std::time::Instant;
     use rand::distributions::Slice;
+    use crate::read_strategies::sequence_layout::{UMIConfiguration, UMISortType};
     use crate::utils::base_utils::edit_distance;
     use super::*;
 
@@ -613,6 +614,36 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn test_real_known_set() {
+        let known_5p_list = UMIConfiguration{
+            symbol: '0',
+            file: Some("test_data/737K-august-2016.txt".to_string()),
+            reverse_complement_sequences: Some(false),
+            sort_type: UMISortType::KnownTag,
+            length: 16,
+            order: 0,
+            pad: None,
+            max_distance: 0,
+            maximum_subsequences: Some(25000),
+        };
+        
+        let mut known_lookup = KnownList::read_known_list_file(&known_5p_list, &8);
+        let file = File::open("test_data/737K-august-2016.txt".to_string()).unwrap();
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            //println!("{}", line?);
+            assert_eq!(correct_to_known_list(&FastaBase::from_string(&line.unwrap()), &mut known_lookup, &0).hits.len(), 1);
+        }
+        assert_eq!(correct_to_known_list(&FastaBase::from_string(&"AAAAAAAACCCCCCCC".to_string()), &mut known_lookup, &0).hits.len(), 0);
+
+        // mutate a known barcode = AAACCTGAGAAGGTTT to AAACCTGAGAAGGTTA with a max distance of 1
+        assert_eq!(correct_to_known_list(&FastaBase::from_string(&"TAACCTGAGAAGGTTT".to_string()), &mut known_lookup, &1).hits.len(), 1);
+    }
+
+
     #[test]
     fn test_sift4_vs_string_dist() {
         let low_match = "AAAAAAAA";
@@ -675,12 +706,6 @@ mod tests {
             println!("string_distance_break close/low {}", now.elapsed().as_millis());
         }
     }
-
-    #[test]
-    fn test_vantage_point_vs_all_by_all() {
-
-    }
-
 
     #[test]
     fn test_cc_group_size() {
