@@ -252,6 +252,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         println!("ALIGNED\n{}\n{}",String::from_utf8(read_al.clone()).unwrap(),String::from_utf8(ref_al.clone()).unwrap());
                         let full_ref = stretch_sequence_to_alignment(&ref_al, &ref_seq);
                         let ets = extract_tagged_sequences(&read_al, &full_ref);
+                        println!("ALIGNED\n{}",String::from_utf8(full_ref.clone()).unwrap());
 
                         let gap_proportion = gap_proportion_per_tag(&ets);
 
