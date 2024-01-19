@@ -103,15 +103,28 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         let reference_name_to_ref = references.iter().map(|(i,r)| (r.name.clone(),*i)).collect();
         ReferenceManager{ references, reference_name_to_ref, unique_kmers, kmer_size: kmer_size.clone(), kmer_skip: kmer_spacing.clone(), longest_ref }
     }
-    pub fn from(fasta: &String, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
 
-        let references = reference_file_to_structs(&fasta, kmer_size);
+    pub fn from_fa_file(fasta_file: &String, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
+        let references = reference_file_to_structs(&fasta_file, kmer_size);
+        ReferenceManager::from_fasta_vec(references, kmer_size, kmer_spacing)
+    }
+
+    pub fn from_fasta_vec(references: Vec<Reference<'a, 'a>>, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager<'a, 'a, 'a> {
         let longest_ref = references.iter().map(|r| r.sequence.len()).max().unwrap_or(0);
         let unique_kmers = ReferenceManager::unique_kmers(&references, &kmer_size, &kmer_spacing);
         let references = references.into_iter().enumerate().collect::<HashMap<usize,Reference>>();
         let reference_name_to_ref = references.iter().map(|(i,r)| (r.name.clone(),*i)).collect();
-        ReferenceManager{ references, reference_name_to_ref, unique_kmers, kmer_size: kmer_size.clone(), kmer_skip: kmer_spacing.clone(), longest_ref }
+
+        ReferenceManager{
+            references,
+            reference_name_to_ref,
+            unique_kmers,
+            kmer_size: kmer_size.clone(),
+            kmer_skip: kmer_spacing.clone(),
+            longest_ref
+        }
     }
+
 
     /// Find the suffix array 'seeds' given a reference sequence
     ///
@@ -192,7 +205,7 @@ mod tests {
     fn test_kmer_creation_from_large_library() {
         // basic does it work test
         let order_fastas = String::from("test_data/18guide1_pcr_sequence.fasta");
-        let rm = ReferenceManager::from(&order_fastas,15, 5 );
+        let rm = ReferenceManager::from_fa_file(&order_fastas, 15, 5 );
 
         for (reference,kmers) in rm.unique_kmers.reference_to_kmer {
             println!("Reference name {} and count {}",String::from_utf8(reference.name).unwrap(),kmers.len());
@@ -204,7 +217,7 @@ mod tests {
     fn test_kmer_creation_from_two_libs() {
         // basic does it work test
         let order_fastas = String::from("test_data/two_references_just_one.fa");
-        let rm = ReferenceManager::from(&order_fastas,15, 5 );
+        let rm = ReferenceManager::from_fa_file(&order_fastas, 15, 5 );
         assert_eq!(rm.references.len(),1);
 
         for (reference,kmers) in rm.unique_kmers.reference_to_kmer {
@@ -212,7 +225,7 @@ mod tests {
             assert!(kmers.contains(&"GGGCGAGATCAAGCA".as_bytes().to_vec()));
         }
         let order_fastas = String::from("test_data/two_references.fa");
-        let rm = ReferenceManager::from(&order_fastas,15, 5 );
+        let rm = ReferenceManager::from_fa_file(&order_fastas, 15, 5 );
         assert_eq!(rm.references.len(),2);
 
         for (_reference_index,kmers) in rm.unique_kmers.reference_to_kmer.iter().enumerate() {
@@ -229,7 +242,7 @@ mod tests {
     #[test]
     fn test_alignment_to_large_library() {
         let order_fastas = String::from("test_data/18guide1_pcr_sequence.fasta");
-        let rm = ReferenceManager::from(&order_fastas,8, 5 );
+        let rm = ReferenceManager::from_fa_file(&order_fastas, 8, 5 );
 
         let read_iterator = ReadIterator::new(PathBuf::from("test_data/PAM_TWIST_1_018_S20_merged_001.fastq.gz"),
                                               None,
