@@ -36,7 +36,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
-    let (_reference_mapper, output_file) = setup_sam_writer(&output.to_str().unwrap().to_string(), rm);
+    let (reference_mapper, output_file) = setup_sam_writer(&output.to_str().unwrap().to_string(), rm);
     let output_file = output_file.expect("Unable to create output bam file");
 
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
@@ -107,7 +107,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                         // TODO: we should track this and provide a final summary
                         debug!("Unable to create alignment for read {}",name);
                     }
-                    Some((results, orig_ref_seq, _ref_name)) => {
+                    Some((results, orig_ref_seq, ref_name)) => {
                         match results {
                             None => {
                                 // TODO: we should track this and provide a final summary
@@ -124,7 +124,8 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                                 }
                                 assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
 
-                                let samrecord = aln.to_sam_record(&name, &orig_ref_seq, &true);
+                                let reference_record =  reference_mapper.get(ref_name.as_slice()).unwrap();
+                                let samrecord = aln.to_sam_record(&name, &orig_ref_seq, &i32::try_from(*reference_record).ok().unwrap(), &true);
 
                                 let mut output = output.lock().unwrap();
                                 output.write(&samrecord).expect("Unable to write read to output bam file");
@@ -1135,6 +1136,7 @@ mod tests {
         for _i in 0..1000 {
             out.write(&alignment_record.to_sam_record("test",
                                                       &"CCAATCTACTACTGCTTGCA".to_string().into_bytes(),
+                                                      &0,
                                                       &false)).unwrap();
         }
     }

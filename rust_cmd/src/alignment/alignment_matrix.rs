@@ -537,7 +537,7 @@ impl AlignmentResult {
     }
 
 
-    pub fn to_sam_record(&self, read_name: &str, original_reference: &Vec<u8>, extract_capture_tags: &bool) -> Record {
+    pub fn to_sam_record(&self, read_name: &str, original_reference_sequence: &Vec<u8>, reference_name: &i32, extract_capture_tags: &bool) -> Record {
         // TODO: Fix reference pointer here - set the t index!!!!
         let mut record = Record::new();
         let seq = FastaBase::to_vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>());
@@ -552,9 +552,10 @@ impl AlignmentResult {
             self.cigar_string.iter().map(|m| format!("{}", m)).collect::<Vec<String>>().join("").clone().into_bytes()
         };
 
+        record.set_tid(*reference_name);
         let cigar = CigarString::try_from(cigar_string_rep.as_slice()).expect("Unable to parse cigar string.");
 
-        // we don't currently calculate real quality scores
+        // TODO: we don't currently calculate real quality scores
         let quals = vec![255 as u8; seq.len()];
 
         record.set(read_name.as_bytes(), Some(&cigar), &seq.as_slice(), &quals.as_slice());
@@ -565,7 +566,7 @@ impl AlignmentResult {
         record.push_aux(vec![b'a', b's'].as_slice(), Aux::String(self.score.to_string().as_str())).expect("Unable to set reference alignment score");
 
         if *extract_capture_tags {
-            let full_ref = stretch_sequence_to_alignment(&FastaBase::to_vec_u8(&self.reference_aligned), original_reference);
+            let full_ref = stretch_sequence_to_alignment(&FastaBase::to_vec_u8(&self.reference_aligned), original_reference_sequence);
             let ets = extract_tagged_sequences(&FastaBase::to_vec_u8(&self.read_aligned), &full_ref);
 
             ets.iter().for_each(|(tag, seq)| {
@@ -1319,7 +1320,7 @@ mod tests {
             bounding_box: None,
         };
 
-        alignment_record.to_sam_record("test", &vec![], &false);
+        alignment_record.to_sam_record("test", &vec![], &0, &false);
     }
 }
 
