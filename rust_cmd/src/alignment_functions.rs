@@ -93,7 +93,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
             if xx.seq().len() < max_read_size {
                 let aligned = align_to_reference_choices(&xx.seq(),
                                                          &rm,
-                                                         &true,
+                                                         &false,
                                                          read_structure,
                                                          &mut local_alignment.as_mut().unwrap(),
                                                          &my_aff_score,
@@ -1049,6 +1049,48 @@ mod tests {
 
         assert_eq!(String::from_utf8(best_ref.unwrap().2).unwrap(),
                    String::from_utf8("2_AACGCCCTAC_GGTGCCCTTACTCTCACCTGATTACTTAATCCGTG".to_string().into_bytes()).unwrap());
+    }
+
+    #[test]
+    fn test_find_best_reference2() {
+        let ref_location = &"test_data/test_ref_alignment.fasta".to_string();
+        let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
+
+        let read_one = FastaBase::from_string(&"ATGGACNATCATATGCTTACCGTAACTTGAAAGTATTTCGATTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACCGGTTGACACGCTAGGTGTTGAAAAACTTGTTGGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTG".to_string().to_ascii_uppercase());
+
+        let read_structure = SequenceLayoutDesign {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            known_strand: true,
+            references: BTreeMap::new(),
+        };
+
+        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::AFFINE, false);
+
+        let my_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        let my_aff_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -9.0,
+            special_character_score: 9.0,
+            gap_open: -20.0,
+            gap_extend: -1.0,
+            final_gap_multiplier: 1.0,
+
+        };
+
+        let best_ref = exhaustive_alignment_search(&read_one, &&rm, &mut read_mat, &my_aff_score);
+        assert_eq!(String::from_utf8(best_ref.unwrap().2).unwrap(),
+                   String::from_utf8("ref_14_GGTTGACACGCTAGGTGTTGAAAAACTTGTTGGTG".to_string().into_bytes()).unwrap());
+
     }
 
     fn str_to_Reference<'a>(st: &'a str, name: &'a str) -> Reference<'a, 'a> {
