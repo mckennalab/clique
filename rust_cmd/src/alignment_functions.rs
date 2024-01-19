@@ -755,9 +755,11 @@ fn exhaustive_alignment_search(read: &Vec<FastaBase>,
         }
     }).filter(|x| x.is_some()).map(|c| c.unwrap());
 
-    let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2|
-        matching_read_bases_prop(&al.1.0.read_aligned, &al.1.0.reference_aligned).
-            partial_cmp(&matching_read_bases_prop(&al2.1.0.read_aligned, &al2.1.0.reference_aligned)).unwrap());
+    let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2| {
+       let score1 = al.1.0.score / al.1.0.reference_aligned.len() as f64;
+        let score2 = al2.1.0.score / al2.1.0.reference_aligned.len() as f64;
+        score1.partial_cmp(&score2).unwrap()
+    });
 
     match ranked_alignments.iter().next() {
         None => { None }

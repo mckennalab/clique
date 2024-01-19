@@ -229,7 +229,7 @@ fn main() {
         } => {
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
-            
+
             let output_path = Path::new(&output);
 
             align_reads(&my_yaml,
