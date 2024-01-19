@@ -305,6 +305,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
     STORE_CLONES.lock().unwrap().iter_mut().for_each(|x| std::mem::drop(x.lock().unwrap()));
 
+    let final_count = (read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone()) - gap_rejected.lock().unwrap().clone();
     info!("Aligned {} reads; {} written to disk; {} gap-rejected and {} skipped for being longer than {} their reference size", read_count.lock().unwrap().clone(), sent_reads.lock().unwrap(), gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),*max_reference_multiplier);
 
     let outputs = output_files.into_iter().filter(|(ref_name, out)| {
