@@ -249,7 +249,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                     Some((Some(alignment), ref_seq, ref_name)) => {
                         let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
                         let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
-                        println!("ALIGNED\n{}\n{}",String::from_utf8(read_al).unwrap(),String::from_utf8(ref_al).unwrap());
+                        println!("ALIGNED\n{}\n{}",String::from_utf8(read_al.clone()).unwrap(),String::from_utf8(ref_al.clone()).unwrap());
                         let full_ref = stretch_sequence_to_alignment(&ref_al, &ref_seq);
                         let ets = extract_tagged_sequences(&read_al, &full_ref);
 
