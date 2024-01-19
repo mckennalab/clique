@@ -278,7 +278,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                                 let mut sender_unwrapped = subsender.lock().unwrap();
                                 let dispatch: &mut ShardSender<SortingReadSetContainer> = sender_unwrapped.get_mut(new_sorted_read_container.aligned_read.ref_name.as_str()).unwrap();
                                 dispatch.send(new_sorted_read_container).unwrap();
-                                sent_reads.lock().unwrap() += 1;
+                                *sent_reads.lock().unwrap() += 1;
                             } else {
                                 *skipped_count.lock().unwrap() += 1;
                             }
