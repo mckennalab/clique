@@ -756,17 +756,14 @@ fn exhaustive_alignment_search(read: &Vec<FastaBase>,
 
     let ranked_alignments = references.iter().map(|reference| {
         let lt = align_two_strings_passed_matrix(&reference.1.sequence, read, my_aff_score, Some(&reference.1.name), Some(rm), alignment_mat);
-        //println!(">{}\n{}\n{}\n{}\n",String::from_utf8(reference.1.sequence_u8.clone()).unwrap(),String::from_utf8(reference.1.name.clone()).unwrap(),FastaBase::to_string(&lt.reference_aligned),FastaBase::to_string(&lt.read_aligned));
 
         Some((lt, reference.1.sequence_u8.clone(), reference.1.name.clone()))
     }).filter(|x| x.is_some()).map(|c| c.unwrap());
 
 
-    //println!("read {} ", FastaBase::to_string(read));
     let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2| {
         let score1 = al.1.0.score;// / al.1.0.reference_aligned.len() as f64;
         let score2 = al2.1.0.score;// / al2.1.0.reference_aligned.len() as f64;
-        //println!("Score 1 {}, al {} score 2 {} al2 {}", score1, String::from_utf8(al.1.2.clone()).unwrap(), score2, String::from_utf8(al2.1.2.clone()).unwrap());
         score1.partial_cmp(&score2).unwrap()
     });
 
@@ -1056,7 +1053,7 @@ mod tests {
         let ref_location = &"test_data/test_ref_alignment.fasta".to_string();
         let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
 
-        let read_one = FastaBase::from_string(&"ATGGACNATCATATGCTTACCGTAACTTGAAAGTATTTCGATTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACCGGTTGACACGCTAGGTGTTGAAAAACTTGTTGGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTG".to_string().to_ascii_uppercase());
+        let read_one = FastaBase::from_string(&"ATGGACTATCATATGCTTACCGTAACTTGAAAGTATTTCGATTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACCGGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTG".to_string().to_ascii_uppercase());
 
         let read_structure = SequenceLayoutDesign {
             aligner: None,
@@ -1089,7 +1086,7 @@ mod tests {
 
         let best_ref = exhaustive_alignment_search(&read_one, &&rm, &mut read_mat, &my_aff_score);
         assert_eq!(String::from_utf8(best_ref.unwrap().2).unwrap(),
-                   String::from_utf8("ref_14_GGTTGACACGCTAGGTGTTGAAAAACTTGTTGGTG".to_string().into_bytes()).unwrap());
+                   String::from_utf8("ref_48_GGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTG".to_string().into_bytes()).unwrap());
 
     }
 
