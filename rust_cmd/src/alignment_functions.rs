@@ -157,11 +157,11 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         max_gaps_proportion: &f64,
                         threads: &usize,
                         inversions: &bool) -> (usize, HashMap<String, ShardReader<SortingReadSetContainer>>) {
+
     let read_iterator = MergedReadSequence::new(ReadIterator::new(PathBuf::from(&read1),
                                                                   Some(PathBuf::from(&read2)),
                                                                   Some(PathBuf::from(&index1)),
                                                                   Some(PathBuf::from(&index2))), read_structure);
-
 
     let mut output_files: HashMap<String, String> = HashMap::new();
 
@@ -180,6 +180,8 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     let start = Instant::now();
 
     let read_count = Arc::new(Mutex::new(0 as usize));
+    let sent_reads = Arc::new(Mutex::new(0 as usize));
+
     let skipped_count = Arc::new(Mutex::new(0 as usize));
     let gap_rejected = Arc::new(Mutex::new(0 as usize));
 
@@ -276,6 +278,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                                 let mut sender_unwrapped = subsender.lock().unwrap();
                                 let dispatch: &mut ShardSender<SortingReadSetContainer> = sender_unwrapped.get_mut(new_sorted_read_container.aligned_read.ref_name.as_str()).unwrap();
                                 dispatch.send(new_sorted_read_container).unwrap();
+                                sent_reads.lock().unwrap() += 1;
                             } else {
                                 *skipped_count.lock().unwrap() += 1;
                             }
@@ -302,8 +305,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
     STORE_CLONES.lock().unwrap().iter_mut().for_each(|x| std::mem::drop(x.lock().unwrap()));
 
-    let final_count = (read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone()) - gap_rejected.lock().unwrap().clone();
-    info!("Aligned {} reads; {} gap-rejected and {} skipped for being longer than {} their reference size", final_count, gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),*max_reference_multiplier);
+    info!("Aligned {} reads; {} written to disk; {} gap-rejected and {} skipped for being longer than {} their reference size", read_count.lock().unwrap().clone(), sent_reads.lock().unwrap(), gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),*max_reference_multiplier);
 
     let outputs = output_files.into_iter().filter(|(ref_name, out)| {
         let exists = Path::new(out).exists();
