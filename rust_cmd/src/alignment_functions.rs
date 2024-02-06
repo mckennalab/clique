@@ -9,7 +9,7 @@ use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, 
 use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, stretch_sequence_to_alignment};
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator};
-use crate::reference::fasta_reference::{Reference, ReferenceManager};
+use crate::reference::fasta_reference::{ReferenceManager};
 use std::time::{Instant};
 use bio::alignment::AlignmentOperation;
 use ndarray::Ix3;
@@ -310,13 +310,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
     info!("Aligned {} reads; {} written to disk; {} gap-rejected and {} skipped for being longer than {} their reference size", read_count.lock().unwrap().clone(), sent_reads.lock().unwrap(), gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),*max_reference_multiplier);
 
     let outputs = output_files.into_iter().filter(|(ref_name, out)| {
-        let exists = Path::new(out).exists();
-        if !exists {
-            warn!("Dropping reference {} as no reads were aligned to it, file {} exists {}", ref_name, out, exists);
-        } else {
-            warn!("KEEP reference {} as no reads were aligned to it, file {} exists {}", ref_name, out, exists);
-        }
-        exists
+        Path::new(out).exists()
     }).map(|(ref_name, out)| {
         (ref_name, ShardReader::open(out).unwrap())
     }).collect::<HashMap<String, ShardReader<SortingReadSetContainer>>>();
@@ -1004,7 +998,7 @@ mod tests {
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
     use crate::alignment_functions::{exhaustive_alignment_search, simplify_cigar_string};
     use crate::read_strategies::sequence_layout::{AlignedReadOrientation, ReadPosition, SequenceLayoutDesign};
-    use crate::reference::fasta_reference::{Reference, reference_sequences_to_structs, ReferenceManager, SuffixTableLookup};
+    use crate::reference::fasta_reference::{Reference, ReferenceManager};
 
     #[test]
     fn test_find_best_reference() {

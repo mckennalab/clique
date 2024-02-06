@@ -47,6 +47,7 @@ use nanoid::nanoid;
 
 use pretty_trace::*;
 use crate::alignment_functions::align_reads;
+use crate::calling::call_events::BamCallingParser;
 use crate::collapse::collapse;
 use crate::read_strategies::sequence_layout::SequenceLayoutDesign;
 use crate::reference::fasta_reference::ReferenceManager;
@@ -72,9 +73,10 @@ mod umis {
     pub mod bronkerbosch;
     pub mod known_list;
 }
-//mod calling {
+mod calling {
 //    pub mod bam_file_to_cell_list;
-//}
+    pub mod call_events;
+}
 
 mod consensus {
     pub mod consensus_builders;
@@ -162,6 +164,17 @@ enum Cmd {
         find_inversions: bool,
 
     },
+
+    Call {
+        #[clap(long)]
+        read_structure: String,
+
+        #[clap(long)]
+        bam: String,
+
+        #[clap(long)]
+        output: String,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -197,7 +210,7 @@ fn main() {
             find_inversions,
             fast_reference_lookup
         } => {
-            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
+            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure);
 
             let mut tmp = InstanceLivedTempDir::new().unwrap();
 
@@ -227,7 +240,7 @@ fn main() {
             threads,
             find_inversions,
         } => {
-            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure).unwrap();
+            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure);
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
 
             let output_path = Path::new(&output);
@@ -243,6 +256,18 @@ fn main() {
                         index2,
                         threads,
                         find_inversions);
+        },
+        Cmd::Call {
+            read_structure,
+            bam,
+            output,
+        } => {
+            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure);
+
+            let mut parser = BamCallingParser::new(&my_yaml);
+
+            parser.output_bam_file_entries(bam.as_str(), output.as_str() ).expect("Unable to process events");
+
         }
     }
 }

@@ -135,6 +135,36 @@ fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_off
     sections
 }
 
+/// Extracts and returns a vector of `FullAlignment` elements from given reference and read sequences based on the CIGAR string.
+///
+/// This function processes a CIGAR string to align a read sequence against a reference sequence starting from a specified position. It supports matches, insertions, and deletions but panics on unsupported CIGAR operations like reference skips, soft clips, hard clips, pads, equals, and diffs.
+///
+/// # Parameters
+/// - `ref_start`: A reference to a `u32` indicating the start position on the reference sequence where the alignment should begin.
+/// - `reference_sequence`: A reference to a vector of `u8` bytes representing the reference DNA sequence.
+/// - `read_seq`: A reference to a vector of `u8` bytes representing the read DNA sequence to be aligned.
+/// - `cigar`: A reference to a `CigarStringView` which contains the CIGAR operations that describe how the read sequence aligns to the reference sequence.
+///
+/// # Returns
+/// Returns a vector of `FullAlignment` enumerations that describe the full alignment between the reference and read sequences. This vector may contain elements representing matches, insertions, and deletions according to the CIGAR string.
+///
+/// # Panics
+/// The function panics if it encounters unsupported CIGAR operations (`RefSkip`, `SoftClip`, `HardClip`, `Pad`, `Equal`, `Diff`). It is designed to work with a subset of CIGAR operations that represent simple alignments.
+///
+/// # Examples
+/// ```
+/// // Example usage of `extract_read_cigar_elements`
+/// let ref_start = 0;
+/// let reference_sequence = b"ACGTACGT".to_vec();
+/// let read_seq = b"ACGTTACGT".to_vec();
+/// let cigar = CigarStringView::from_string("8M1I".to_string()).unwrap(); // Simplified example; actual initialization may vary
+///
+/// let alignments = extract_read_cigar_elements(&ref_start, &reference_sequence, &read_seq, &cigar);
+/// // Process `alignments` as needed
+/// ```
+///
+/// # Notes
+/// - The function asserts that the entire reference sequence is aligned by the end of the process, which might not always be the case in real-world scenarios. This assertion should be adjusted according to the specific requirements of the alignment algorithm being implemented.
 fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>, read_seq: &Vec<u8>, cigar: &CigarStringView) -> Vec<FullAlignment> {
     let mut ref_pos = *ref_start;
     let mut read_pos = 0;

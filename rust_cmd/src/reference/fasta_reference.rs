@@ -53,6 +53,7 @@ impl Hash for Reference<'_, '_> {
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct UniqueKmerLookup<'s, 't> {
     pub kmer_length: usize,
     pub kmer_to_reference: HashMap<Vec<u8>,Reference<'s, 't>>,
@@ -62,6 +63,7 @@ pub struct UniqueKmerLookup<'s, 't> {
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct ReferenceManager<'a, 's, 't> {
     pub references: HashMap<usize, Reference<'a, 'a>>,
     pub reference_name_to_ref: HashMap<Vec<u8>, usize>,

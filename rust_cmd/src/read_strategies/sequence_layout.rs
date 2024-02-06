@@ -40,7 +40,7 @@ impl SequenceLayoutDesign {
     ///
     /// an example of this format is the *test_layout.yaml* file in the test_data directory
     ///
-    pub fn from_yaml(yaml_file: &String) -> Option<SequenceLayoutDesign> {
+    pub fn from_yaml(yaml_file: &String) -> SequenceLayoutDesign {
 
         let mut file = File::open(yaml_file).expect(&format!("Unable to open YAML configuration file: {}",yaml_file));
 
@@ -63,7 +63,7 @@ impl SequenceLayoutDesign {
             }), "The UMIConfigurations must have sequential order numbers, starting at 0");
         }
 
-        Some(deserialized_map)
+        deserialized_map
     }
 
     ///
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn test_basic_yaml_readback() {
         let configuration =
-            SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout.yaml")).unwrap();
+            SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout.yaml"));
         assert!(configuration.references.contains_key("shorter_reference"));
         assert!(configuration.references.get("shorter_reference").unwrap().umi_configurations.contains_key("cell_id"));
         assert_eq!(configuration.references.get("shorter_reference").unwrap().umi_configurations.get("cell_id").unwrap().symbol,'*');
@@ -194,13 +194,13 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_basic_yaml_readback_invalid_ordering() {
-        SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid.yaml")).unwrap();
+        SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid.yaml"));
     }
 
     #[test]
     #[should_panic]
     fn test_basic_yaml_readback_invalid_ordering2() {
-        SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid2.yaml")).unwrap();
+        SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid2.yaml"));
     }
 
 
