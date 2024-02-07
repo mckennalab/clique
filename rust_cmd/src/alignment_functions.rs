@@ -78,7 +78,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
     thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
 
     let max_read_size = (rm.longest_ref + 1) * 2;
-    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d(rm.longest_ref + 1, max_read_size, AlignmentType::AFFINE, false);
+    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d(rm.longest_ref + 1, max_read_size, AlignmentType::Affine, false);
 
     read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
         STORE.with(|arc_mtx| {
@@ -91,11 +91,11 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
             let name = &String::from_utf8(xx.name().clone()).unwrap();
 
             if xx.seq().len() < max_read_size {
-                let aligned = align_to_reference_choices(&xx.seq(),
-                                                         &rm,
+                let aligned = align_to_reference_choices(xx.seq(),
+                                                         rm,
                                                          &false,
                                                          read_structure,
-                                                         &mut local_alignment.as_mut().unwrap(),
+                                                          local_alignment.as_mut().unwrap(),
                                                          &my_aff_score,
                                                          &my_score,
                                                          inversions,
@@ -174,7 +174,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                                             1 << 16).unwrap())
     }).collect::<HashMap<String, ShardWriter<SortingReadSetContainer>>>();
 
-    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1) * 2, (rm.longest_ref + 1) * 2, AlignmentType::AFFINE, false);
+    let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((rm.longest_ref + 1) * 2, (rm.longest_ref + 1) * 2, AlignmentType::Affine, false);
 
     // keep track of timing for progress output
     let start = Instant::now();
@@ -304,9 +304,9 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
         sender_obj.finish().unwrap();
     });
 
-    STORE_CLONES.lock().unwrap().iter_mut().for_each(|x| std::mem::drop(x.lock().unwrap()));
+    STORE_CLONES.lock().unwrap().iter_mut().for_each(|x| drop(x.lock().unwrap()));
 
-    let final_count = (read_count.lock().unwrap().clone() - skipped_count.lock().unwrap().clone()) - gap_rejected.lock().unwrap().clone();
+    let final_count = (*read_count.lock().unwrap() - *skipped_count.lock().unwrap()) - *gap_rejected.lock().unwrap();
     info!("Aligned {} reads; {} written to disk; {} gap-rejected and {} skipped for being longer than {} their reference size", read_count.lock().unwrap().clone(), sent_reads.lock().unwrap(), gap_rejected.lock().unwrap(), skipped_count.lock().unwrap(),*max_reference_multiplier);
 
     let outputs = output_files.into_iter().filter(|(ref_name, out)| {
@@ -382,7 +382,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
         rev_comp_read2.len() + 1,
-        AlignmentType::AFFINE,
+        AlignmentType::Affine,
         local);
 
 
@@ -484,24 +484,25 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
 ///
 /// // Use `alignment_result` here
 /// ```
-pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
-                                       read2_seq: &Vec<FastaBase>,
+pub fn align_two_strings_passed_matrix(read1_seq: &[FastaBase],
+                                       read2_seq: &[FastaBase],
                                        scoring_function: &dyn AffineScoringFunction,
                                        ref_name: Option<&Vec<u8>>,
                                        reference_manager: Option<&ReferenceManager>,
                                        alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
-    match (reference_manager, ref_name) {
+    /*match (reference_manager, ref_name) {
         (Some(x), Some(y)) => {
-            let ref_id = x.reference_name_to_ref.get(y).unwrap();
-            let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
+            //let ref_id = x.reference_name_to_ref.get(y).unwrap();
+            //let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
 
-            let ref_seq = FastaBase::to_vec_u8(read1_seq);
-            let read_seq = FastaBase::to_vec_u8(read2_seq);
+            //let ref_seq = FastaBase::to_vec_u8(read1_seq);
+            //let read_seq = FastaBase::to_vec_u8(read2_seq);
 
-            let shared_segs = find_greedy_non_overlapping_segments(
-                &read_seq,
-                &ref_seq,
-                shared_segments);
+            // TODO fix this
+            //let shared_segs = find_greedy_non_overlapping_segments(
+            //    &read_seq,
+            //    &ref_seq,
+            //    shared_segments);
 
             perform_affine_alignment(
                 alignment_mat,
@@ -524,7 +525,7 @@ pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
                                       alignment_mat)*/
         }
 
-        _ => {
+        _ => {*/
             perform_affine_alignment(
                 alignment_mat,
                 read1_seq,
@@ -537,8 +538,8 @@ pub fn align_two_strings_passed_matrix(read1_seq: &Vec<FastaBase>,
                 read1_seq,
                 read2_seq,
                 None)
-        }
-    }
+        //}
+    //}
 }
 
 /// Aligns two DNA or RNA sequences using affine alignment or a specialized alignment with anchors.
@@ -809,7 +810,7 @@ fn cigar_to_alignment(reference: &Vec<FastaBase>,
 
 pub fn perform_rust_bio_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     // TODO: do a better look at scoring here!
-    let score = |a: u8, b: u8| if a == b { 2i32 } else if a == 'N' as u8 || b == 'N' as u8 { 2i32 } else { -2i32 };
+    let score = |a: u8, b: u8| if a == b || a == b'N' || b == b'N' { 2i32 } else { -2i32 };
 
     let alignment_scoring = Scoring::new(-20, -2, &score).xclip_prefix(0).xclip_suffix(0).yclip_suffix(0).yclip_suffix(0);
     let mut aligner = Aligner::with_capacity_and_scoring(reference.len(), read.len(), alignment_scoring);
@@ -1010,12 +1011,12 @@ mod tests {
         let read_structure = SequenceLayoutDesign {
             aligner: None,
             merge: None,
-            reads: vec![ReadPosition::READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
 
-        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::AFFINE, false);
+        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::Affine, false);
 
         let my_score = InversionScoring {
             match_score: 9.0,
@@ -1057,12 +1058,12 @@ mod tests {
         let read_structure = SequenceLayoutDesign {
             aligner: None,
             merge: None,
-            reads: vec![ReadPosition::READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
 
-        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::AFFINE, false);
+        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::Affine, false);
 
         let my_score = InversionScoring {
             match_score: 9.0,
@@ -1089,7 +1090,7 @@ mod tests {
 
     }
 
-    fn str_to_Reference<'a>(st: &'a str, name: &'a str) -> Reference<'a, 'a> {
+    fn str_to_reference<'a>(st: &'a str, name: &'a str) -> Reference<'a, 'a> {
         Reference{
             sequence: FastaBase::from_str(st),
             sequence_u8: st.as_bytes().to_vec(),

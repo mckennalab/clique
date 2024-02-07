@@ -46,6 +46,13 @@ impl FastaBase {
         String::from_utf8(FastaBase::to_vec_u8(bases)).unwrap()
     }
 
+    pub fn to_string_from_slice(bases: &[FastaBase]) -> String {
+        String::from_utf8(FastaBase::slice_to_vec_u8(bases)).unwrap()
+    }
+
+    pub fn slice_to_vec_u8(bases: &[FastaBase]) -> Vec<u8> {
+        bases.iter().map(|b| encoding_to_u8(b)).collect()
+    }
 
     pub fn to_vec_u8(bases: &Vec<FastaBase>) -> Vec<u8> {
         bases.iter().map(|b| encoding_to_u8(b)).collect()

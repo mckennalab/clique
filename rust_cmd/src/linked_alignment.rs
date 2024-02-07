@@ -203,7 +203,7 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
             match my_inv_score {
                 Some(x) => inversion_alignment(&ref_slice, &read_slice, x, my_aff_score,false),
                 None => {
-                    let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::AFFINE, false);
+                    let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::Affine, false);
                     perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
                     perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, None)
@@ -230,7 +230,7 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
                     inversion_alignment(&reference, &search_string, x, my_aff_score,true)
                 }
                 None => {
-                    let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, search_string.len() + 1, AlignmentType::AFFINE, false);
+                    let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, search_string.len() + 1, AlignmentType::Affine, false);
                     perform_affine_alignment(&mut alignment_mat, &reference, &search_string, my_aff_score);
 
                     perform_3d_global_traceback(&mut alignment_mat, None, &reference, &search_string, None)
@@ -453,7 +453,7 @@ mod tests {
         };
         let reference_lookup = ReferenceManager::find_seeds(&reference, 20);
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
-        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::Affine, false);
 
         let results = align_string_with_anchors(&test_read_fasta, &ref_fasta,  &fwd_score_mp, Some(&my_score), &my_aff_score,  &mut alignment_mat);
 
@@ -489,7 +489,7 @@ mod tests {
         };
         let reference_lookup = ReferenceManager::find_seeds(&reference, 20);
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
-        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::Affine, false);
 
         let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, Some(&my_score), &my_aff_score, &mut alignment_mat);
 
@@ -517,7 +517,7 @@ mod tests {
         let test_read_fasta = str_to_fasta_vec(str::from_utf8(test_read.as_slice()).unwrap());
 
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
-        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::Affine, false);
 
         let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, None, &my_aff_score, &mut alignment_mat);
 
@@ -530,7 +530,7 @@ mod tests {
         let test_read_fasta = str_to_fasta_vec(str::from_utf8(test_read.as_slice()).unwrap());
 
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
-        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::Affine, false);
 
         let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, None, &my_aff_score, &mut alignment_mat);
 
@@ -543,7 +543,7 @@ mod tests {
         let test_read_fasta = str_to_fasta_vec(str::from_utf8(test_read.as_slice()).unwrap());
 
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
-        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::Affine, false);
 
         let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, None, &my_aff_score, &mut alignment_mat);
 
@@ -561,7 +561,7 @@ mod tests {
         let test_read_fasta = str_to_fasta_vec(str::from_utf8(test_read.as_slice()).unwrap());
 
         let fwd_score_mp = find_greedy_non_overlapping_segments(&test_read, &reference, &reference_lookup);
-        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::AFFINE, false);
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference.len() + 1) * 2, (test_read.len() + 1) * 2, AlignmentType::Affine, false);
 
         let results = align_string_with_anchors(&test_read_fasta, &ref_fasta, &fwd_score_mp, None, &my_aff_score, &mut alignment_mat);
 

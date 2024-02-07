@@ -42,25 +42,28 @@ impl SequenceLayoutDesign {
     ///
     pub fn from_yaml(yaml_file: &String) -> SequenceLayoutDesign {
 
-        let mut file = File::open(yaml_file).expect(&format!("Unable to open YAML configuration file: {}",yaml_file));
+        let mut file = File::open(yaml_file).unwrap_or_else(|_x | panic!("Unable to open YAML configuration file: {}",yaml_file));
 
         let mut yaml_contents = String::new();
 
         file.read_to_string(&mut yaml_contents)
-            .expect(&format!("Unable to read contents of YAML configuration file: {}",&yaml_file));
+            .unwrap_or_else(|_x | panic!("Unable to read contents of YAML configuration file: {}",&yaml_file));
 
         let deserialized_map: SequenceLayoutDesign = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
-        for (_reference_name,reference) in &deserialized_map.references {
-            let mut ordering = reference.umi_configurations.iter().map(|(_name, umi_config)| {
-                umi_config.order.clone()
+        for reference in deserialized_map.references.values() {
+
+            let mut ordering = reference.umi_configurations.values().map(|umi_config| {
+                umi_config.order
             }).collect::<Vec<usize>>();
 
-            ordering.sort_by(|a, b| a.cmp(b));
+            ordering.sort_by_key(|a| *a);
 
             assert!(ordering.iter().enumerate().all(|(i, order)| {
                 i == *order
             }), "The UMIConfigurations must have sequential order numbers, starting at 0");
+
+            assert_eq!(reference.target_types.len(), reference.targets.len(), "Target sequences and target type lists must be the same length");
         }
 
         deserialized_map
@@ -72,12 +75,12 @@ impl SequenceLayoutDesign {
     /// # Arguments
     ///    * ref_bases - the reference sequence, as a vector of bases
     ///
-    pub fn validate_reference_sequence(ref_bases: &Vec<u8>, configurations: &BTreeMap<String,UMIConfiguration>) -> bool {
-        let existing_bases = ref_bases.iter().map(|base| (char::from(base.clone()), true)).collect::<BTreeMap<_, _>>();
+    pub fn validate_reference_sequence(ref_bases: &[u8], configurations: &BTreeMap<String,UMIConfiguration>) -> bool {
+        let existing_bases = ref_bases.iter().map(|base| (char::from(*base), true)).collect::<BTreeMap<_, _>>();
 
         configurations.iter().map(|(_name,umi_config)| {
             existing_bases.contains_key(&umi_config.symbol)
-        }).all(|x| x == true)
+        }).all(|x| x)
     }
 
 }
@@ -90,23 +93,23 @@ pub enum AlignedReadOrientation {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum ReadPosition {
-    READ1 {
+    Read1 {
         chain_align: Option<bool>,
         orientation: AlignedReadOrientation
     },
-    READ2 {
+    Read2 {
         chain_align: Option<bool>,
         orientation: AlignedReadOrientation
     },
-    INDEX1 {
+    Index1 {
         chain_align: Option<bool>,
         orientation: AlignedReadOrientation
     },
-    INDEX2 {
+    Index2 {
         chain_align: Option<bool>,
         orientation: AlignedReadOrientation
     },
-    SPACER {
+    Spacer {
         spacer_sequence: String
     },
 }
@@ -132,7 +135,7 @@ pub struct UMIConfiguration {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum TargetType {
-    STATIC,
+    Static,
     Cas9WT,
     Cas12AWT,
     Cas9ABE,
@@ -141,13 +144,15 @@ pub enum TargetType {
     Cas12ABE,
     Cas12CBE,
     Cas12ABECBE,
+    Cas9Homing,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct ReferenceRecord {
     pub sequence: String,
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
-    pub target_sequences: Option<Vec<String>>,
+    pub targets: Vec<String>,
+    pub target_types: Vec<TargetType>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -167,9 +172,7 @@ impl SequenceLayoutDesign {
                 panic!("Unable to find reference {}",reference_name);
             }
             Some(ref_obj) => {
-                let mut presorted = ref_obj.umi_configurations.iter().map(|(_name,umi_config)| {
-                    umi_config.clone()
-                }).collect::<Vec<UMIConfiguration>>();
+                let mut presorted = ref_obj.umi_configurations.values().cloned().collect::<Vec<UMIConfiguration>>();
                 presorted.sort_by(|a,b| a.order.cmp(&b.order));
                 presorted
             }

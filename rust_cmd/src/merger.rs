@@ -46,7 +46,7 @@ pub fn merge_reads_by_concatenation(reads: &ReadSetContainer, sequence_layout: &
 
     for read_layout in sequence_layout.reads.clone() {
         match read_layout {
-            ReadPosition::READ1 { chain_align, orientation } => {
+            ReadPosition::Read1 { chain_align, orientation } => {
                 match chain_align {
                     Some(x) if x => {
                         let ret = chain_align_update(&reads.read_one, &mut chain_aligned_seq, &mut chain_aligned_quals, &orientation);
@@ -65,7 +65,7 @@ pub fn merge_reads_by_concatenation(reads: &ReadSetContainer, sequence_layout: &
                     }
                 }
             }
-            ReadPosition::READ2 { chain_align, orientation } => {
+            ReadPosition::Read2 { chain_align, orientation } => {
                 assert!(reads.read_two.is_some());
                 match chain_align {
                     Some(x) if x => {
@@ -85,7 +85,7 @@ pub fn merge_reads_by_concatenation(reads: &ReadSetContainer, sequence_layout: &
                     }
                 }
             }
-            ReadPosition::INDEX1 { chain_align, orientation } => {
+            ReadPosition::Index1 { chain_align, orientation } => {
                 assert!(reads.index_one.is_some());
                 match chain_align {
                     Some(x) if x => {
@@ -105,7 +105,7 @@ pub fn merge_reads_by_concatenation(reads: &ReadSetContainer, sequence_layout: &
                     }
                 }
             }
-            ReadPosition::INDEX2 { chain_align, orientation } => {
+            ReadPosition::Index2 { chain_align, orientation } => {
                 assert!(reads.index_two.is_some());
                 match chain_align {
                     Some(x) if x => {
@@ -125,7 +125,7 @@ pub fn merge_reads_by_concatenation(reads: &ReadSetContainer, sequence_layout: &
                     }
                 }
             }
-            ReadPosition::SPACER { spacer_sequence } => {
+            ReadPosition::Spacer { spacer_sequence } => {
                 final_sequence.extend(sequence_to_fasta_vec(spacer_sequence.as_bytes(), &AlignedReadOrientation::Forward));
             }
         }
@@ -200,25 +200,25 @@ impl MergedReadSequence {
     // these functions are very dumb but save us from using a macro crate to do this for us
     fn contains_read1(read_structure: &SequenceLayoutDesign) -> bool {
         read_structure.reads.iter().any(|s| match s {
-            ReadPosition::READ1 { chain_align: _, orientation: _ } => true,
+            ReadPosition::Read1 { chain_align: _, orientation: _ } => true,
             _ => false
         })
     }
     fn contains_read2(read_structure: &SequenceLayoutDesign) -> bool {
         read_structure.reads.iter().any(|s| match s {
-            ReadPosition::READ2 { chain_align: _, orientation: _ } => true,
+            ReadPosition::Read2 { chain_align: _, orientation: _ } => true,
             _ => false
         })
     }
     fn contains_index1(read_structure: &SequenceLayoutDesign) -> bool {
         read_structure.reads.iter().any(|s| match s {
-            ReadPosition::INDEX1 { chain_align: _, orientation: _ } => true,
+            ReadPosition::Index1 { chain_align: _, orientation: _ } => true,
             _ => false
         })
     }
     fn contains_index2(read_structure: &SequenceLayoutDesign) -> bool {
         read_structure.reads.iter().any(|s| match s {
-            ReadPosition::INDEX2 { chain_align: _, orientation: _ } => true,
+            ReadPosition::Index2 { chain_align: _, orientation: _ } => true,
             _ => false
         })
     }
@@ -597,7 +597,7 @@ mod tests {
 
 
     use std::time::{Instant};
-    use crate::read_strategies::sequence_layout::ReadPosition::{READ1, READ2, SPACER};
+    use crate::read_strategies::sequence_layout::ReadPosition::{Read1, Read2, Spacer};
 
     #[test]
     fn read_merger_many_real_reads() {
@@ -643,7 +643,7 @@ mod tests {
         let sequence_layout = SequenceLayoutDesign {
             aligner: None,
             merge: None,
-            reads: vec![READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, READ2 { chain_align: None, orientation: AlignedReadOrientation::ReverseComplement }],
+            reads: vec![Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, Read2 { chain_align: None, orientation: AlignedReadOrientation::ReverseComplement }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -654,7 +654,7 @@ mod tests {
         let sequence_layout = SequenceLayoutDesign {
             aligner: None,
             merge: None,
-            reads: vec![READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, READ2 { chain_align: None, orientation: AlignedReadOrientation::Reverse }],
+            reads: vec![Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, Read2 { chain_align: None, orientation: AlignedReadOrientation::Reverse }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -666,7 +666,7 @@ mod tests {
         let sequence_layout = SequenceLayoutDesign {
             aligner: None,
             merge: None,
-            reads: vec![READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, READ2 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, Read2 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -698,10 +698,10 @@ mod tests {
         let sequence_layout = SequenceLayoutDesign {
             aligner: None,
             merge: None,
-            reads: vec![READ1 { chain_align: None, orientation: AlignedReadOrientation::Forward },
-                        SPACER { spacer_sequence: "ACGTACGTACGT".to_string() },
-                        READ2 { chain_align: None, orientation: AlignedReadOrientation::Forward },
-                        SPACER { spacer_sequence: "GGGG".to_string() }, ],
+            reads: vec![Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward },
+                        Spacer { spacer_sequence: "ACGTACGTACGT".to_string() },
+                        Read2 { chain_align: None, orientation: AlignedReadOrientation::Forward },
+                        Spacer { spacer_sequence: "GGGG".to_string() }, ],
             known_strand: true,
             references: BTreeMap::new(),
         };

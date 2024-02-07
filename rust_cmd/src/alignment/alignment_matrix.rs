@@ -76,37 +76,37 @@ impl fmt::Display for AlignmentTag {
 #[allow(dead_code)]
 #[derive(Eq, PartialEq, Debug, Clone, Hash)]
 pub enum AlignmentType {
-    SIMPLE,
-    AFFINE,
-    CONVEX,
-    ANCHOREDCONVEX,
-    INVERSION,
-    ANCHOREDINVERSION,
-    ANCHOREDAFFINEINVERSION,
+    Simple,
+    Affine,
+    Convex,
+    AnchoredConvex,
+    InversionAwareSimple,
+    AnchoredInversionAwareSimple,
+    AnchoredAffineInversion,
 }
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone, Hash)]
 pub enum InvMove {
-    UP(usize),
-    LEFT(usize),
-    DIAG(usize),
+    Up(usize),
+    Left(usize),
+    Diag(usize),
 }
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone, Hash)]
 pub enum AlignmentDirection {
-    UP(usize),
-    LEFT(usize),
-    DIAG(usize),
-    INV(AlignmentLocation, AlignmentLocation, InvMove),
+    Up(usize),
+    Left(usize),
+    Diag(usize),
+    Inv(AlignmentLocation, AlignmentLocation, InvMove),
 }
 
 impl fmt::Display for AlignmentDirection {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            AlignmentDirection::UP(_size) => write!(f, "| "),
-            AlignmentDirection::LEFT(_size) => write!(f, "<-"),
-            AlignmentDirection::DIAG(_size) => write!(f, "\\ "),
-            AlignmentDirection::INV(pos1, pos2, jump_to) => write!(f, "I {:?},{:?},{:?}", pos1, pos2, jump_to),
+            AlignmentDirection::Up(_size) => write!(f, "| "),
+            AlignmentDirection::Left(_size) => write!(f, "<-"),
+            AlignmentDirection::Diag(_size) => write!(f, "\\ "),
+            AlignmentDirection::Inv(pos1, pos2, jump_to) => write!(f, "I {:?},{:?},{:?}", pos1, pos2, jump_to),
         }
     }
 }
@@ -116,36 +116,36 @@ impl Add for AlignmentDirection {
 
     fn add(self, rhs: Self) -> Self::Output {
         match self {
-            AlignmentDirection::UP(size) => {
+            AlignmentDirection::Up(size) => {
                 match rhs {
-                    AlignmentDirection::UP(size2) => AlignmentDirection::UP(size + size2),
-                    AlignmentDirection::LEFT(_size2) => panic!("adding discordant types: UP AND LEFT"),
-                    AlignmentDirection::DIAG(_size2) => panic!("adding discordant types: UP AND DIAG"),
-                    AlignmentDirection::INV(_x1, _y1, _jump_to) => panic!("adding discordant types: UP AND INV"),
+                    AlignmentDirection::Up(size2) => AlignmentDirection::Up(size + size2),
+                    AlignmentDirection::Left(_size2) => panic!("adding discordant types: UP AND LEFT"),
+                    AlignmentDirection::Diag(_size2) => panic!("adding discordant types: UP AND DIAG"),
+                    AlignmentDirection::Inv(_x1, _y1, _jump_to) => panic!("adding discordant types: UP AND INV"),
                 }
             }
-            AlignmentDirection::DIAG(size) => {
+            AlignmentDirection::Diag(size) => {
                 match rhs {
-                    AlignmentDirection::UP(_size2) => panic!("adding discordant types: DIAG AND UP"),
-                    AlignmentDirection::LEFT(_size2) => panic!("adding discordant types: DIAG AND LEFT"),
-                    AlignmentDirection::DIAG(size2) => AlignmentDirection::DIAG(size + size2),
-                    AlignmentDirection::INV(_x1, _y1, _jump_to) => panic!("adding discordant types: DIAG AND INV"),
+                    AlignmentDirection::Up(_size2) => panic!("adding discordant types: DIAG AND UP"),
+                    AlignmentDirection::Left(_size2) => panic!("adding discordant types: DIAG AND LEFT"),
+                    AlignmentDirection::Diag(size2) => AlignmentDirection::Diag(size + size2),
+                    AlignmentDirection::Inv(_x1, _y1, _jump_to) => panic!("adding discordant types: DIAG AND INV"),
                 }
             }
-            AlignmentDirection::LEFT(size) => {
+            AlignmentDirection::Left(size) => {
                 match rhs {
-                    AlignmentDirection::UP(_size2) => panic!("adding discordant types: LEFT AND UP"),
-                    AlignmentDirection::LEFT(size2) => AlignmentDirection::LEFT(size + size2),
-                    AlignmentDirection::DIAG(_size2) => panic!("adding discordant types: LEFT AND DIAG"),
-                    AlignmentDirection::INV(_x1, _y1, _jump_to) => panic!("adding discordant types: LEFT AND INV"),
+                    AlignmentDirection::Up(_size2) => panic!("adding discordant types: LEFT AND UP"),
+                    AlignmentDirection::Left(size2) => AlignmentDirection::Left(size + size2),
+                    AlignmentDirection::Diag(_size2) => panic!("adding discordant types: LEFT AND DIAG"),
+                    AlignmentDirection::Inv(_x1, _y1, _jump_to) => panic!("adding discordant types: LEFT AND INV"),
                 }
             }
-            AlignmentDirection::INV(_x1, _y1, _jump_to) => {
+            AlignmentDirection::Inv(_x1, _y1, _jump_to) => {
                 match rhs {
-                    AlignmentDirection::UP(_size2) => panic!("adding discordant types: INV AND UP"),
-                    AlignmentDirection::LEFT(_size2) => panic!("adding discordant types: INV AND LEFT"),
-                    AlignmentDirection::DIAG(_size2) => panic!("adding discordant types: INV AND DIAG"),
-                    AlignmentDirection::INV(_x1, _y1, _jump_to) => panic!("CANT ADD TWO INVERSIONS"),
+                    AlignmentDirection::Up(_size2) => panic!("adding discordant types: INV AND UP"),
+                    AlignmentDirection::Left(_size2) => panic!("adding discordant types: INV AND LEFT"),
+                    AlignmentDirection::Diag(_size2) => panic!("adding discordant types: INV AND DIAG"),
+                    AlignmentDirection::Inv(_x1, _y1, _jump_to) => panic!("CANT ADD TWO INVERSIONS"),
                 }
             }
         }
@@ -154,23 +154,23 @@ impl Add for AlignmentDirection {
 
 impl Zero for AlignmentDirection {
     fn zero() -> Self {
-        AlignmentDirection::UP(0)
+        AlignmentDirection::Up(0)
     }
 
     fn is_zero(&self) -> bool {
         match self {
-            AlignmentDirection::UP(size) => *size == 0 as usize,
-            AlignmentDirection::LEFT(size) => *size == 0 as usize,
-            AlignmentDirection::DIAG(size) => *size == 0 as usize,
-            AlignmentDirection::INV(_x1, _y1, _jump_to) => false, // any inversion has a size != 0
+            AlignmentDirection::Up(size) => *size == 0,
+            AlignmentDirection::Left(size) => *size == 0,
+            AlignmentDirection::Diag(size) => *size == 0,
+            AlignmentDirection::Inv(_x1, _y1, _jump_to) => false, // any inversion has a size != 0
         }
     }
 }
 
 #[derive(Clone)]
 pub struct Alignment<K> {
-    pub scores: Array::<f64, K>,
-    pub traceback: Array::<AlignmentDirection, K>,
+    pub scores: Array<f64, K>,
+    pub traceback: Array<AlignmentDirection, K>,
     pub alignment_type: AlignmentType,
     pub is_local: bool,
 }
@@ -185,8 +185,8 @@ pub fn create_scoring_record_3d(hint_seq_a_len: usize, hint_seq_b_len: usize, al
 }
 
 fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
-                       sequence1: &Vec<FastaBase>,
-                       sequence2: &Vec<FastaBase>,
+                       sequence1: &[FastaBase],
+                       sequence2: &[FastaBase],
                        scoring_function: &dyn AffineScoringFunction,
                        row: usize,
                        column: usize,
@@ -217,8 +217,8 @@ fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
 }
 
 fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
-                                     sequence1: &Vec<FastaBase>,
-                                     sequence2: &Vec<FastaBase>,
+                                     sequence1: &[FastaBase],
+                                     sequence2: &[FastaBase],
                                      scoring_function: &dyn AffineScoringFunction,
                                      previous_result: &AlignmentResult) {
     let mut current_row = 0;
@@ -232,15 +232,15 @@ fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
         }
     }
 
-    let mut _still_updating_rows = true;
-    let mut _still_updating_cols = true;
-    while (_still_updating_rows || _still_updating_rows) &&
+    let mut still_updating_rows = true;
+    let mut still_updating_cols = true;
+    while (still_updating_rows || still_updating_cols) &&
         current_row < alignment.scores.shape()[0] &&
         current_col < alignment.scores.shape()[1] {
         let row_update_count = update_sub_vector3d(alignment, sequence1, sequence2, scoring_function, current_row, current_col, true);
         let col_update_count = update_sub_vector3d(alignment, sequence1, sequence2, scoring_function, current_row, current_col, false);
-        _still_updating_rows = row_update_count > 0;
-        _still_updating_cols = col_update_count > 0;
+        still_updating_rows = row_update_count > 0;
+        still_updating_cols = col_update_count > 0;
         current_row += 1;
         current_col += 1;
     }
@@ -249,12 +249,12 @@ fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
 
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
-                                sequence1: &Vec<FastaBase>,
-                                sequence2: &Vec<FastaBase>,
+                                sequence1: &[FastaBase],
+                                sequence2: &[FastaBase],
                                 scoring_function: &dyn AffineScoringFunction) {
-    assert!(alignment.scores.shape()[2] == 3);
-    assert!(alignment.scores.shape()[0] >= sequence1.len() + 1, "Asked to align sequence 1 with length {} in a matrix sized {} in that dimension, sequence {}", sequence1.len() + 1, alignment.scores.shape()[0], FastaBase::to_string(sequence1) );
-    assert!(alignment.scores.shape()[1] >= sequence2.len() + 1, "Asked to align sequence 2 with length {} in a matrix sized {} in that dimension, sequence {}", sequence2.len() + 1, alignment.scores.shape()[1], FastaBase::to_string(sequence2) );
+    assert_eq!(alignment.scores.shape()[2], 3);
+    assert!(alignment.scores.shape()[0] >= sequence1.len() + 1, "Asked to align sequence 1 with length {} in a matrix sized {} in that dimension, sequence {}", sequence1.len() + 1, alignment.scores.shape()[0], FastaBase::to_string_from_slice(sequence1));
+    assert!(alignment.scores.shape()[1] >= sequence2.len() + 1, "Asked to align sequence 2 with length {} in a matrix sized {} in that dimension, sequence {}", sequence2.len() + 1, alignment.scores.shape()[1], FastaBase::to_string_from_slice(sequence2));
 
 
     alignment.scores[[0, 0, 0]] = 0.0;
@@ -264,25 +264,25 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
     // first column (going down)
     for x in 1..(sequence1.len() + 1) {
         alignment.scores[[x, 0, 0]] = MAX_NEG_SCORE;
-        alignment.traceback[[x, 0, 0]] = AlignmentDirection::UP(1);
+        alignment.traceback[[x, 0, 0]] = AlignmentDirection::Up(1);
         alignment.scores[[x, 0, 1]] = (scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend())) * scoring_function.final_gap_multiplier();
-        alignment.traceback[[x, 0, 1]] = AlignmentDirection::UP(1);
+        alignment.traceback[[x, 0, 1]] = AlignmentDirection::Up(1);
         alignment.scores[[x, 0, 2]] = (scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend())) * scoring_function.final_gap_multiplier();
-        alignment.traceback[[x, 0, 2]] = AlignmentDirection::UP(1);
+        alignment.traceback[[x, 0, 2]] = AlignmentDirection::Up(1);
     }
     // top row
     for y in 1..(sequence2.len() + 1) {
         alignment.scores[[0, y, 0]] = MAX_NEG_SCORE;
-        alignment.traceback[[0, y, 0]] = AlignmentDirection::LEFT(1);
+        alignment.traceback[[0, y, 0]] = AlignmentDirection::Left(1);
         alignment.scores[[0, y, 1]] = (scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend())) * scoring_function.final_gap_multiplier();
-        alignment.traceback[[0, y, 1]] = AlignmentDirection::LEFT(1);
+        alignment.traceback[[0, y, 1]] = AlignmentDirection::Left(1);
         alignment.scores[[0, y, 2]] = (scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend())) * scoring_function.final_gap_multiplier();
-        alignment.traceback[[0, y, 2]] = AlignmentDirection::LEFT(1);
+        alignment.traceback[[0, y, 2]] = AlignmentDirection::Left(1);
     }
 
     for x in 1..(sequence1.len() + 1) {
         for y in 1..(sequence2.len() + 1) {
-            update_3d_score(alignment, &sequence1, &sequence2, scoring_function, x, y);
+            update_3d_score(alignment, sequence1, sequence2, scoring_function, x, y);
         }
     }
 }
@@ -305,33 +305,33 @@ fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
     // first column (going down)
     for x in 1..alignment.scores.shape()[0] {
         alignment.scores[[x, 0, 0]] = MAX_NEG_SCORE;
-        alignment.traceback[[x, 0, 0]] = AlignmentDirection::UP(1);
+        alignment.traceback[[x, 0, 0]] = AlignmentDirection::Up(1);
         alignment.scores[[x, 0, 1]] = scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend());
-        alignment.traceback[[x, 0, 1]] = AlignmentDirection::UP(1);
+        alignment.traceback[[x, 0, 1]] = AlignmentDirection::Up(1);
         alignment.scores[[x, 0, 2]] = scoring_function.gap_open() + (x as f64 * scoring_function.gap_extend());
-        alignment.traceback[[x, 0, 2]] = AlignmentDirection::UP(1);
+        alignment.traceback[[x, 0, 2]] = AlignmentDirection::Up(1);
     }
     // top row
     for y in 1..alignment.scores.shape()[1] {
         alignment.scores[[0, y, 0]] = MAX_NEG_SCORE;
-        alignment.traceback[[0, y, 0]] = AlignmentDirection::LEFT(1);
+        alignment.traceback[[0, y, 0]] = AlignmentDirection::Left(1);
         alignment.scores[[0, y, 1]] = scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend());
-        alignment.traceback[[0, y, 1]] = AlignmentDirection::LEFT(1);
+        alignment.traceback[[0, y, 1]] = AlignmentDirection::Left(1);
         alignment.scores[[0, y, 2]] = scoring_function.gap_open() + (y as f64 * scoring_function.gap_extend());
-        alignment.traceback[[0, y, 2]] = AlignmentDirection::LEFT(1);
+        alignment.traceback[[0, y, 2]] = AlignmentDirection::Left(1);
     }
 
     for x in 1..alignment.scores.shape()[0] {
         for y in 1..alignment.scores.shape()[1] {
-            update_inversion_alignment(alignment, alignment_inversion, &sequence1, &sequence2, scoring_function, x, y);
+            update_inversion_alignment(alignment, alignment_inversion, sequence1, sequence2, scoring_function, x, y);
         }
     }
 }
 
 fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
                               alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
-                              sequence1: &Vec<FastaBase>,
-                              sequence2: &Vec<FastaBase>,
+                              sequence1: &[FastaBase],
+                              sequence2: &[FastaBase],
                               scoring_function: &dyn InversionScoringFunction,
                               x: usize,
                               y: usize) -> (bool, bool, bool) {
@@ -344,52 +344,53 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
 
         let pos = AlignmentLocation { x, y };
 
-        let max_match_mismatch = vec![
+        let max_match_mismatch = [
             if alignment.is_local { 0.0 } else { MAX_NEG_SCORE },
             alignment.scores[[x - 1, y - 1, 0]] + match_score,
             if alignment.is_local { match_score } else { MAX_NEG_SCORE },
         ];
-        let max_match_mismatch = max_match_mismatch.iter().max_by(|x, y| x.partial_cmp(&y).unwrap()).unwrap();
 
-        let best_match = vec![
+        let max_match_mismatch = max_match_mismatch.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
+
+        let best_match = [
             if alignment_inversion.contains_key(&pos.clone()) {
                 let inv = alignment_inversion.get(&pos.clone());
                 if let Some(inversion) = inv {
-                    let first_path = &inversion.bounding_box.0.clone();
-                    let last_path = inversion.bounding_box.1.clone();
+                    let first_path = &inversion.bounding_box.0;
+                    let last_path = inversion.bounding_box.1;
                     assert_eq!(&last_path, &pos);
 
-                    let inv_best_match = vec![
-                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 1]], InvMove::UP(1)),
-                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 2]], InvMove::LEFT(1)),
-                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 0]], InvMove::DIAG(1)), ];
+                    let inv_best_match = [
+                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 1]], InvMove::Up(1)),
+                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 2]], InvMove::Left(1)),
+                        (alignment.scores[[first_path.x - 1, first_path.y - 1, 0]], InvMove::Diag(1)), ];
                     let inv_best_match = inv_best_match.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap();
 
-                    (inversion.alignment_result.score + inv_best_match.0 + scoring_function.inversion_cost(), AlignmentDirection::INV(first_path.clone(), last_path.clone(), inv_best_match.1))
+                    (inversion.alignment_result.score + inv_best_match.0 + scoring_function.inversion_cost(), AlignmentDirection::Inv(*first_path, last_path, inv_best_match.1))
                 } else {
-                    (MAX_NEG_SCORE, AlignmentDirection::UP(1))
+                    (MAX_NEG_SCORE, AlignmentDirection::Up(1))
                 }
-            } else { (MAX_NEG_SCORE, AlignmentDirection::UP(1)) },
-            (*max_match_mismatch, AlignmentDirection::DIAG(1)),
-            (alignment.scores[[x - 1, y - 1, 1]] + match_score, AlignmentDirection::UP(1)),
-            (alignment.scores[[x - 1, y - 1, 2]] + match_score, AlignmentDirection::LEFT(1)),
+            } else { (MAX_NEG_SCORE, AlignmentDirection::Up(1)) },
+            (*max_match_mismatch, AlignmentDirection::Diag(1)),
+            (alignment.scores[[x - 1, y - 1, 1]] + match_score, AlignmentDirection::Up(1)),
+            (alignment.scores[[x - 1, y - 1, 2]] + match_score, AlignmentDirection::Left(1)),
         ];
 
-        let mut best_match = best_match.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap().clone();
+        let best_match = best_match.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap();
 
-        best_match = match best_match.1 {
-            AlignmentDirection::INV(_pos1, pos2, jump) => {
+        let best_match = match &best_match.1 {
+            AlignmentDirection::Inv(_pos1, pos2, jump) => {
                 let aln = &alignment_inversion.get(&pos.clone());
                 if let Some(align) = aln {
                     let start_pos = &align.bounding_box.0.clone();
-                    let inv = AlignmentDirection::INV(start_pos.clone(), pos2.clone(), jump);
+                    let inv = AlignmentDirection::Inv(*start_pos, *pos2, *jump);
                     (best_match.0, inv)
                 } else {
                     panic!("Unable to unwrap alignment for inversion!");
                 }
             }
             _ => {
-                best_match
+                *best_match
             }
         };
 
@@ -398,20 +399,20 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
         alignment.traceback[[x, y, 0]] = best_match.1;
     }
     {
-        let best_gap_x = vec![
-            (alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend(), AlignmentDirection::UP(1)),
-            (alignment.scores[[x - 1, y, 2]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::LEFT(1)),
-            (alignment.scores[[x - 1, y, 0]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::DIAG(1))];
+        let best_gap_x = [
+            (alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend(), AlignmentDirection::Up(1)),
+            (alignment.scores[[x - 1, y, 2]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::Left(1)),
+            (alignment.scores[[x - 1, y, 0]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::Diag(1))];
         let best_gap_x = best_gap_x.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
         _update_y = alignment.scores[[x, y, 1]] != best_gap_x.unwrap().0;
         alignment.scores[[x, y, 1]] = best_gap_x.unwrap().0;
         alignment.traceback[[x, y, 1]] = best_gap_x.unwrap().1;
     }
     {
-        let best_gap_y = vec![
-            (alignment.scores[[x, y - 1, 1]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::UP(1)),
-            (alignment.scores[[x, y - 1, 2]] + scoring_function.gap_extend(), AlignmentDirection::LEFT(1)),
-            (alignment.scores[[x, y - 1, 0]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::DIAG(1))];
+        let best_gap_y = [
+            (alignment.scores[[x, y - 1, 1]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::Up(1)),
+            (alignment.scores[[x, y - 1, 2]] + scoring_function.gap_extend(), AlignmentDirection::Left(1)),
+            (alignment.scores[[x, y - 1, 0]] + scoring_function.gap_open() + scoring_function.gap_extend(), AlignmentDirection::Diag(1))];
         let best_gap_y = best_gap_y.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
         _update_z = alignment.scores[[x, y, 2]] != best_gap_y.unwrap().0;
         alignment.scores[[x, y, 2]] = best_gap_y.unwrap().0;
@@ -420,7 +421,7 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
     (_update_x, _update_y, _update_z)
 }
 
-fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<FastaBase>, sequence2: &Vec<FastaBase>, scoring_function: &dyn AffineScoringFunction, x: usize, y: usize) -> (bool, bool, bool) {
+fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase], sequence2: &[FastaBase], scoring_function: &dyn AffineScoringFunction, x: usize, y: usize) -> (bool, bool, bool) {
     let mut _update_x = false;
     let mut _update_y = false;
     let mut _update_z = false;
@@ -447,7 +448,6 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<FastaBase>, s
         alignment.traceback[[x, y, 0]] = best_match.1;
     }
     {
-
         let best_gap_x = three_way_max_and_direction(
             &(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend() * gap_multiplier),
             &(alignment.scores[[x - 1, y, 2]] + x1),
@@ -477,33 +477,24 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &Vec<FastaBase>, s
 pub fn three_way_max_and_direction(up_value: &f64, left_value: &f64, diag_value: &f64) -> (f64, AlignmentDirection) {
     if up_value > left_value {
         if up_value > diag_value {
-            (*up_value, AlignmentDirection::UP(1))
+            (*up_value, AlignmentDirection::Up(1))
         } else {
-            (*diag_value, AlignmentDirection::DIAG(1))
+            (*diag_value, AlignmentDirection::Diag(1))
         }
+    } else if left_value > diag_value {
+        (*left_value, AlignmentDirection::Left(1))
     } else {
-        if left_value > diag_value {
-            (*left_value, AlignmentDirection::LEFT(1))
-        } else {
-            (*diag_value, AlignmentDirection::DIAG(1))
-        }
+        (*diag_value, AlignmentDirection::Diag(1))
     }
 }
 
 
-#[derive(Hash, std::cmp::Eq, Debug, Copy, Clone)]
+#[derive(Hash, PartialEq, Eq, Debug, Copy, Clone)]
 pub struct AlignmentLocation {
     pub x: usize,
     pub y: usize,
 }
 
-
-impl PartialEq for AlignmentLocation {
-    fn eq(&self, other: &Self) -> bool {
-        self.x == other.x &&
-            self.y == other.y
-    }
-}
 
 
 #[derive(Clone)]
@@ -519,14 +510,14 @@ pub struct AlignmentResult {
 }
 
 impl AlignmentResult {
-    pub fn from_match_segment(str1: &Vec<FastaBase>, str2: &Vec<FastaBase>, start_x: usize, start_y: usize, af_score: &dyn AffineScoringFunction) -> AlignmentResult {
+    pub fn from_match_segment(str1: &[FastaBase], str2: &[FastaBase], start_x: usize, start_y: usize, af_score: &dyn AffineScoringFunction) -> AlignmentResult {
         let cigar_string: Vec<AlignmentTag> = vec![AlignmentTag::MatchMismatch(str1.len())];
         let path = (start_x..(start_x + str1.len())).zip(start_y..(start_y + str1.len())).map(|(x, y)| AlignmentLocation { x, y }).collect();
         let score = str1.iter().zip(str2.iter()).map(|(xb, yb)| af_score.match_mismatch(xb, yb)).sum();
 
         AlignmentResult {
-            reference_aligned: str1.clone(),
-            read_aligned: str2.clone(),
+            reference_aligned: str1.to_vec(),
+            read_aligned: str2.to_vec(),
             cigar_string,
             path,
             score,
@@ -556,9 +547,9 @@ impl AlignmentResult {
         let cigar = CigarString::try_from(cigar_string_rep.as_slice()).expect("Unable to parse cigar string.");
 
         // TODO: we don't currently calculate real quality scores
-        let quals = vec![255 as u8; seq.len()];
+        let quals = vec![255; seq.len()];
 
-        record.set(read_name.as_bytes(), Some(&cigar), &seq.as_slice(), &quals.as_slice());
+        record.set(read_name.as_bytes(), Some(&cigar), seq.as_slice(), quals.as_slice());
         record.set_pos(self.reference_start as i64);
 
         record.push_aux(vec![b'r', b'm'].as_slice(), Aux::String(&get_reference_alignment_rate(&self.reference_aligned,
@@ -595,10 +586,10 @@ impl AlignmentResult {
                     cigar_string.push(*cigar);
                     path.extend_from_slice(&self.path[position..(position + size)]);
                     score = -1.0;
-                    position = position + size;
+                    position += size;
                 }
-                AlignmentTag::InversionOpen => {
-                    if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
+                AlignmentTag::InversionOpen | AlignmentTag::InversionClose => {
+                    if !alignment_string1.is_empty() || !alignment_string2.is_empty() {
                         return_vec.push(AlignmentResult {
                             reference_aligned: alignment_string1,
                             read_aligned: alignment_string2,
@@ -616,29 +607,10 @@ impl AlignmentResult {
                         score = 0.0;
                     }
                 }
-                AlignmentTag::InversionClose => {
-                    if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
-                        return_vec.push(AlignmentResult {
-                            reference_aligned: alignment_string1,
-                            read_aligned: alignment_string2,
-                            cigar_string,
-                            path,
-                            score,
-                            reference_start: self.reference_start,
-                            read_start: self.read_start,
-                            bounding_box: None,
-                        });
-                        alignment_string1 = Vec::new();
-                        alignment_string2 = Vec::new();
-                        cigar_string = Vec::new();
-                        path = Vec::new();
-                        score = 0.0;
-                    }
-                }
-                _ => {} // TODO: this is not smart
+                _ => {panic!("Unknown tag type")}
             }
         }
-        if alignment_string1.len() > 0 || alignment_string2.len() > 0 {
+        if !alignment_string1.is_empty() || !alignment_string2.is_empty() {
             return_vec.push(AlignmentResult {
                 reference_aligned: alignment_string1,
                 read_aligned: alignment_string2,
@@ -680,7 +652,7 @@ impl AlignmentResult {
     }
 }
 
-pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentLocation, f64)> {
+pub fn find_max_value_3d_array(matrix: &Array<f64, Ix3>) -> Option<(AlignmentLocation, f64)> {
     let mut _g_max_row = 0;
     let mut _g_max_col = 0;
     let mut _g_max_z = 0;
@@ -689,23 +661,13 @@ pub fn find_max_value_3d_array(matrix: &Array::<f64, Ix3>) -> Option<(AlignmentL
     for x in 0..matrix.shape()[0] {
         for y in 0..matrix.shape()[1] {
             for z in 0..matrix.shape()[2] {
-                if matrix[[x, y, z]] > _g_max_val {
-                    _g_max_row = x;
-                    _g_max_col = y;
-                    _g_max_z = z;
-                    _g_max_val = matrix[[x, y, z]];
-                }
-                // update rule #5 from Waterman and Eggart
-                else if matrix[[x, y, z]] == _g_max_val && (x + y) < (_g_max_row + _g_max_col) {
-                    _g_max_row = x;
-                    _g_max_col = y;
-                    _g_max_z = z;
-                    _g_max_val = matrix[[x, y, z]];
-                }
-                // update rule #6 from Waterman and Eggart
-                else if matrix[[x, y, z]] == _g_max_val &&
-                    (_g_max_row + _g_max_col) == (x + y) &&
-                    x < _g_max_row {
+                // normal update combined with update rule #5 from Waterman and Eggart and
+                // rule #6 from Waterman and Eggart
+                if matrix[[x, y, z]] > _g_max_val ||
+                    matrix[[x, y, z]] == _g_max_val && (x + y) < (_g_max_row + _g_max_col) ||
+                    (matrix[[x, y, z]] == _g_max_val &&
+                        (_g_max_row + _g_max_col) == (x + y) &&
+                        x < _g_max_row) {
                     _g_max_row = x;
                     _g_max_col = y;
                     _g_max_z = z;
@@ -729,27 +691,27 @@ pub struct BoundedAlignment {
 }
 
 pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, inversion_score: &InversionScoring, my_aff_score: &dyn AffineScoringFunction, local: bool) -> AlignmentResult {
-    let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::AFFINE, local);
-    let mut inversion_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::AFFINE, true);
+    let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, local);
+    let mut inversion_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, true);
 
     let mut long_enough_hits: HashMap<AlignmentLocation, BoundedAlignment> = HashMap::new();
-    let rev_comp_read = &reverse_complement(&read);
-    perform_affine_alignment(&mut inversion_mat, &reference, rev_comp_read, my_aff_score);
+    let rev_comp_read = &reverse_complement(read);
+    perform_affine_alignment(&mut inversion_mat, reference, rev_comp_read, my_aff_score);
 
-    let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, &reference, &rev_comp_read, None));
+    let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read, None));
 
     while aligned_inv.is_some() {
         let aligned_inv_local = aligned_inv.unwrap();
         let length = aligned_inv_local.path.len();
         if length > 1 {
             let converted_path = aligned_inv_local.convert_inverted_path(read.len());
-            let bounding = converted_path.bounding_box.unwrap().clone();
+            let bounding = converted_path.bounding_box.unwrap();
             let b_alignment = BoundedAlignment { alignment_result: converted_path, bounding_box: bounding };
             let true_position = AlignmentLocation { x: bounding.1.x, y: bounding.1.y };
             aligned_inv = if length >= inversion_score.min_inversion_length {
-                clean_and_find_next_best_match_3d(&mut inversion_mat, &reference, &rev_comp_read, my_aff_score, &aligned_inv_local);
+                clean_and_find_next_best_match_3d(&mut inversion_mat, reference, rev_comp_read, my_aff_score, &aligned_inv_local);
                 long_enough_hits.insert(true_position, b_alignment);
-                Some(perform_3d_global_traceback(&mut inversion_mat, None, &reference, &rev_comp_read, None))
+                Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read, None))
             } else {
                 None
             }
@@ -757,15 +719,15 @@ pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
             aligned_inv = None
         }
     }
-    perform_inversion_aware_alignment(&mut alignment_mat, &mut long_enough_hits, &reference, &read, inversion_score);
-    perform_3d_global_traceback(&mut alignment_mat, Some(&long_enough_hits), &reference, &read, None)
+    perform_inversion_aware_alignment(&mut alignment_mat, &long_enough_hits, reference, read, inversion_score);
+    perform_3d_global_traceback(&mut alignment_mat, Some(&long_enough_hits), reference, read, None)
 }
 
 #[allow(dead_code)]
 pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                                    inversion_mapping: Option<&HashMap<AlignmentLocation, BoundedAlignment>>,
-                                   sequence1: &Vec<FastaBase>,
-                                   sequence2: &Vec<FastaBase>,
+                                   sequence1: &[FastaBase],
+                                   sequence2: &[FastaBase],
                                    starting_position: Option<(usize, usize)>,
 ) -> AlignmentResult {
     let mut alignment1: Vec<FastaBase> = Vec::new();
@@ -785,7 +747,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         _starting_x = max_value_tuple.0.x;
         _starting_y = max_value_tuple.0.y;
     }
-    let starting_z = vec![(alignment.scores[[_starting_x, _starting_y, 0]], 0),
+    let starting_z = [(alignment.scores[[_starting_x, _starting_y, 0]], 0),
                           (alignment.scores[[_starting_x, _starting_y, 1]], 1),
                           (alignment.scores[[_starting_x, _starting_y, 2]], 2)];
 
@@ -795,7 +757,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
 
     let mut path = Vec::new();
 
-    while (_starting_x > 0 && _starting_y > 0) &&
+    while _starting_x > 0 && _starting_y > 0 &&
         ((alignment.is_local && !(alignment.scores[[_starting_x, _starting_y, _starting_z]] == 0.0)) || !alignment.is_local) {
         alignment.scores[[_starting_x, _starting_y, 0]] = 0.0;
         alignment.scores[[_starting_x, _starting_y, 1]] = 0.0;
@@ -805,13 +767,13 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         path.push(AlignmentLocation { x: _starting_x, y: _starting_y });
 
         let movement_delta = match alignment.traceback[[_starting_x, _starting_y, _starting_z]] {
-            AlignmentDirection::DIAG(size) => (0, size),
-            AlignmentDirection::UP(size) => (1, size),
-            AlignmentDirection::LEFT(size) => (2, size),
-            AlignmentDirection::INV(pos1, pos2, inv_move) => {
+            AlignmentDirection::Diag(size) => (0, size),
+            AlignmentDirection::Up(size) => (1, size),
+            AlignmentDirection::Left(size) => (2, size),
+            AlignmentDirection::Inv(pos1, pos2, inv_move) => {
                 let inversion_alignment = inversion_mapping.unwrap().get(&AlignmentLocation { x: pos2.x, y: pos2.y }).unwrap();
                 for p in &inversion_alignment.alignment_result.path {
-                    path.push(p.clone());
+                    path.push(*p);
                 }
 
                 //println!("INVERSOIN adding {} and {}", String::from_utf8(inversion_alignment.alignment_result.alignment_string1.clone()).unwrap(),String::from_utf8(inversion_alignment.alignment_result.alignment_string2.clone()).unwrap());
@@ -826,9 +788,9 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                 _starting_x = pos1.x - 1;
                 _starting_y = pos1.y - 1;
                 let matrix_move = match inv_move {
-                    InvMove::DIAG(_) => { 0 }
-                    InvMove::UP(_) => { 1 }
-                    InvMove::LEFT(_) => { 2 }
+                    InvMove::Diag(_) => { 0 }
+                    InvMove::Up(_) => { 1 }
+                    InvMove::Left(_) => { 2 }
                 };
                 cigars.push(AlignmentTag::InversionClose); // it'll get reversed at the end
                 cigars.extend(&inversion_alignment.alignment_result.cigar_string);
@@ -968,7 +930,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, true);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
@@ -999,7 +961,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, true);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
@@ -1021,7 +983,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
@@ -1043,7 +1005,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
 
         let iterations = 50000;
         use std::time::Instant;
@@ -1058,12 +1020,10 @@ mod tests {
         let now2 = Instant::now();
         for _i in 0..iterations {
             perform_rust_bio_alignment(&reference, &test_read);
-
         }
         let elapsed2 = now2.elapsed();
 
         println!("Elapsed biorust: {:.2?}", elapsed2);
-
     }
 
 
@@ -1081,7 +1041,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
@@ -1104,7 +1064,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
@@ -1126,7 +1086,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, false);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
@@ -1154,7 +1114,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, true);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
@@ -1184,7 +1144,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::AFFINE, true);
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, true);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 

@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use bio::bio_types::genome::AbstractInterval;
-use bio::bio_types::sequence::SequenceRead;
+use bio::bio_types::sequence::{Base, SequenceRead};
 use itertools::Itertools;
 use phf::phf_map;
 use rust_htslib::bam;
@@ -9,6 +9,7 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{Read, Record};
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView};
 use std::io::Write;
+use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayoutDesign};
 use crate::reference::fasta_reference::ReferenceManager;
 
@@ -24,6 +25,23 @@ pub enum ExtractorTag {
     E7,
     E8,
     E9,
+}
+
+impl ExtractorTag {
+    pub fn to_id_value(&self) -> usize {
+        match self {
+            ExtractorTag::E0 => {0}
+            ExtractorTag::E1 => {1}
+            ExtractorTag::E2 => {2}
+            ExtractorTag::E3 => {3}
+            ExtractorTag::E4 => {4}
+            ExtractorTag::E5 => {5}
+            ExtractorTag::E6 => {6}
+            ExtractorTag::E7 => {7}
+            ExtractorTag::E8 => {8}
+            ExtractorTag::E9 => {9}
+        }
+    }
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -50,15 +68,23 @@ enum BaseModifications {
     AC,
     AG,
     AT,
+    AN,
     CA,
     CG,
     CT,
+    CN,
     GA,
     GC,
     GT,
+    GN,
     TA,
     TC,
     TG,
+    TN,
+    NA,
+    NC,
+    NG,
+    NT,
 }
 
 impl BaseModifications {
@@ -67,33 +93,52 @@ impl BaseModifications {
             BaseModifications::AC => b'C',
             BaseModifications::AG => b'G',
             BaseModifications::AT => b'T',
+            BaseModifications::AN => b'N',
             BaseModifications::CA => b'A',
             BaseModifications::CG => b'G',
             BaseModifications::CT => b'T',
+            BaseModifications::CN => b'N',
             BaseModifications::GA => b'A',
             BaseModifications::GC => b'C',
             BaseModifications::GT => b'T',
+            BaseModifications::GN => b'N',
             BaseModifications::TA => b'A',
             BaseModifications::TC => b'C',
             BaseModifications::TG => b'G',
+            BaseModifications::TN => b'N',
+            BaseModifications::NA => b'A',
+            BaseModifications::NC => b'C',
+            BaseModifications::NG => b'G',
+            BaseModifications::NT => b'T',
+        }
+    }
+
+    pub fn from_modified_bases(base1: u8, base2: u8) -> BaseModifications {
+        match (base1.to_ascii_uppercase(), base2.to_ascii_uppercase()) {
+            (b'A', b'C') => BaseModifications::AC,
+            (b'A', b'G') => BaseModifications::AG,
+            (b'A', b'T') => BaseModifications::AT,
+            (b'A', b'N') => BaseModifications::AN,
+            (b'C', b'A') => BaseModifications::CA,
+            (b'C', b'G') => BaseModifications::CG,
+            (b'C', b'T') => BaseModifications::CT,
+            (b'C', b'N') => BaseModifications::CN,
+            (b'G', b'A') => BaseModifications::GA,
+            (b'G', b'C') => BaseModifications::GC,
+            (b'G', b'T') => BaseModifications::GT,
+            (b'G', b'N') => BaseModifications::GN,
+            (b'T', b'A') => BaseModifications::TA,
+            (b'T', b'C') => BaseModifications::TC,
+            (b'T', b'G') => BaseModifications::TG,
+            (b'T', b'N') => BaseModifications::TN,
+            (b'N', b'A') => BaseModifications::NA,
+            (b'N', b'C') => BaseModifications::NC,
+            (b'N', b'G') => BaseModifications::NG,
+            (b'N', b'T') => BaseModifications::NT,
+            (b1, b2) => panic!("Unable to convert bases {} and {}", b1, b2)
         }
     }
 }
-
-static BASETYPE: phf::Map<&'static str, BaseModifications> = phf_map! {
-    "AC" => BaseModifications::AC,
-    "AG" => BaseModifications::AG,
-    "AT" => BaseModifications::AT,
-    "CA" => BaseModifications::CA,
-    "CG" => BaseModifications::CG,
-    "CT" => BaseModifications::CT,
-    "GA" => BaseModifications::GA,
-    "GC" => BaseModifications::GC,
-    "GT" => BaseModifications::GT,
-    "TA" => BaseModifications::TA,
-    "TC" => BaseModifications::TC,
-    "TG" => BaseModifications::TG,
-};
 
 
 #[derive(PartialEq, Debug, Eq, Hash, Clone)]
@@ -105,19 +150,19 @@ enum FullAlignment {
 }
 
 impl FullAlignment {
-    pub fn to_range(&self) -> (usize,usize) {
+    pub fn to_range(&self) -> (usize, usize) {
         match self {
-            FullAlignment::Insertion(x, y) => (*x as usize,*x as usize +y.len()),
-            FullAlignment::Deletion(x, y) => (*x as usize,*x as usize + *y as usize ),
-            FullAlignment::Match(x, y) => (*x as usize,*x as usize + *y as usize ),
-            FullAlignment::Mismatch(x, y) => (*x as usize,*x as usize +y.len())
+            FullAlignment::Insertion(x, y) => (*x as usize, *x as usize + y.len()),
+            FullAlignment::Deletion(x, y) => (*x as usize, *x as usize + *y as usize),
+            FullAlignment::Match(x, y) => (*x as usize, *x as usize + *y as usize),
+            FullAlignment::Mismatch(x, y) => (*x as usize, *x as usize + y.len())
         }
     }
 
 
     pub fn to_encoding(&self) -> Option<String> {
         match self {
-            FullAlignment::Insertion(x,y) => {
+            FullAlignment::Insertion(x, y) => {
                 Some(y.len().to_string() + "I+" + x.to_string().as_str() + "+" + std::str::from_utf8(y).unwrap())
             }
             FullAlignment::Deletion(x, y) => {
@@ -127,11 +172,12 @@ impl FullAlignment {
                 None
             }
             FullAlignment::Mismatch(x, y) => {
-                Some(y.len().to_string() + "I+" + x.to_string().as_str() + "+" + y.iter().map(|bm| bm.modified_base()).join("").as_str())
+                Some(y.len().to_string() + "S+" + x.to_string().as_str() + "+" + y.iter().map(|bm| bm.modified_base() as char).join("").as_str())
             }
         }
     }
 }
+
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct Reference {
     name: String,
@@ -181,42 +227,50 @@ struct Reference {
 /// ```
 /// Note: Ensure the `FullAlignment` enum is defined in your code as it is used in the function's return type.
 fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_offset: &u32) -> Vec<FullAlignment> {
-    let mut sections = Vec::new();
+    let mut return_sections = Vec::new();
     let mut current_section = Vec::new();
-    let mut last_was_match = None;
+    let mut in_match = false;
+    let mut segment_length = 0;
+
+    //println!("{} {} ", String::from_utf8(reference.to_vec()).unwrap(), String::from_utf8(sequence.to_vec()).unwrap());
 
     for (position, (reference_base, read_base)) in reference.iter().zip(sequence.iter()).enumerate() {
-        let is_match = reference_base == read_base;
         let section_start = reference_offset + (position as u32) - (current_section.len() as u32);
-        match last_was_match {
-            Some(last) if last != is_match => {
-                // End the current section and start a new one
-                if last {
-                    sections.push(FullAlignment::Match(section_start, current_section.len() as u32));
-                } else {
-                    sections.push(FullAlignment::Mismatch(section_start, current_section));
-                }
-                current_section = Vec::new();
+
+        if reference_base.to_ascii_uppercase() == read_base.to_ascii_uppercase() {
+            if in_match {
+                segment_length += 1;
+            } else if current_section.len() > 0 {
+                return_sections.push(FullAlignment::Mismatch(section_start, current_section.clone()));
+                segment_length = 1;
+                current_section.clear();
             }
-            _ => {}
+            in_match = true;
+        } else {
+            if !in_match {
+                segment_length += 1;
+            } else {
+                if segment_length > 0 {
+                    return_sections.push(FullAlignment::Match(section_start, segment_length));
+                }
+                segment_length = 1;
+                current_section.clear();
+            }
+            current_section.push(BaseModifications::from_modified_bases(reference_base.clone(), read_base.clone()));
+            assert_eq!(current_section.len(),segment_length as usize);
+            in_match = false;
         }
-
-        current_section.push(BASETYPE.get(format!("{}{}", reference_base.clone(), read_base.clone()).as_str()).unwrap().clone());
-        last_was_match = Some(is_match);
     }
-
-    let section_start = reference_offset + (sequence.len() as u32) - (current_section.len() as u32);
 
     // Add the last section
-    if let Some(last) = last_was_match {
-        if last {
-            sections.push(FullAlignment::Match(section_start, current_section.len() as u32));
-        } else {
-            sections.push(FullAlignment::Mismatch(section_start, current_section));
-        }
+    let section_start = reference_offset + reference.len() as u32 - (current_section.len() as u32);
+    if in_match {
+        return_sections.push(FullAlignment::Match(section_start, segment_length));
+    } else {
+        return_sections.push(FullAlignment::Mismatch(section_start, current_section.clone()));
     }
 
-    sections
+    return_sections
 }
 
 /// Extracts and returns a vector of `FullAlignment` elements from given reference and read sequences based on the CIGAR string.
@@ -339,10 +393,11 @@ struct TargetPositions {
 
 impl TargetPositions {
     pub fn from_sequence_layout_entry(record: &ReferenceRecord) -> TargetPositions {
+        //println!("Targets {}", record.targets.join(","));
         TargetPositions {
             reference: record.sequence.clone(),
-            targets: record.target_sequences.as_ref().unwrap().clone(),
-            positions: TargetPositions::validate_target_positions(record.sequence.as_str(), &record.target_sequences.as_ref().unwrap().clone()),
+            targets: record.targets.clone(),
+            positions: TargetPositions::validate_target_positions(record.sequence.as_str(), &record.targets.clone()),
         }
     }
 
@@ -362,6 +417,7 @@ impl TargetPositions {
 }
 
 pub struct BamCallingParser<'a, 's, 't> {
+    sequence_layout: SequenceLayoutDesign,
     reference_manager: ReferenceManager<'a, 's, 't>,
     target_positions: HashMap<String, TargetPositions>,
     ordered_target_ranges: HashMap<String, Vec<(TargetRange, String)>>, // keep a ordered list of target ranges for simplicity
@@ -388,6 +444,7 @@ impl BamCallingParser<'_, '_, '_> {
 
 
         BamCallingParser {
+            sequence_layout: sequence_layout_design.clone(),
             reference_manager: rm,
             target_positions,
             ordered_target_ranges,
@@ -404,7 +461,7 @@ impl BamCallingParser<'_, '_, '_> {
                         let extractor = EXTRACTORTYPE.get(String::from_utf8(aux_tag.to_vec()).unwrap().as_str()).unwrap().clone();
                         match aux_enum {
                             Aux::String(x) => {
-                                extractors.push(ExtractorPair { extractor, value: x.clone().to_string() })//;
+                                extractors.push(ExtractorPair { extractor, value: x.to_string() })//;
                             }
                             _ => {}
                         }
@@ -415,6 +472,21 @@ impl BamCallingParser<'_, '_, '_> {
         });
         extractors
     }
+
+    pub fn target_overlaps(reference_targets: &Vec<(TargetRange, String)>, full_alignment_tokens: &Vec<FullAlignment>) -> Vec<String> {
+        let target_overlap = reference_targets.iter().map(|(target_pos, name)| {
+            full_alignment_tokens.iter().filter(|tk| {
+                let range = tk.to_range();
+                match tk {
+                    FullAlignment::Match(_, _) => false,
+                    _ => target_pos.intersect_position(range.0, range.1),
+                }
+            }).map(|tk| { tk.to_encoding().unwrap_or("".to_ascii_uppercase()) }).into_iter().collect::<Vec<String>>().join(",")
+        }).collect::<Vec<String>>();
+
+        target_overlap.into_iter().map(|st| if st == "" { "NONE".to_ascii_uppercase() } else { st }).collect()
+    }
+
 
     //fn process_alignment(reference: &str, query: &str, cigar: &str) -> Vec<String> {}
     pub fn output_bam_file_entries(&mut self, bam_file: &str, output_file: &str) -> std::io::Result<()> {
@@ -437,31 +509,30 @@ impl BamCallingParser<'_, '_, '_> {
             read_count += 1;
             if read_count % 100000 == 0 { println!("Read count {}", read_count); }
 
-           match r {
+            match r {
                 Ok(record) => {
                     let ref_name = record.contig().as_bytes();
+                    let layout_record = self.sequence_layout.references.get(record.contig()).unwrap();
+
+                    // BTreeMap to sort the keys
+                    let extractor_id_to_name : BTreeMap<usize,String> = layout_record.umi_configurations.iter().map(|(k,v)| (v.order.clone(),k.clone())).collect();
+
                     let reference = self.reference_manager.reference_name_to_ref.get(ref_name).expect("Unable to find reference");
-                    let reference_id = reference.clone() as u16;
-                    let reference_sequence = &self.reference_manager.references.get(reference).unwrap().sequence_u8.to_vec();
+                    let reference_sequence = FastaBase::to_vec_u8(&self.reference_manager.references.get(reference).unwrap().sequence);
                     let alignment_start = record.reference_start();
 
                     // TODO output extractor tags
                     let extractor_tokens = self.extraction_tags(&record);
+                    let token_output : Vec<(String,ExtractorPair)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id).unwrap().clone())).into_iter().collect::<Vec<(String,ExtractorPair)>>();
 
                     let cigar_tokens = extract_read_cigar_elements(&(alignment_start as u32), &reference_sequence, &record.seq().as_bytes(), &record.cigar());
 
                     // now we need to intersect any events with the known target lists
                     let reference_targets = self.ordered_target_ranges.get(record.contig()).unwrap();
 
-                    let target_output: Vec<String> = reference_targets.iter().map(|(target_pos, name)| {
-                        cigar_tokens.iter().filter(|tk| {
-                            let range = tk.to_range();
-                            target_pos.intersect_position(range.0, range.1)
-                        }).map(|tk| { tk.to_encoding().unwrap_or("".to_ascii_uppercase()) }).into_iter().collect::<Vec<String>>().join(",")
-                    }).collect::<Vec<String>>();
+                    let target_output = BamCallingParser::target_overlaps(&reference_targets, &cigar_tokens);
 
-                    let target_output = target_output.into_iter().map(|st| if st == "" {"NONE".to_ascii_uppercase()} else {st}).join(",");
-                    write!(file, "{}\t{}\t{}\t{}\n",String::from_utf8(record.name().to_vec()).unwrap(),String::from_utf8(ref_name.to_vec()).unwrap(),alignment_start,target_output).expect("Unable to write to output file");
+                    write!(file, "{}\t{}\t{}\t{}\n", String::from_utf8(record.name().to_vec()).unwrap(), String::from_utf8(ref_name.to_vec()).unwrap(), alignment_start, target_output.join(",")).expect("Unable to write to output file");
                 }
                 Err(x) => {
                     panic!("Underlying BAM file error!")
@@ -477,6 +548,26 @@ impl BamCallingParser<'_, '_, '_> {
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn event_target_intersections() {
+        let target_positions: Vec<(TargetRange,String)> = vec![(TargetRange::new(&25, &50, &true),"Range1".to_ascii_uppercase()),(TargetRange::new(&75, &100, &true),"Range2".to_ascii_uppercase())];
+        let full_alignment_tokens: Vec<FullAlignment> = vec![FullAlignment::Mismatch(28, vec![BaseModifications::AG,BaseModifications::AC])];
+        let overlap = BamCallingParser::target_overlaps(&target_positions,&full_alignment_tokens);
+
+        println!("{:?} {:?}",overlap.get(0).unwrap(),overlap.get(1).unwrap());
+        assert_eq!(overlap.len(),2);
+        assert_eq!(overlap.get(0).unwrap(),&"2S+28+GC".to_ascii_uppercase());
+        assert_eq!(overlap.get(1).unwrap(),&"NONE".to_ascii_uppercase());
+
+        let full_alignment_tokens: Vec<FullAlignment> = vec![FullAlignment::Mismatch(10, vec![BaseModifications::AG,BaseModifications::AC])];
+        let overlap = BamCallingParser::target_overlaps(&target_positions,&full_alignment_tokens);
+
+        assert_eq!(overlap.len(),2);
+        assert_eq!(overlap.get(0).unwrap(),&"NONE".to_ascii_uppercase());
+        assert_eq!(overlap.get(1).unwrap(),&"NONE".to_ascii_uppercase());
+
+    }
 
     #[test]
     fn target_intersections() {
@@ -497,7 +588,6 @@ mod tests {
         assert!(target_pos1.intersect(&target_pos2));
         assert!(target_pos2.intersect(&target_pos1));
     }
-
 
     #[test]
     fn target_positions() {
@@ -555,5 +645,18 @@ mod tests {
         assert_eq!(positions.get(&1).unwrap()[0].start, 4);
         assert_eq!(positions.get(&1).unwrap()[1].start, 35);
         assert_eq!(positions.get(&1).unwrap()[2].start, 89);
+    }
+
+
+
+    #[test]
+    fn full_alignment_encoding() {
+        assert_eq!(FullAlignment::Match(10,10).to_encoding(),None);
+        assert_eq!(FullAlignment::Mismatch(10,vec![BaseModifications::AC,BaseModifications::AG]).to_encoding().unwrap().as_str(),"2S+10+CG");
+        assert_eq!(FullAlignment::Insertion(1,vec![b'A',b'C',b'T',b'T']).to_encoding().unwrap().as_str(),"4I+1+ACTT");
+        assert_eq!(FullAlignment::Deletion(1,400).to_encoding().unwrap().as_str(),"400D+1");
+
+
+
     }
 }

@@ -36,7 +36,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     let mut processed_reads = 0;
 
     let score = AffineScoring::default();
-    let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference_manager.longest_ref + 1) * 2, (reference_manager.longest_ref + 1) * 2, LocalAlignmentType::AFFINE, false);
+    let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference_manager.longest_ref + 1) * 2, (reference_manager.longest_ref + 1) * 2, LocalAlignmentType::Affine, false);
 
     reader.iter_range(&Range::all()).unwrap().for_each(|x| {
         if processed_reads % 10000 == 0 {
@@ -66,7 +66,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
                                         reference_to_sam_bin: &HashMap<Vec<u8>, u16>,
                                         maximum_reads_before_downsampling: &usize,
                                         writer: &mut Writer,
-                                        buffered_reads: &mut VecDeque<SortingReadSetContainer>,
+                                        buffered_reads: &VecDeque<SortingReadSetContainer>,
                                         my_aff_score: &dyn AffineScoringFunction,
                                         mut alignment_mat: &mut Alignment<Ix3>) {
     let mut added_tags = HashMap::new();
