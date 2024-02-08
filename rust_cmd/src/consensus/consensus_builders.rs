@@ -17,7 +17,7 @@ use crate::alignment_functions::{create_sam_record, simplify_cigar_string};
 use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
 use rust_htslib::bam::{Writer};
-use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
+use crate::alignment::scoring_functions::{AffineScoring};
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments};
 
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
@@ -30,7 +30,7 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
 
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
-    let bar = ProgressBar::new(read_counts.clone() as u64);
+    let bar = ProgressBar::new(*read_counts as u64);
 
     let mut written_buffers = 0;
     let mut processed_reads = 0;
@@ -44,8 +44,8 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
         }
         let x = x.unwrap();
         assert_eq!(x.ordered_sorting_keys.len(), levels);
-        if !(last_read.is_some() && &x.cmp(last_read.as_ref().unwrap()) == &Ordering::Equal) && buffered_reads.len() > 0 {
-            output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, writer, &mut buffered_reads, &score, &mut alignment_mat);
+        if !(last_read.is_some() && x.cmp(last_read.as_ref().unwrap()) == Ordering::Equal) && !buffered_reads.is_empty() {
+            output_buffered_read_set_to_sam_file(reference_manager, reference_to_bin, maximum_reads_before_downsampling, writer, &buffered_reads, &score, &mut alignment_mat);
             written_buffers += 1;
             buffered_reads = VecDeque::new();
         }
@@ -54,8 +54,8 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
         last_read = Some(x);
     });
 
-    if buffered_reads.len() > 0 {
-        output_buffered_read_set_to_sam_file(reference_manager, &reference_to_bin, maximum_reads_before_downsampling, writer, &mut buffered_reads, &score, &mut alignment_mat);
+    if !buffered_reads.is_empty() {
+        output_buffered_read_set_to_sam_file(reference_manager, reference_to_bin, maximum_reads_before_downsampling, writer, &buffered_reads, &score, &mut alignment_mat);
         written_buffers += 1;
     }
     bar.set_position(processed_reads as u64);
@@ -67,7 +67,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
                                         maximum_reads_before_downsampling: &usize,
                                         writer: &mut Writer,
                                         buffered_reads: &VecDeque<SortingReadSetContainer>,
-                                        my_aff_score: &dyn AffineScoringFunction,
+                                        my_aff_score: &AffineScoring,
                                         mut alignment_mat: &mut Alignment<Ix3>) {
     let mut added_tags = HashMap::new();
     added_tags.insert((b'r', b'c'), buffered_reads.len().to_string());
@@ -75,7 +75,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
 
     if buffered_reads.len() > 1 {
-        let consensus_reads = create_poa_consensus(&buffered_reads, maximum_reads_before_downsampling);
+        let consensus_reads = create_poa_consensus(buffered_reads, maximum_reads_before_downsampling);
         let consensus_reference = Counter::<Vec<u8>, usize>::init(buffered_reads.iter().map(|x| x.aligned_read.ref_name.clone().as_bytes().to_vec()).collect::<Vec<Vec<u8>>>()).most_common_ordered();
 
         let top_ref = &consensus_reference.get(0).unwrap().clone().0;
@@ -87,7 +87,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
             &reference_pointer.sequence_u8,
             shared_segments);
 
-        debug!("read{} ref {}",String::from_utf8(consensus_reads.clone()).unwrap(),FastaBase::to_string(&reference_pointer.sequence));
+        debug!("read{} ref {}",String::from_utf8(consensus_reads.clone()).unwrap(),FastaBase::string(&reference_pointer.sequence));
         let new_alignment = align_string_with_anchors(&FastaBase::from_vec_u8(&consensus_reads),
                                                       &reference_pointer.sequence,
                                                       &shared_segs,
@@ -104,7 +104,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         let bin = reference_to_sam_bin.get(&reference_pointer.name).unwrap();
         //println!("TV2 READ {} Ref {} bin {}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin);
         let mut sam_read = create_sam_record(bin,
-                                             read_names.get(0).clone().unwrap(),
+                                             read_names.get(0).unwrap(),
                                              &new_alignment.read_aligned,
                                              &new_alignment.reference_aligned,
                                              &reference_pointer.sequence_u8,
@@ -141,7 +141,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
     };
 }
 
-pub fn get_reference_alignment_rate(reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> f64 {
+pub fn get_reference_alignment_rate(reference: &Vec<FastaBase>, read: &[FastaBase]) -> f64 {
     let mut matches = 0;
     let mut mismatches = 0;
 
@@ -159,7 +159,7 @@ pub fn get_reference_alignment_rate(reference: &Vec<FastaBase>, read: &Vec<Fasta
     (matches as f64) / ((matches + mismatches) as f64)
 }
 
-pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: &Vec<FastaBase>) -> CigarString {
+pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: &[FastaBase]) -> CigarString {
     let mut result: Vec<AlignmentTag> = Vec::new();
 
     for index in 0..reference_seq.len() {
@@ -181,7 +181,7 @@ pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: 
 
 pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downsample_to: &usize) -> Vec<u8> {
     let mut base_sequences = sequences.iter().map(|n| {
-        let mut y = FastaBase::to_vec_u8(&FastaBase::strip_gaps(&n.aligned_read.aligned_read));
+        let mut y = FastaBase::vec_u8(&FastaBase::strip_gaps(&n.aligned_read.aligned_read));
         y.push(b'\0');
         y
     }).collect::<Vec<Vec<u8>>>();
@@ -189,7 +189,7 @@ pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downs
     // downsample if needed -- it's not the best idea to do downsampling here after all the work above,
     // but sometimes the borrow checker is a pain when your brain is small
     if base_sequences.len() > *downsample_to {
-        let mut rng = rand::thread_rng();
+        let mut rng = thread_rng();
         base_sequences = base_sequences.into_iter().choose_multiple(&mut rng, *downsample_to);
     }
     poa_consensus(base_sequences)
@@ -200,7 +200,7 @@ fn poa_consensus(base_sequences: Vec<Vec<u8>>) -> Vec<u8> {
     let mut graph = Graph::new();
 
     for seq in &base_sequences {
-        assert!(seq.len() > 0);
+        assert!(!seq.is_empty());
 
         let cseq = CString::from_vec_with_nul(seq.clone()).unwrap_or_else(|_| panic!("CString::new failed from {}", String::from_utf8(seq.clone()).unwrap()));
         let cqual = CString::new(vec![34u8; seq.len() - 1]).unwrap();

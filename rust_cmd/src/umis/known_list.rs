@@ -67,7 +67,7 @@ impl KnownList {
         for line in raw_reader.lines() {
             let mut bytes = line.unwrap();
             if *reverse_comp {
-                bytes = FastaBase::to_string(&reverse_complement(&FastaBase::from_string(&bytes)));
+                bytes = FastaBase::string(&reverse_complement(&FastaBase::from_string(&bytes)));
             }
             match pad_dir {
                 None => {

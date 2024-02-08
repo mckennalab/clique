@@ -1,7 +1,7 @@
 use bio::io::fastq::Record;
 use needletail::Sequence;
 use crate::alignment::fasta_bit_encoding::{encoding_to_u8, FASTA_UNSET, FastaBase, reverse_complement};
-use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction};
+use crate::alignment::scoring_functions::{AffineScoring};
 use crate::alignment_functions::align_two_strings;
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
 use crate::read_strategies::sequence_layout::{AlignedReadOrientation, MergeStrategy, ReadPosition, SequenceLayoutDesign};
@@ -173,7 +173,7 @@ pub fn sequence_to_fasta_vec(sequence: &[u8], orientation: &AlignedReadOrientati
 
 lazy_static! {
 
-    pub static ref DEFAULT_ALIGNMENT_AFFINE_SCORING: Box<dyn AffineScoringFunction + Send + Sync> =
+    pub static ref DEFAULT_ALIGNMENT_AFFINE_SCORING: Box<AffineScoring> =
         Box::new(AffineScoring {
             match_score: 10.0,
             mismatch_score: -5.0,
@@ -334,7 +334,7 @@ pub fn merged_iterator(iterator: ReadIterator, read_structure: &SequenceLayoutDe
 /// ```
 /// let merged_sequence = read_merger(&read1, &read2);
 /// ```
-pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_scoring: &dyn AffineScoringFunction, /*TODO use this */ _read_structure: &SequenceLayoutDesign) -> MergedSequence {
+pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_scoring: &AffineScoring, /*TODO use this */ _read_structure: &SequenceLayoutDesign) -> MergedSequence {
     let read1_seq = FastaBase::from_vec_u8(&read1.seq().to_vec());
     let rev_comp_read2 = FastaBase::from_vec_u8(&read2.seq().reverse_complement().to_vec());
     let mut rev_comp_qual_read2 = read2.qual().to_vec();
@@ -348,7 +348,7 @@ pub fn merge_fasta_bases_by_alignment(read1_seq: &Vec<FastaBase>,
                                       read1_quals: &Vec<u8>,
                                       read2_seq: &Vec<FastaBase>,
                                       read2_quals: &Vec<u8>,
-                                      merge_initial_scoring: &dyn AffineScoringFunction) -> MergedSequence {
+                                      merge_initial_scoring: &AffineScoring) -> MergedSequence {
 
     let results = align_two_strings(&read1_seq, &read2_seq, merge_initial_scoring, false, None, None);
 
@@ -395,7 +395,7 @@ pub fn alignment_rate_and_consensus(alignment_1: &Vec<FastaBase>, qual_scores1: 
     let mut alignment_1_qual_position = 0;
     let mut alignment_2_qual_position = 0;
 
-    debug!("{} {}",FastaBase::to_string(alignment_1),FastaBase::to_string(alignment_2));
+    debug!("{} {}",FastaBase::string(alignment_1),FastaBase::string(alignment_2));
     assert_eq!(alignment_1.len(), alignment_2.len());
 
     for i in 0..alignment_1.len() {
@@ -514,7 +514,7 @@ mod tests {
 
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
-        zip_and_convert(&FastaBase::to_string(&merged.read_bases), &String::from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
+        zip_and_convert(&FastaBase::string(&merged.read_bases), &String::from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
 
         assert_eq!(merged.read_bases, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGCGGAACCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"));
     }
@@ -558,8 +558,8 @@ mod tests {
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         let real = "ATCTACACTCTTTCCCTACACGACGCTCTTCCGATCTCGAATGTCAAAGTCAATGCGTTAGGGTTTCTTATATGGTGGTTTCTAACATTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACACGTCTGAACTCCAGTCACATG";
-        println!("{}\n{}", FastaBase::to_string(&merged.read_bases), real);
-        zip_and_convert(&FastaBase::to_string(&merged.read_bases), &String::from(real));
+        println!("{}\n{}", FastaBase::string(&merged.read_bases), real);
+        zip_and_convert(&FastaBase::string(&merged.read_bases), &String::from(real));
         assert_eq!(merged.read_bases, str_to_fasta_vec(real));
     }
 

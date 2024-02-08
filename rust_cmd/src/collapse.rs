@@ -186,7 +186,7 @@ impl DegenerateBuffer {
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
         item.ordered_unsorted_keys.push_front(key_value.clone()); // we want to keep the key in the list for now, we'll remove it later
         assert_eq!(key_value.0, self.tag.symbol);
-        *self.hash_map.entry(FastaBase::to_string(&key_value.1)).or_insert(0) += 1;
+        *self.hash_map.entry(FastaBase::string(&key_value.1)).or_insert(0) += 1;
 
         match (&self.shard_writer, self.writen_reads >= self.max_buffer_size) {
             (None, true) => {
@@ -388,7 +388,7 @@ fn close_and_write_bin(sender: &mut ShardSender<SortingReadSetContainer>, curren
     let ret = buffer.len();
     for mut y in buffer {
         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
-        let corrected = correction.get(&FastaBase::to_vec_u8(&key_value.1)).unwrap();
+        let corrected = correction.get(&FastaBase::vec_u8(&key_value.1)).unwrap();
         y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
         sender.send(y).unwrap();
     }

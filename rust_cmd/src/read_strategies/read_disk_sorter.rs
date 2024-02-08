@@ -37,7 +37,12 @@ impl Eq for SortingReadSetContainer {}
 impl PartialEq<Self> for SortingReadSetContainer {
     fn eq(&self, other: &Self) -> bool {
         assert_eq!(self.ordered_sorting_keys.len(), other.ordered_sorting_keys.len(), "SortingReadSetContainer: mismatched number of sorting keys from {} and {}",self.ordered_sorting_keys.len(), other.ordered_sorting_keys.len());
-        self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()).map(|(a, b)| a.0 == b.0 && a.1 == b.1).count() == 0
+        for (a,b) in self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()) {
+            if !(a.0 == b.0 && a.1 == b.1) {
+                return false
+            }
+        }
+        true
     }
 }
 
@@ -56,10 +61,10 @@ impl Ord for SortingReadSetContainer {
             Ordering::Equal => {
                 for (a, b) in self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()) {
                     assert_eq!(a.0, b.0, "SortingReadSetContainer: mismatched sorting keys");
-                    if a.1 > b.1 {
-                        return Ordering::Greater;
-                    } else if a.1 < b.1 {
-                        return Ordering::Less;
+                    match a.1.cmp(&b.1) {
+                        Ordering::Less => {return Ordering::Less}
+                        Ordering::Greater => {return Ordering::Greater}
+                        Ordering::Equal => {/* do nothing, someone else will solve our problem*/}
                     }
                 }
                 Ordering::Equal
@@ -71,8 +76,10 @@ impl Ord for SortingReadSetContainer {
 
 #[cfg(test)]
 mod tests {
-    use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_N, FASTA_T};
-    use super::*;
+    use std::cmp::Ordering;
+    use std::collections::VecDeque;
+    use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_N, FASTA_T, FastaBase};
+    use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
     use crate::utils::read_utils::fake_reads;
 
     #[test]

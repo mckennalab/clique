@@ -51,12 +51,13 @@ impl ConvexScoringFunction for ConvexScoring {
 
 
 /// Trait required to instantiate a Scoring instance
-pub trait AffineScoringFunction {
-    fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64;
-    fn gap_open(&self) -> f64;
-    fn gap_extend(&self) -> f64;
-    fn final_gap_multiplier(&self) -> f64;
-}
+/// TODO: this was removed for performance reasons
+//pub trait AffineScoringFunction {
+//    fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64;
+//    fn gap_open(&self) -> f64;
+//    fn gap_extend(&self) -> f64;
+//    fn final_gap_multiplier(&self) -> f64;
+//}
 
 pub struct AffineScoring {
     pub(crate) match_score: f64,
@@ -78,24 +79,22 @@ impl AffineScoring {
             final_gap_multiplier: 0.5,
         }
     }
-}
-impl AffineScoringFunction for AffineScoring {
 
-    fn match_mismatch(&self, bit_a: &FastaBase, bit_b: &FastaBase) -> f64 {
+    pub fn match_mismatch(&self, bit_a: &FastaBase, bit_b: &FastaBase) -> f64 {
         if bit_a == bit_b && (bit_a .identity(&FASTA_N) || bit_b.identity(&FASTA_N)) { self.special_character_score }
         else if bit_a == bit_b {self.match_score}
         else { self.mismatch_score }
     }
 
-    fn gap_open(&self) -> f64 {
-        self.gap_open as f64
+    pub fn gap_open(&self) -> f64 {
+        self.gap_open
     }
 
-    fn gap_extend(&self) -> f64 {
-        self.gap_extend as f64
+    pub fn gap_extend(&self) -> f64 {
+        self.gap_extend
     }
 
-    fn final_gap_multiplier(&self) -> f64 {self.final_gap_multiplier}
+    pub fn final_gap_multiplier(&self) -> f64 {self.final_gap_multiplier}
 }
 
 
@@ -121,13 +120,13 @@ impl InversionScoringFunction for InversionScoring {
         if a == b { self.match_score } else { self.mismatch_score }
     }
     fn gap_open(&self) -> f64 {
-        self.gap_open as f64
+        self.gap_open
     }
 
     fn gap_extend(&self) -> f64 {
-        self.gap_extend as f64
+        self.gap_extend
     }
     fn inversion_cost(&self) -> f64 {
-        self.inversion_penalty as f64
+        self.inversion_penalty
     }
 }

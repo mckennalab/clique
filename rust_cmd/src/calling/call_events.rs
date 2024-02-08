@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use bio::bio_types::genome::AbstractInterval;
-use bio::bio_types::sequence::{Base, SequenceRead};
+use bio::bio_types::sequence::{SequenceRead};
 use itertools::Itertools;
 use phf::phf_map;
 use rust_htslib::bam;
@@ -240,7 +240,7 @@ fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_off
         if reference_base.to_ascii_uppercase() == read_base.to_ascii_uppercase() {
             if in_match {
                 segment_length += 1;
-            } else if current_section.len() > 0 {
+            } else if !current_section.is_empty() {
                 return_sections.push(FullAlignment::Mismatch(section_start, current_section.clone()));
                 segment_length = 1;
                 current_section.clear();
@@ -320,7 +320,7 @@ fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>, re
                 read_pos += ln;
             }
             Cigar::Del(ln) => {
-                alignments.push(FullAlignment::Deletion(ref_pos, ln.clone()));
+                alignments.push(FullAlignment::Deletion(ref_pos, *ln));
                 ref_pos += ln;
             }
             Cigar::RefSkip(_ln) => {
@@ -518,7 +518,7 @@ impl BamCallingParser<'_, '_, '_> {
                     let extractor_id_to_name : BTreeMap<usize,String> = layout_record.umi_configurations.iter().map(|(k,v)| (v.order.clone(),k.clone())).collect();
 
                     let reference = self.reference_manager.reference_name_to_ref.get(ref_name).expect("Unable to find reference");
-                    let reference_sequence = FastaBase::to_vec_u8(&self.reference_manager.references.get(reference).unwrap().sequence);
+                    let reference_sequence = FastaBase::vec_u8(&self.reference_manager.references.get(reference).unwrap().sequence);
                     let alignment_start = record.reference_start();
 
                     // TODO output extractor tags
@@ -534,7 +534,7 @@ impl BamCallingParser<'_, '_, '_> {
 
                     write!(file, "{}\t{}\t{}\t{}\n", String::from_utf8(record.name().to_vec()).unwrap(), String::from_utf8(ref_name.to_vec()).unwrap(), alignment_start, target_output.join(",")).expect("Unable to write to output file");
                 }
-                Err(x) => {
+                Err(_x) => {
                     panic!("Underlying BAM file error!")
                 }
             };

@@ -5,7 +5,7 @@ use std::str;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
 use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
-use crate::alignment::scoring_functions::{AffineScoring, AffineScoringFunction, InversionScoring};
+use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, stretch_sequence_to_alignment};
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator};
@@ -247,8 +247,8 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         debug!("Unable to create alignment for read {}",String::from_utf8(xx.name().clone()).unwrap());
                     }
                     Some((Some(alignment), ref_seq, ref_name)) => {
-                        let ref_al = FastaBase::to_vec_u8(&alignment.reference_aligned);
-                        let read_al = FastaBase::to_vec_u8(&alignment.read_aligned);
+                        let ref_al = FastaBase::vec_u8(&alignment.reference_aligned);
+                        let read_al = FastaBase::vec_u8(&alignment.read_aligned);
                         //println!("ALIGNED\n{}\n{}",String::from_utf8(read_al.clone()).unwrap(),String::from_utf8(ref_al.clone()).unwrap());
                         let full_ref = stretch_sequence_to_alignment(&ref_al, &ref_seq);
                         let ets = extract_tagged_sequences(&read_al, &full_ref);
@@ -290,7 +290,7 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 };
 
                 *read_count.lock().unwrap() += 1;
-                if *read_count.lock().unwrap() % 1000000 == 0 {
+                if *read_count.lock().unwrap() % 10000 == 0 {
                     let duration = start.elapsed();
                     info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
                 }
@@ -375,7 +375,7 @@ pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
 
 pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
                          rev_comp_read2: &Vec<FastaBase>,
-                         scoring_function: &dyn AffineScoringFunction,
+                         scoring_function: &AffineScoring,
                          local: bool,
                          ref_name: Option<&Vec<u8>>,
                          reference_manager: Option<&ReferenceManager>) -> AlignmentResult {
@@ -391,8 +391,8 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
             let ref_id = x.reference_name_to_ref.get(y).unwrap();
             let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
 
-            let ref_seq = FastaBase::to_vec_u8(read1_seq);
-            let read_seq = FastaBase::to_vec_u8(rev_comp_read2);
+            let ref_seq = FastaBase::vec_u8(read1_seq);
+            let read_seq = FastaBase::vec_u8(rev_comp_read2);
 
             let shared_segs = find_greedy_non_overlapping_segments(
                 &ref_seq,
@@ -486,7 +486,7 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
 /// ```
 pub fn align_two_strings_passed_matrix(read1_seq: &[FastaBase],
                                        read2_seq: &[FastaBase],
-                                       scoring_function: &dyn AffineScoringFunction,
+                                       scoring_function: &AffineScoring,
                                        ref_name: Option<&Vec<u8>>,
                                        reference_manager: Option<&ReferenceManager>,
                                        alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
@@ -615,7 +615,7 @@ pub fn align_to_reference_choices(read: &Vec<FastaBase>,
     match rm.references.len() {
         0 => {
             // TODO: we should track this and provide a final summary
-            warn!("Unable to align read {} as it has no candidate references",FastaBase::to_string(read));
+            warn!("Unable to align read {} as it has no candidate references",FastaBase::string(read));
             None
         }
         1 => {
@@ -724,7 +724,7 @@ fn quick_alignment_search(read: &Vec<FastaBase>,
                           _use_inversions: &bool,
                           _max_reference_multiplier: f64,
                           _min_read_length: usize) -> Option<(Option<AlignmentResult>, Vec<u8>, Vec<u8>)> {
-    let read_u8 = FastaBase::to_vec_u8(read);
+    let read_u8 = FastaBase::vec_u8(read);
     let read_kmers = ReferenceManager::sequence_to_kmers(&read_u8, &rm.kmer_size, &rm.kmer_skip);
 
     let max_ref = read_kmers.iter().map(|(kmer, _c)| {
@@ -814,8 +814,8 @@ pub fn perform_rust_bio_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
 
     let alignment_scoring = Scoring::new(-20, -2, &score).xclip_prefix(0).xclip_suffix(0).yclip_suffix(0).yclip_suffix(0);
     let mut aligner = Aligner::with_capacity_and_scoring(reference.len(), read.len(), alignment_scoring);
-    let x = FastaBase::to_vec_u8(&reference);
-    let y = FastaBase::to_vec_u8(&read);
+    let x = FastaBase::vec_u8(&reference);
+    let y = FastaBase::vec_u8(&read);
     let alignment = aligner.global(y.as_slice(), x.as_slice());
     bio_to_alignment_result(alignment, reference, read)
 }
@@ -930,7 +930,7 @@ pub fn create_sam_record(
     additional_tags: HashMap<(u8, u8), String>) -> Record {
     let mut record = Record::new();
 
-    let seq = FastaBase::to_vec_u8_strip_gaps(&read_seq);
+    let seq = FastaBase::vec_u8_strip_gaps(&read_seq);
 
     // we don't currently calculate real quality scores
     let quals = vec![255 as u8; seq.len()];
@@ -943,8 +943,8 @@ pub fn create_sam_record(
     });
 
     if *extract_capture_tags {
-        let full_ref = stretch_sequence_to_alignment(&FastaBase::to_vec_u8(&reference_aligned_seq), reference_original_seq);
-        let ets = extract_tagged_sequences(&FastaBase::to_vec_u8(&read_seq), &full_ref);
+        let full_ref = stretch_sequence_to_alignment(&FastaBase::vec_u8(&reference_aligned_seq), reference_original_seq);
+        let ets = extract_tagged_sequences(&FastaBase::vec_u8(&read_seq), &full_ref);
 
         ets.iter().for_each(|(tag, seq)| {
             record.push_aux(vec![b'e', (*tag)].as_slice(), Aux::String(seq)).unwrap();
