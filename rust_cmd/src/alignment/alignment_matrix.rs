@@ -286,8 +286,6 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
         }
     }
 }
-
-
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
                                      alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
@@ -496,7 +494,6 @@ pub struct AlignmentLocation {
 }
 
 
-
 #[derive(Clone)]
 pub struct AlignmentResult {
     pub reference_aligned: Vec<FastaBase>,
@@ -607,7 +604,7 @@ impl AlignmentResult {
                         score = 0.0;
                     }
                 }
-                _ => {panic!("Unknown tag type")}
+                _ => { panic!("Unknown tag type") }
             }
         }
         if !alignment_string1.is_empty() || !alignment_string2.is_empty() {
@@ -748,8 +745,8 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         _starting_y = max_value_tuple.0.y;
     }
     let starting_z = [(alignment.scores[[_starting_x, _starting_y, 0]], 0),
-                          (alignment.scores[[_starting_x, _starting_y, 1]], 1),
-                          (alignment.scores[[_starting_x, _starting_y, 2]], 2)];
+        (alignment.scores[[_starting_x, _starting_y, 1]], 1),
+        (alignment.scores[[_starting_x, _starting_y, 2]], 2)];
 
     let mut _starting_z = starting_z.iter().max_by(|x, y| x.0.partial_cmp(&y.0).unwrap()).unwrap().1;
     let score = alignment.scores[[_starting_x, _starting_y, _starting_z]];
