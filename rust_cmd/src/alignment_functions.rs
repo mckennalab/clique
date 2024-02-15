@@ -24,7 +24,6 @@ use rust_htslib::bam::record::{Aux, CigarString};
 use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
 use bio::alignment::pairwise::{Aligner, Scoring};
 use itertools::Itertools;
-use priority_queue::PriorityQueue;
 
 pub fn align_reads(read_structure: &SequenceLayoutDesign,
                    rm: &ReferenceManager,
