@@ -1,3 +1,4 @@
+use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Add;
@@ -197,7 +198,7 @@ fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
     let mut update_count = 0;
 
     while row_pos < alignment.scores.shape()[0] && col_pos < alignment.scores.shape()[1] && still_updating {
-        let updates = update_3d_score(alignment, sequence1, sequence2, scoring_function, row_pos, col_pos);
+        let updates = update_3d_score_local(alignment, sequence1, sequence2, scoring_function, row_pos, col_pos);
 
         let any_update = updates.0 || updates.1 || updates.2;
         if any_update {
@@ -252,10 +253,21 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
                                 sequence1: &[FastaBase],
                                 sequence2: &[FastaBase],
                                 scoring_function: &AffineScoring) {
+    let new_bandwidth = max(sequence1.len(),sequence2.len());
+    perform_affine_alignment_bandwidth(alignment, sequence1, sequence2, scoring_function, &new_bandwidth)
+}
+
+
+/// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
+pub fn perform_affine_alignment_bandwidth(alignment: &mut Alignment<Ix3>,
+                                sequence1: &[FastaBase],
+                                sequence2: &[FastaBase],
+                                scoring_function: &AffineScoring,
+                                bandwidth: &usize) {
+
     assert_eq!(alignment.scores.shape()[2], 3);
     assert!(alignment.scores.shape()[0] >= sequence1.len() + 1, "Asked to align sequence 1 with length {} in a matrix sized {} in that dimension, sequence {}", sequence1.len() + 1, alignment.scores.shape()[0], FastaBase::string_from_slice(sequence1));
     assert!(alignment.scores.shape()[1] >= sequence2.len() + 1, "Asked to align sequence 2 with length {} in a matrix sized {} in that dimension, sequence {}", sequence2.len() + 1, alignment.scores.shape()[1], FastaBase::string_from_slice(sequence2));
-
 
     alignment.scores[[0, 0, 0]] = 0.0;
     alignment.scores[[0, 0, 1]] = MAX_NEG_SCORE;
@@ -281,11 +293,23 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
     }
 
     for x in 1..(sequence1.len() + 1) {
-        for y in 1..(sequence2.len() + 1) {
-            update_3d_score(alignment, sequence1, sequence2, scoring_function, x, y);
+        let y_bounds = ((x as f64 / (sequence1.len() + 1) as f64) * (sequence2.len() + 1) as f64) as i64;
+        //println!("y bounds {} {} {}",y_bounds,(x as f64 / (sequence1.len() + 1) as f64),(sequence2.len() + 1) as f64);
+
+        let y_bounds = (max(1,y_bounds - (*bandwidth as i64)), min(sequence2.len() as i64 + 1, y_bounds + (*bandwidth as i64)));
+        //println!("y bounds {} {} from x = {} bandwidth = {}",y_bounds.0,y_bounds.1,x,bandwidth);
+        assert!(y_bounds.0 >= 0);
+        assert!(y_bounds.1 >= 0);
+        for y in (y_bounds.0)..(y_bounds.1) {
+            if alignment.is_local {
+                update_3d_score_local(alignment, sequence1, sequence2, scoring_function, x, y as usize);
+            } else {
+                update_3d_score(alignment, sequence1, sequence2, scoring_function, x, y as usize);
+            }
         }
     }
 }
+
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
                                      alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
@@ -419,7 +443,7 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
     (_update_x, _update_y, _update_z)
 }
 
-fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase], sequence2: &[FastaBase], scoring_function: &AffineScoring, x: usize, y: usize) -> (bool, bool, bool) {
+fn update_3d_score_local(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase], sequence2: &[FastaBase], scoring_function: &AffineScoring, x: usize, y: usize) -> (bool, bool, bool) {
     let mut _update_x = false;
     let mut _update_y = false;
     let mut _update_z = false;
@@ -447,7 +471,7 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase], sequ
     }
     {
         let best_gap_x = three_way_max_and_direction(
-            &(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend() * gap_multiplier),
+            &(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend()),
             &(alignment.scores[[x - 1, y, 2]] + x1),
             &(alignment.scores[[x - 1, y, 0]] + x1));
 
@@ -458,7 +482,54 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase], sequ
     {
         let best_gap_y = three_way_max_and_direction(
             &(alignment.scores[[x, y - 1, 1]] + x1),
-            &(alignment.scores[[x, y - 1, 2]] + (scoring_function.gap_extend() * gap_multiplier)),
+            &(alignment.scores[[x, y - 1, 2]] + (scoring_function.gap_extend())),
+            &(alignment.scores[[x, y - 1, 0]] + x1));
+
+
+        _update_z = alignment.scores[[x, y, 2]] != best_gap_y.0;
+        alignment.scores[[x, y, 2]] = best_gap_y.0;
+        alignment.traceback[[x, y, 2]] = best_gap_y.1;
+    }
+    (_update_x, _update_y, _update_z)
+}
+
+
+fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase], sequence2: &[FastaBase], scoring_function: &AffineScoring, x: usize, y: usize) -> (bool, bool, bool) {
+    let mut _update_x = false;
+    let mut _update_y = false;
+    let mut _update_z = false;
+    assert!(!alignment.is_local);
+    let gap_multiplier = if x == sequence1.len() || y == sequence2.len() { scoring_function.final_gap_multiplier() } else { 1.0 };
+    let x1 = scoring_function.gap_open() + (scoring_function.gap_extend() * gap_multiplier);
+    let local_gap_ext = scoring_function.gap_extend() * gap_multiplier;
+
+    {
+        // match-mismatch matrix update
+        let match_score = scoring_function.match_mismatch(&sequence1[x - 1], &sequence2[y - 1]);
+
+        let best_match = three_way_max_and_direction(
+            &(alignment.scores[[x - 1, y - 1, 1]] + match_score),
+            &(alignment.scores[[x - 1, y - 1, 2]] + match_score),
+            &(alignment.scores[[x - 1, y - 1, 0]] + match_score));
+
+        _update_x = alignment.scores[[x, y, 0]] != best_match.0;
+        alignment.scores[[x, y, 0]] = best_match.0;
+        alignment.traceback[[x, y, 0]] = best_match.1;
+    }
+    {
+        let best_gap_x = three_way_max_and_direction(
+            &(alignment.scores[[x - 1, y, 1]] + local_gap_ext),
+            &(alignment.scores[[x - 1, y, 2]] + x1),
+            &(alignment.scores[[x - 1, y, 0]] + x1));
+
+        _update_y = alignment.scores[[x, y, 1]] != best_gap_x.0;
+        alignment.scores[[x, y, 1]] = best_gap_x.0;
+        alignment.traceback[[x, y, 1]] = best_gap_x.1;
+    }
+    {
+        let best_gap_y = three_way_max_and_direction(
+            &(alignment.scores[[x, y - 1, 1]] + x1),
+            &(alignment.scores[[x, y - 1, 2]] + local_gap_ext),
             &(alignment.scores[[x, y - 1, 0]] + x1));
 
 
@@ -845,6 +916,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
     alignment1.reverse();
     alignment2.reverse();
     path.reverse();
+    cigars.reverse();
 
     AlignmentResult {
         reference_aligned: alignment1,
@@ -1069,6 +1141,25 @@ mod tests {
     }
 
     #[test]
+    fn affine_alignment_test_favor_non_special_characters() {
+        let reference = str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT");
+        let test_read = str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACCAACAAGTTTTTCAACACCTAGCGTGT");
+
+        let my_score = AffineScoring::default();
+
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
+
+        //pretty_print_3d_matrix(&alignment_mat, &FastaBase::vec_u8(&reference), &FastaBase::vec_u8(&test_read));
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
+        println!("{}\n{}",FastaBase::string(results.reference_aligned.as_slice()),FastaBase::string(results.read_aligned.as_slice()));
+        assert_eq!(results.reference_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT"));
+        //                                                            TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTG------T
+        assert_eq!(results.read_aligned, str_to_fasta_vec(     "TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACCAACAAGTTTTTCAACACCTAGCGTGT----------------------------------"));
+
+    }
+
+    #[test]
     fn affine_alignment_cigar_test() {
         let reference = str_to_fasta_vec("AAAA");
         let test_read = str_to_fasta_vec("AATAA");
@@ -1142,7 +1233,6 @@ mod tests {
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, true);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
-        //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, None);
 

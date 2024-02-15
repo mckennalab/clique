@@ -499,7 +499,6 @@ impl BamCallingParser<'_, '_, '_> {
             }
         }
 
-
         let mut file = File::create(output_file)?;
         write!(file, "read\tref\talignment_start\ttarget_outcomes\n").expect("Unable to write to output file");
 

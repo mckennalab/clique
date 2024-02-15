@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str;
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
-use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment};
+use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment, perform_affine_alignment_bandwidth};
 use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
 use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, stretch_sequence_to_alignment};
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment};
@@ -96,7 +96,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                                                          rm,
                                                          &false,
                                                          read_structure,
-                                                          local_alignment.as_mut().unwrap(),
+                                                         local_alignment.as_mut().unwrap(),
                                                          &my_aff_score,
                                                          &my_score,
                                                          inversions,
@@ -110,7 +110,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                     }
                     Some(alignment_obj) => {
                         let results = alignment_obj.alignment;
-                        let orig_ref_seq= alignment_obj.ref_sequence;
+                        let orig_ref_seq = alignment_obj.ref_sequence;
                         let ref_name = alignment_obj.ref_name;
 
                         match results {
@@ -129,7 +129,7 @@ pub fn align_reads(read_structure: &SequenceLayoutDesign,
                                 }
                                 assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
 
-                                let reference_record =  reference_mapper.get(ref_name.as_slice()).unwrap();
+                                let reference_record = reference_mapper.get(ref_name.as_slice()).unwrap();
                                 let samrecord = aln.to_sam_record(&name, &orig_ref_seq, &i32::try_from(*reference_record).ok().unwrap(), &true);
 
                                 let mut output = output.lock().unwrap();
@@ -153,7 +153,7 @@ struct MemorizedAlignment {
 
 impl MemorizedAlignment {
     pub fn new() -> MemorizedAlignment {
-        MemorizedAlignment{
+        MemorizedAlignment {
             count: 0,
             alignment_result: None,
         }
@@ -178,8 +178,7 @@ impl PartialEq for MemorizedAlignment {
     }
 }
 
-impl Eq for MemorizedAlignment {
-}
+impl Eq for MemorizedAlignment {}
 
 type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 
@@ -198,8 +197,8 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                         index2: &String,
                         max_gaps_proportion: &f64,
                         threads: &usize,
-                        inversions: &bool) -> (usize, HashMap<String, ShardReader<SortingReadSetContainer>>) {
-
+                        inversions: &bool,
+                        max_indel: &Option<usize>) -> (usize, HashMap<String, ShardReader<SortingReadSetContainer>>) {
     let read_iterator = MergedReadSequence::new(ReadIterator::new(PathBuf::from(&read1),
                                                                   Some(PathBuf::from(&read2)),
                                                                   Some(PathBuf::from(&index1)),
@@ -226,10 +225,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
     let skipped_count = Arc::new(Mutex::new(0 as usize));
     let gap_rejected = Arc::new(Mutex::new(0 as usize));
-    let mimimum_to_mem = 10;
-
-    let memoried_alignments: Arc<Mutex<HashMap<Vec<FastaBase>,MemorizedAlignment>>> = Arc::new(Mutex::new(HashMap::new()));
-
     // setup local thread-safe storage for our alignment matricies
     lazy_static! {
         static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());
@@ -274,43 +269,24 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                     STORE_CLONES.lock().unwrap().push(arc_mtx.clone());
                 }
 
-                let mut we_remember : Option<AlignmentWithRef> = None;
-                {
-                    let is_memorized = Arc::clone(&memoried_alignments);
-                    let is_memorized_unwrapped: MutexGuard<HashMap<Vec<FastaBase>, MemorizedAlignment>> = is_memorized.lock().unwrap();
-                    if is_memorized_unwrapped.contains_key(xx.seq()) &&  is_memorized_unwrapped.get(xx.seq()).unwrap().alignment_result.is_some() {
-                        we_remember = Some(is_memorized_unwrapped.get(xx.seq()).unwrap().alignment_result.as_ref().unwrap().clone());
-                    }
-                }
 
-
-                let aligned = match we_remember {
-                    Some(x) => {
-                        println!("Remember!");
-                        Some(x)
-                    }
-                    None => {
-                        match align_to_reference_choices(&xx.seq(),
-                                                   &rm,
-                                                   &fast_lookup,
-                                                   read_structure,
-                                                   &mut local_alignment.as_mut().unwrap(),
-                                                   &my_aff_score,
-                                                   &my_score,
-                                                   inversions,
-                                                   *max_reference_multiplier,
-                                                   *min_read_length) {
-                            None => {None},
-                            Some(x) if x.alignment.is_none() => {None},
-                            Some(x) => {Some(x)},
-                        }
-
-                    }
-                };
+                let aligned = align_to_reference_choices(&xx.seq(),
+                                                         &rm,
+                                                         &fast_lookup,
+                                                         read_structure,
+                                                         &mut local_alignment.as_mut().unwrap(),
+                                                         &my_aff_score,
+                                                         &my_score,
+                                                         inversions,
+                                                         *max_reference_multiplier,
+                                                         *min_read_length);
 
                 match aligned {
                     None => {
                         // TODO: track and output summary
+                        debug!("Unable to create alignment for read {}",String::from_utf8(xx.name().clone()).unwrap());
+                    }
+                    Some(alignment_obj) if alignment_obj.alignment.is_none() => {
                         debug!("Unable to create alignment for read {}",String::from_utf8(xx.name().clone()).unwrap());
                     }
                     Some(alignment_obj) => {
@@ -320,21 +296,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
                         let ref_al = FastaBase::vec_u8(&alignment.reference_aligned);
                         let read_al = FastaBase::vec_u8(&alignment.read_aligned);
-
-                        {
-                            let is_memorized = Arc::clone(&memoried_alignments);
-                            let mut is_memorized_unwrapped: MutexGuard<HashMap<Vec<FastaBase>, MemorizedAlignment>> = is_memorized.lock().unwrap();
-                            let mut entry = is_memorized_unwrapped.get(xx.seq()).unwrap_or(&MemorizedAlignment::new()).clone();
-                            entry.count += 1;
-                            println!("adding memory, total size {}",is_memorized_unwrapped.len());
-                            if entry.count > mimimum_to_mem && entry.alignment_result.is_none() {
-                                println!("Above count {}",entry.count);
-                                entry.alignment_result = Some(alignment_obj.clone());
-                            } else {
-                                println!("Below count {}",entry.count);
-                            }
-                            is_memorized_unwrapped.insert(xx.seq().clone(),entry);
-                        }
 
                         let full_ref = stretch_sequence_to_alignment(&ref_al, &ref_seq);
                         let ets = extract_tagged_sequences(&read_al, &full_ref);
@@ -376,9 +337,9 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
                 };
 
                 *read_count.lock().unwrap() += 1;
-                if *read_count.lock().unwrap() % 10000 == 0 {
+                if *read_count.lock().unwrap() % 1000000 == 0 {
                     let duration = start.elapsed();
-                    info!("Time elapsed in aligning reads ({:?}) is: {:?}", read_count.lock().unwrap(), duration);
+                    info!("Time elapsed in aligning ({:?}) reads: {:?}", read_count.lock().unwrap(), duration);
                 }
             });
         });
@@ -573,9 +534,10 @@ pub fn align_two_strings(read1_seq: &Vec<FastaBase>,
 pub fn align_two_strings_passed_matrix(read1_seq: &[FastaBase],
                                        read2_seq: &[FastaBase],
                                        scoring_function: &AffineScoring,
-                                       ref_name: Option<&Vec<u8>>,
-                                       reference_manager: Option<&ReferenceManager>,
+                                       _ref_name: Option<&Vec<u8>>,
+                                       _reference_manager: Option<&ReferenceManager>,
                                        alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
+
     /*match (reference_manager, ref_name) {
         (Some(x), Some(y)) => {
             //let ref_id = x.reference_name_to_ref.get(y).unwrap();
@@ -612,22 +574,22 @@ pub fn align_two_strings_passed_matrix(read1_seq: &[FastaBase],
         }
 
         _ => {*/
-            perform_affine_alignment(
-                alignment_mat,
-                read1_seq,
-                read2_seq,
-                scoring_function);
+    perform_affine_alignment_bandwidth(
+        alignment_mat,
+        read1_seq,
+        read2_seq,
+        scoring_function,
+        &30);
 
-            perform_3d_global_traceback(
-                alignment_mat,
-                None,
-                read1_seq,
-                read2_seq,
-                None)
-        //}
+    perform_3d_global_traceback(
+        alignment_mat,
+        None,
+        read1_seq,
+        read2_seq,
+        None)
+    //}
     //}
 }
-
 
 
 #[derive(Clone)]
@@ -736,7 +698,7 @@ pub fn align_to_reference_choices(read: &Vec<FastaBase>,
                 Some(rm),
                 alignment_mat);
 
-            Some(AlignmentWithRef{
+            Some(AlignmentWithRef {
                 alignment: Some(aln),
                 ref_name: ref_base.name.clone(),
                 ref_sequence: ref_base.sequence_u8.clone(),
@@ -835,13 +797,13 @@ fn quick_alignment_search(read: &Vec<FastaBase>,
             None
         }
         Some(x) => {
-            Some(AlignmentWithRef{
+            Some(AlignmentWithRef {
                 alignment: Some(align_two_strings_passed_matrix(&x.0.sequence,
-                                                           read,
-                                                           my_aff_score,
-                                                           Some(&x.0.name),
-                                                           Some(rm),
-                                                           alignment_mat)),
+                                                                read,
+                                                                my_aff_score,
+                                                                Some(&x.0.name),
+                                                                Some(rm),
+                                                                alignment_mat)),
                 ref_name: x.0.name.clone(),
                 ref_sequence: x.0.sequence_u8.clone(),
             })
@@ -853,7 +815,6 @@ fn exhaustive_alignment_search(read: &Vec<FastaBase>,
                                rm: &ReferenceManager,
                                alignment_mat: &mut Alignment<Ix3>,
                                my_aff_score: &AffineScoring) -> Option<AlignmentWithRef> {
-
     let references = &rm.references;
 
     let ranked_alignments = references.iter().map(|reference| {
@@ -873,7 +834,7 @@ fn exhaustive_alignment_search(read: &Vec<FastaBase>,
         None => { None }
         Some((_x, y)) => {
             //Some((Some(y.0.clone()), , y.2.clone()))
-            Some(AlignmentWithRef{
+            Some(AlignmentWithRef {
                 alignment: Some(y.0.clone()),
                 ref_name: y.2.clone(),
                 ref_sequence: y.1.clone(),
@@ -1145,13 +1106,13 @@ mod tests {
         };
 
         let best_ref = exhaustive_alignment_search(&read_one, &&rm, &mut read_mat, &my_aff_score);
-        assert_eq!(String::from_utf8(best_ref.unwrap().2).unwrap(),
+        assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("1_AAACCCCGGG_GGTAGCAAACGTTTGGACGTG".to_string().into_bytes()).unwrap());
 
         let read_one = FastaBase::from_string(&"atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTGCCCTTACTCTCACCTGATTACTTAATCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAACGCCCTACgaattcgggcccattggtatggc".to_string().to_ascii_uppercase());
         let best_ref = exhaustive_alignment_search(&read_one, &&rm, &mut read_mat, &my_aff_score);
 
-        assert_eq!(String::from_utf8(best_ref.unwrap().2).unwrap(),
+        assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("2_AACGCCCTAC_GGTGCCCTTACTCTCACCTGATTACTTAATCCGTG".to_string().into_bytes()).unwrap());
     }
 
@@ -1192,13 +1153,12 @@ mod tests {
         };
 
         let best_ref = exhaustive_alignment_search(&read_one, &&rm, &mut read_mat, &my_aff_score);
-        assert_eq!(String::from_utf8(best_ref.unwrap().2).unwrap(),
+        assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("ref_48_GGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTG".to_string().into_bytes()).unwrap());
-
     }
 
     fn str_to_reference<'a>(st: &'a str, name: &'a str) -> Reference<'a, 'a> {
-        Reference{
+        Reference {
             sequence: FastaBase::from_str(st),
             sequence_u8: st.as_bytes().to_vec(),
             name: name.to_ascii_uppercase().into_bytes(),

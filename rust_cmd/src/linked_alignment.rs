@@ -92,7 +92,7 @@ pub fn cigar_alignment_to_full_string(read: &Vec<u8>, reference: &Vec<u8>, align
 /// * `search_string` - a u8 Vec representing the search string
 /// * `reference` - a u8 Vec representing the reference string
 /// * `seeds` - a suffix array lookup object
-pub fn find_greedy_non_overlapping_segments(search_string: &Vec<u8>, reference: &Vec<u8>, seeds: &SuffixTableLookup) -> SharedSegments {
+pub fn find_greedy_non_overlapping_segments(search_string: &[u8], reference: &[u8], seeds: &SuffixTableLookup) -> SharedSegments {
     let mut return_hits: Vec<MatchedPosition> = Vec::new();
     let mut position = 0;
     let mut least_ref_pos = reference.len() as usize;
@@ -319,7 +319,7 @@ pub fn slice_for_alignment(read: &Vec<FastaBase>, read_start: usize, read_stop: 
 }
 
 /// Extend a seed hit within the reference to its maximum length, using degenerate base matching
-pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &Vec<u8>, reference_location: usize) -> usize {
+pub fn extend_hit(search_string: &[u8], search_location: usize, reference: &[u8], reference_location: usize) -> usize {
     let mut current_length = 0;
     while current_length + search_location < search_string.len() && current_length + reference_location < reference.len() {
         let search_loc = current_length + search_location;
@@ -346,6 +346,30 @@ pub fn extend_hit(search_string: &Vec<u8>, search_location: usize, reference: &V
 mod tests {
     use crate::reference::fasta_reference::ReferenceManager;
     use super::*;
+
+
+    #[test]
+    fn orient_by_longest_segment_test() {
+        let reference = String::from("AAAAATATATATATATAT").as_bytes().to_owned();
+        let test_read = String::from("AAAAAGGGGGGGGGGGGG").as_bytes().to_owned();
+        let reference_lookup = ReferenceManager::find_seeds(&reference, 5);
+
+        let aligned_string = orient_by_longest_segment(&FastaBase::from_vec_u8(&test_read), &reference, &reference_lookup);
+        assert_eq!(aligned_string.1.alignment_segments.len(),1);
+        assert_eq!(aligned_string.1.alignment_segments.get(0).unwrap().search_start,0);
+
+        let reference = String::from("AAAAATATATATATATATCCACC").as_bytes().to_owned();
+        let test_read = String::from("AAAAAGGGGGGGGGGGGGCCACC").as_bytes().to_owned();
+        let reference_lookup = ReferenceManager::find_seeds(&reference, 5);
+
+        let aligned_string = orient_by_longest_segment(&FastaBase::from_vec_u8(&test_read), &reference, &reference_lookup);
+
+        println!("{:?}",reference_lookup.suffix_table);
+
+        assert_eq!(aligned_string.1.alignment_segments.len(),2);
+        assert_eq!(aligned_string.1.alignment_segments.get(0).unwrap().search_start,0);
+        assert_eq!(aligned_string.1.alignment_segments.get(1).unwrap().search_start,18);
+    }
 
     #[test]
     fn simple_extend_test() {

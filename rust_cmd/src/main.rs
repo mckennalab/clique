@@ -131,6 +131,9 @@ enum Cmd {
 
         #[clap(long)]
         fast_reference_lookup: bool,
+
+        #[clap(long, default_value = "0")]
+        max_deletion: usize,
     },
     Align {
         #[clap(long)]
@@ -208,7 +211,9 @@ fn main() {
             index1,
             index2,
             find_inversions,
-            fast_reference_lookup
+            fast_reference_lookup,
+            max_deletion,
+
         } => {
             let my_yaml = SequenceLayoutDesign::from_yaml(read_structure);
 
@@ -225,7 +230,11 @@ fn main() {
                      index1,
                      index2,
                      threads,
-                     &find_inversions);
+                     &find_inversions,
+                    &match max_deletion {
+                        &x if x > 0 => {Some(x)}
+                        _ => {None}
+                    });
         }
 
         Cmd::Align {

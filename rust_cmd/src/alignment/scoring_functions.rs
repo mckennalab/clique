@@ -73,7 +73,7 @@ impl AffineScoring {
         AffineScoring {
             match_score: 6.0,
             mismatch_score: -4.0,
-            special_character_score: 5.0,
+            special_character_score: -2.0,
             gap_open: -10.0,
             gap_extend: -0.5,
             final_gap_multiplier: 0.5,

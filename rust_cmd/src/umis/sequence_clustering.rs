@@ -25,9 +25,6 @@ pub struct StringGraph {
     pub max_distance: u64,
 }
 
-
-
-
 pub fn string_distance_no_break(str1: &Vec<u8>, str2: &Vec<u8>, _max_dist: &usize) -> usize {
     //assert_eq!(str1.len(), str2.len());
     str1.iter().zip(str2.iter()).map(|(c1, c2)| if c1 == c2 { 0 } else { 1 }).sum()
@@ -47,7 +44,6 @@ pub fn string_distance_break(str1: &Vec<u8>, str2: &Vec<u8>, max_dist: &usize) -
     }
     dist
 }
-
 
 pub fn correct_to_known_list(barcode: &Vec<FastaBase>, kl: &mut KnownList, max_distance: &usize) -> BestHits {
     if kl.known_list_map.contains_key(barcode) {
@@ -257,8 +253,6 @@ pub fn vantage_point_string_graph(input_list: &InputList, progress: bool) -> Str
         None
     };
 
-
-
     let mut graph = GraphMap::<u32, u32, Undirected>::new();
     let mut string_to_node: HashMap<Vec<u8>, u32> = HashMap::new();
     let mut node_to_string: HashMap<u32, Vec<u8>> = HashMap::new();
@@ -275,7 +269,6 @@ pub fn vantage_point_string_graph(input_list: &InputList, progress: bool) -> Str
     });
 
     let vp = vpsearch::Tree::new(&input_list.strings.iter().map(|t| U8String{ u8str: t.clone() }).collect::<Vec<U8String>>());
-
 
     string_to_node.iter().enumerate().for_each(|(index,(x,n))| {
         //let expected = HashSet::new();
@@ -462,7 +455,8 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::path::Path;
     use std::time::Instant;
-    use rand::distributions::Slice;
+    use actix::fut::result;
+    use rand::distributions::{Slice, Uniform};
     use crate::read_strategies::sequence_layout::{UMIConfiguration, UMISortType};
     use crate::utils::base_utils::edit_distance;
     use super::*;
@@ -488,6 +482,62 @@ mod tests {
         let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
         assert_eq!(4, str_dist);
     }
+
+
+    // Function to generate a random nucleotide sequence of a given length
+    fn generate_random_nucleotide_sequence(length: usize) -> Vec<u8> {
+        let mut rng = rand::thread_rng();
+        let nucleotides = b"ACGT"; // Byte string of nucleotides
+        let dist = Uniform::from(0..nucleotides.len());
+
+        (0..length)
+            .map(|_| nucleotides[dist.sample(&mut rng)])
+            .collect()
+    }
+
+    fn mutate_sequence(sequence: &Vec<u8>, error_rate: f64) -> Vec<u8> {
+        let mut rng = rand::thread_rng();
+        let nucleotides = b"ACGT";
+        let dist = Uniform::from(0..nucleotides.len());
+
+        let mut resulting_sequence = Vec::new();
+        for (position,nucleotide) in sequence.iter().enumerate() {
+            // Decide if this nucleotide should be mutated, based on the error rate
+            if rng.gen::<f64>() < error_rate {
+                let mut new_nucleotide = *nucleotide;
+                // Ensure the new nucleotide is different from the original
+                while new_nucleotide == *nucleotide {
+                    new_nucleotide = nucleotides[dist.sample(&mut rng)];
+                }
+                resulting_sequence.push(new_nucleotide);
+            } else {
+                resulting_sequence.push(*nucleotide);
+            }
+        }
+        resulting_sequence
+    }
+
+    fn generate_random_kmers_with_error_rate() {
+        let str1 = vec![b'A', b'A', b'A', b'A'];
+        let str2 = vec![b'A', b'A', b'A', b'T'];
+
+        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
+        assert_eq!(1, str_dist);
+
+        let str1 = vec![b'A', b'A', b'A', b'A'];
+        let str2 = vec![b'A', b'A', b'A', b'A'];
+
+        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
+        assert_eq!(0, str_dist);
+
+        let str1 = vec![b'T', b'T', b'T', b'T'];
+        let str2 = vec![b'A', b'A', b'A', b'A'];
+
+
+        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
+        assert_eq!(4, str_dist);
+    }
+
 
     #[test]
     fn test_graph_creation() {
@@ -531,21 +581,6 @@ mod tests {
             println!("string_distance_break high/low {}", now.elapsed().as_millis());
         }
     }
-
-
-    /* #[test] dont run for now
-    fn test_four_set_count() {
-        let mut group1 = create_one_off_errors(&generate_random_string(10));
-        println!("Group 1 {}", group1.len());
-        group1.extend(create_one_off_errors(&generate_random_string(10)));
-        group1.extend(create_one_off_errors(&generate_random_string(10)));
-        group1.extend(create_one_off_errors(&generate_random_string(10)));
-        println!("Group 1 {}", group1.len());
-        let graph = input_list_to_graph(&InputList { strings: group1, max_dist: 4 }, string_distance_no_break, false);
-        println!("Graphing!");
-        process_cliques(&graph);
-    }*/
-
 
     #[test]
     fn test_larger_clique_count() {

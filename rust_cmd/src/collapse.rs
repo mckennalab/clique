@@ -25,7 +25,8 @@ pub fn collapse(final_output: &String,
                 index1: &String,
                 index2: &String,
                 threads: &usize,
-                find_inversions: &bool) {
+                find_inversions: &bool,
+                max_indel: &Option<usize>) {
 
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
@@ -58,7 +59,8 @@ pub fn collapse(final_output: &String,
                                index2,
                                &0.2,
                                threads,
-                               find_inversions);
+                               find_inversions,
+                               max_indel);
 
     info!("Sorting the aligned reads");
     let mut read_count = ret.0;
@@ -305,7 +307,7 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
                                                                                     1 << 16).unwrap();
 
     let mut sender = sharded_output.get_sender();
-    let mut bar : Option<ProgressBar>= match *read_count > 100000 {
+    let mut bar: Option<ProgressBar> = match *read_count > 100000 {
         true => Some(ProgressBar::new(read_count.clone() as u64)),
         false => None,
     };
@@ -409,7 +411,7 @@ pub fn sort_known_level(temp_directory:
     let mut dropped_reads = 0;
     let mut collided_reads = 0;
     info!("Sorting reads");
-    let mut bar : Option<ProgressBar>= match *read_count > 100000 {
+    let mut bar: Option<ProgressBar> = match *read_count > 100000 {
         true => Some(ProgressBar::new(read_count.clone() as u64)),
         false => None,
     };
