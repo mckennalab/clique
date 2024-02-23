@@ -15,14 +15,12 @@ fastq = "*"
 seq_io = "*"
 petgraph = "*"
 flate2 = "1.0.23"
-noodles-fastq = "*"
 ndarray = "0.15.0"
 suffix = {git = "https://github.com/aaronmck/suffix.git"}
 num-traits = "*"
 indicatif = "*"
 tempfile = "3"
 bgzip = "0.2.1"
-rust-htslib = { git = "https://github.com/rust-bio/rust-htslib" }
 log = "*"
 serde = { version = "*", features = ["derive"] }
 itertools = "*"
@@ -48,6 +46,15 @@ sift4 = "*"
 colored = "*"
 vpsearch = "*"
 phf = {version = "0.11", features = ["macros"] }
+priority-queue = "1.3.1"
+noodles-core = "0.14.0"
+noodles-bam = "0.56.0"
+noodles-sam = "0.53.0"
+noodles-bgzf = "0.26.0"
+noodles-util = { version = "0.37.0", features = ["alignment"] }
+bstr = "*"
+
+rust-htslib = "*"
 
 [profile.release]
 lto = true
@@ -59,3 +66,4 @@ rustflags = ["-Clink-arg=-fuse-ld=lld", "-Clink-arg=-Wl,--no-rosegment"]
 
 [build-dependencies]
 #bindgen = "*"
+
