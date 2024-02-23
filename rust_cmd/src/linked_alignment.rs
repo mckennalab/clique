@@ -96,7 +96,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &[u8], reference: &[u
     let mut least_ref_pos = reference.len() as usize;
     let mut greatest_ref_pos = 0;
 
-    while (position as i64) < (search_string.len() as i64 - seeds.seed_size as i64) {
+    while (position as i64) <= (search_string.len() as i64 - seeds.seed_size as i64) {
         let ref_positions = seeds.suffix_table.positions_internal(&search_string[position..(position + seeds.seed_size)]);
         let mut longest_hit = 0;
         for ref_position in ref_positions {
@@ -362,7 +362,7 @@ mod tests {
 
         let aligned_string = orient_by_longest_segment(&FastaBase::from_vec_u8(&test_read), &reference, &reference_lookup);
 
-        println!("{:?}",reference_lookup.suffix_table);
+        println!("suffix {:?}\nshared\n {:?}",reference_lookup.suffix_table, aligned_string.1);
 
         assert_eq!(aligned_string.1.alignment_segments.len(),2);
         assert_eq!(aligned_string.1.alignment_segments.get(0).unwrap().search_start,0);

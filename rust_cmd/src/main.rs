@@ -42,8 +42,6 @@ use std::sync::{Arc};
 
 use tempfile::{TempDir as ActualTempDir};
 
-use alignment::alignment_matrix::*;
-use alignment::scoring_functions::*;
 use clap::Parser;
 use clap::Subcommand;
 use nanoid::nanoid;
@@ -52,7 +50,6 @@ use pretty_trace::*;
 use crate::calling::call_events::BamCallingParser;
 use crate::collapse::collapse;
 use crate::read_strategies::sequence_layout::SequenceLayout;
-use crate::reference::fasta_reference::ReferenceManager;
 
 mod linked_alignment;
 pub mod extractor;

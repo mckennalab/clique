@@ -12,7 +12,6 @@ use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_compl
 
 use crate::alignment::scoring_functions::*;
 
-use noodles_bam;
 use noodles_sam;
 use noodles_sam::alignment::record::cigar;
 use noodles_sam::alignment;
@@ -40,6 +39,7 @@ pub struct MatchedPosition {
 }
 
 /// Where our alignment starts, how the sequences align, and the sequences themselves.
+#[derive(Clone, Debug)]
 pub struct SharedSegments {
     pub start_position: usize,
     pub alignment_segments: Vec<MatchedPosition>,
@@ -1269,10 +1269,10 @@ mod tests {
 
         //pretty_print_3d_matrix(&alignment_mat, &FastaBase::vec_u8(&reference), &FastaBase::vec_u8(&test_read));
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
-        println!("{}\n{}", FastaBase::string(results.reference_aligned.as_slice()), FastaBase::string(results.read_aligned.as_slice()));
-        assert_eq!(results.reference_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT"));
+        println!("{}\n{}\n{}", FastaBase::string(results.reference_aligned.as_slice()), FastaBase::string(results.read_aligned.as_slice()),results.score);
+        assert_eq!(results.reference_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGA----TTGCCGCCGACCCC---CATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT"));
         //                                                            TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTG------T
-        assert_eq!(results.read_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACCAACAAGTTTTTCAACACCTAGCGTGT----------------------------------"));
+        assert_eq!(results.read_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACCAACAAGTTTTT-----CAACACCTAGCGTGT------------------------------------"));
     }
 
     #[test]

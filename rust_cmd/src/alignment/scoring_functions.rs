@@ -71,9 +71,10 @@ pub struct AffineScoring {
 }
 
 impl AffineScoring {
+    /// this is the default, matching DNAFull from Emboss' WATER
     pub fn default() -> AffineScoring {
         AffineScoring {
-            match_score: 6.0,
+            match_score: 5.0,
             mismatch_score: -4.0,
             special_character_score: -2.0,
             gap_open: -10.0,

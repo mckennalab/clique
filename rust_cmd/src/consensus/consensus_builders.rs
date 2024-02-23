@@ -3,27 +3,19 @@ extern crate spoa;
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
-use std::ffi::{CString};
-use std::fs::File;
+use std::ffi::CString;
 use shardio::{Range, ShardReader};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
-use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
+use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use counter::Counter;
 use spoa::{AlignmentEngine, Graph, AlignmentType};
 use ndarray::Ix3;
-use rust_htslib::bam::record::{CigarString};
+use rust_htslib::bam::record::CigarString;
 use crate::alignment::alignment_matrix::{Alignment, AlignmentTag, AlignmentType as LocalAlignmentType, create_scoring_record_3d};
 use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
-use std::io::{BufWriter, Write};
 use crate::alignment::scoring_functions::{AffineScoring};
 use crate::alignment_manager::{align_two_strings, OutputAlignmentWriter, simplify_cigar_string};
-
-use noodles_bam;
-use noodles_sam::{
-    self as sam,
-    header::record::value::{map::Program, Map},
-};
 
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
                              writer: &mut dyn OutputAlignmentWriter,
