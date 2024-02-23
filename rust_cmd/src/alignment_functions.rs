@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 use std::str;
 use crate::rayon::iter::ParallelBridge;
@@ -21,7 +21,7 @@ use crate::read_strategies::sequence_layout::{SequenceLayoutDesign, UMIConfigura
 use rust_htslib::bam;
 use rust_htslib::bam::{Record};
 use rust_htslib::bam::record::{Aux, CigarString};
-use crate::read_strategies::read_disk_sorter::{SortedAlignment, SortingReadSetContainer};
+use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use bio::alignment::pairwise::{Aligner, Scoring};
 use itertools::Itertools;
 
@@ -259,7 +259,6 @@ pub fn fast_align_reads(_use_capture_sequences: &bool,
 
         };
 
-
         read_iterator.par_bridge().for_each(|mut xx| {
             STORE.with(|arc_mtx| {
                 let mut local_alignment = arc_mtx.lock().unwrap();
@@ -381,31 +380,18 @@ fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> 
     (invalid_read, queue)
 }
 
-fn get_sorting_order(read_structure: &SequenceLayoutDesign, reference_name: &String) -> Vec<char> {
-    match read_structure.references.get(reference_name) {
-        None => {
-            panic!("Unable to find reference {} ", reference_name);
-        }
-        Some(reference) => {
-            let mut sorting_order = reference.umi_configurations.iter().map(|x| x.1.clone()).collect::<Vec<UMIConfiguration>>();
-            sorting_order.sort_by(|a, b| a.order.cmp(&b.order));
-            let sorted_tags = sorting_order.iter().map(|x| x.symbol).collect::<Vec<char>>();
-            sorted_tags
-        }
-    }
-}
-
 #[allow(dead_code)]
 pub fn align_using_selected_aligner(read_structure: &SequenceLayoutDesign,
                                     reference_manager: &ReferenceManager,
                                     reference_name: &Vec<u8>,
                                     reference_bases: &Vec<FastaBase>,
                                     xx: &Vec<FastaBase>,
-                                    alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
+                                    alignment_mat: &mut Alignment<Ix3>,
+                                    max_indel: &usize) -> AlignmentResult {
     match &read_structure.aligner {
         None => {
             let score = AffineScoring::default();
-            align_two_strings_passed_matrix(&reference_bases, &xx, &score, Some(reference_name), Some(reference_manager), alignment_mat)
+            align_two_strings_passed_matrix(&reference_bases, &xx, &score, Some(reference_name), Some(reference_manager), alignment_mat, max_indel)
             //perform_rust_bio_alignment(&reference_bases, &xx) // current default
         }
         Some(x) => {
@@ -535,8 +521,8 @@ pub fn align_two_strings_passed_matrix(read1_seq: &[FastaBase],
                                        scoring_function: &AffineScoring,
                                        _ref_name: Option<&Vec<u8>>,
                                        _reference_manager: Option<&ReferenceManager>,
-                                       alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
-
+                                       alignment_mat: &mut Alignment<Ix3>,
+                                       max_indel: &usize) -> AlignmentResult {
     /*match (reference_manager, ref_name) {
         (Some(x), Some(y)) => {
             //let ref_id = x.reference_name_to_ref.get(y).unwrap();
@@ -578,7 +564,7 @@ pub fn align_two_strings_passed_matrix(read1_seq: &[FastaBase],
         read1_seq,
         read2_seq,
         scoring_function,
-        &30);
+        &max_indel);
 
     perform_3d_global_traceback(
         alignment_mat,
@@ -669,7 +655,9 @@ pub fn align_to_reference_choices(read: &Vec<FastaBase>,
                                   my_score: &InversionScoring,
                                   use_inversions: &bool,
                                   max_reference_multiplier: f64,
-                                  min_read_length: usize) -> Option<AlignmentWithRef> {
+                                  min_read_length: usize,
+                                  max_indel: &usize,
+) -> Option<AlignmentWithRef> {
     match rm.references.len() {
         0 => {
             // TODO: we should track this and provide a final summary
@@ -695,7 +683,8 @@ pub fn align_to_reference_choices(read: &Vec<FastaBase>,
                 my_aff_score,
                 Some(&ref_base.name),
                 Some(rm),
-                alignment_mat);
+                alignment_mat,
+                max_indel);
 
             Some(AlignmentWithRef {
                 alignment: Some(aln),
@@ -985,40 +974,6 @@ pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) 
     (reference_to_bin, bam::Writer::from_path(&filename, &header, bam::Format::Bam))
 }
 
-
-pub fn create_sam_record(
-    reference_bin: &u16,
-    read_name: &str,
-    read_seq: &Vec<FastaBase>,
-    reference_aligned_seq: &Vec<FastaBase>,
-    reference_original_seq: &Vec<u8>,
-    cigar_string: &CigarString,
-    extract_capture_tags: &bool,
-    additional_tags: HashMap<(u8, u8), String>) -> Record {
-    let mut record = Record::new();
-
-    let seq = FastaBase::vec_u8_strip_gaps(&read_seq);
-
-    // we don't currently calculate real quality scores
-    let quals = vec![255 as u8; seq.len()];
-
-    record.set(read_name.as_bytes(), Some(&cigar_string), &seq.as_slice(), &quals.as_slice());
-    record.set_bin(*reference_bin);
-    record.set_mate_unmapped();
-    additional_tags.iter().for_each(|(x, y)| {
-        record.push_aux(vec![x.0, x.1].as_slice(), Aux::String(y)).unwrap();
-    });
-
-    if *extract_capture_tags {
-        let full_ref = stretch_sequence_to_alignment(&FastaBase::vec_u8(&reference_aligned_seq), reference_original_seq);
-        let ets = extract_tagged_sequences(&FastaBase::vec_u8(&read_seq), &full_ref);
-
-        ets.iter().for_each(|(tag, seq)| {
-            record.push_aux(vec![b'e', (*tag)].as_slice(), Aux::String(seq)).unwrap();
-        });
-    }
-    record
-}
 
 pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentTag> {
     let mut new_cigar = Vec::new();

@@ -1,11 +1,13 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::{hash::BuildHasherDefault};
 use nohash_hasher::NoHashHasher;
+use noodles_bam::record::Cigar;
+use noodles_sam::alignment::record::cigar::op::*;
 use crate::alignment::fasta_bit_encoding::FastaBase;
 
 use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::fasta_comparisons::KNOWNBASES;
-
+use crate::read_strategies::sequence_layout::{SequenceLayout, UMIConfiguration};
 
 pub const REFERENCE_CHAR: u8 = b'R';
 pub const READ_CHAR: u8 = b'E';
@@ -32,9 +34,60 @@ pub fn error_out_on_unknown_base(base: &u8) {
     panic!("Unknown base (not a FASTA base or degenerate) seen in reference {}", base);
 }
 
-pub fn stretch_sequence_to_alignment(aligned_version: &Vec<u8>, native_version: &Vec<u8>) -> Vec<u8> {
-    assert!(aligned_version.len() >= native_version.len(), "The aligned version {} is shorter than the native (unaligned) version {}", String::from_utf8(aligned_version.clone()).unwrap(), String::from_utf8(native_version.clone()).unwrap());
-    //println!("---{}---{}---", String::from_utf8(aligned_version.clone()).unwrap(), String::from_utf8(native_version.clone()).unwrap());
+pub struct RecoveredAlignedSeq {
+    pub aligned_read: Vec<u8>,
+    pub aligned_ref: Vec<u8>,
+}
+
+pub fn recover_align_sequences(
+    unaligned_read: &[u8],
+    start_pos: usize,
+    cigar: &Cigar,
+    reference: &[u8]) -> RecoveredAlignedSeq {
+
+    let mut aligned_read = Vec::new();
+    let mut aligned_ref = Vec::new();
+    let mut read_pos = 0;
+    let mut ref_pos = start_pos;
+
+    for cigar_sub in cigar.iter() {
+        let cigar_v = cigar_sub.unwrap();
+        let len = cigar_v.len();
+
+        match cigar_v.kind() {
+            Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                aligned_read.extend(unaligned_read[read_pos..read_pos+len].to_vec());
+                aligned_ref.extend(reference[ref_pos..ref_pos+len].to_vec());
+                read_pos += len;
+                ref_pos += len;
+            },
+            Kind::Insertion | Kind::SoftClip => {
+                aligned_read.extend(unaligned_read[read_pos..read_pos+len].to_vec());
+                aligned_ref.extend(b"-".repeat(len));
+                read_pos += len;
+            },
+            Kind::Deletion | Kind::Skip => {
+                aligned_read.extend(b"-".repeat(len));
+                aligned_ref.extend(reference[ref_pos..ref_pos+len].to_vec());
+                ref_pos += len;
+            },
+            Kind::HardClip | Kind::Pad => {
+                read_pos += len;
+                ref_pos += len;
+            },
+            other_cigar => {
+                panic!("Unknown cigar symbol {:?}", other_cigar);
+            }
+        }
+    }
+
+    RecoveredAlignedSeq{aligned_read, aligned_ref}
+}
+
+pub fn stretch_sequence_to_alignment(aligned_version: &[u8], native_version: &[u8]) -> Vec<u8> {
+    assert!(aligned_version.len() >= native_version.len(), "The aligned version {} is shorter than the native (unaligned) version {}",
+            String::from_utf8(aligned_version.to_vec()).unwrap(), String::from_utf8(native_version.to_vec()).unwrap());
+
     let mut native_result = Vec::new();
     let mut native_index = 0;
     let mut aligned_index = 0;
@@ -72,7 +125,7 @@ pub fn gap_proportion_per_tag(tags: &BTreeMap<u8, String>) -> Vec<f64> {
     gap_proportions
 }
 
-pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -> BTreeMap<u8, String> {
+pub fn extract_tagged_sequences(aligned_read: &[u8], aligned_ref: &[u8]) -> BTreeMap<u8, String> {
     let mut special_values: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
     let mut in_extractor = false;
     let mut next_extractor_read = b'a';
@@ -111,6 +164,41 @@ pub fn extract_tagged_sequences(aligned_read: &Vec<u8>, aligned_ref: &Vec<u8>) -
         (key.clone(), String::from_utf8(value.clone()).unwrap())
     }).collect()
 }
+
+
+
+pub fn get_sorting_order(read_structure: &SequenceLayout, reference_name: &String) -> Vec<char> {
+    match read_structure.references.get(reference_name) {
+        None => {
+            panic!("Unable to find reference {} ", reference_name);
+        }
+        Some(reference) => {
+            let mut sorting_order = reference.umi_configurations.iter().map(|x| x.1.clone()).collect::<Vec<UMIConfiguration>>();
+            sorting_order.sort_by(|a, b| a.order.cmp(&b.order));
+            let sorted_tags = sorting_order.iter().map(|x| x.symbol).collect::<Vec<char>>();
+            sorted_tags
+        }
+    }
+}
+
+pub fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {
+    let mut invalid_read = false;
+    let queue = VecDeque::from(sorted_tags.iter().
+        map(|x| {
+            let ets_hit = ets.get(&x.to_string().as_bytes()[0]);
+            match ets_hit {
+                Some(e) => {
+                    Some((x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>()))
+                }
+                None => {
+                    invalid_read = true;
+                    None
+                }
+            }
+        }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
+    (invalid_read, queue)
+}
+
 
 // a custom scoring function for matching nucleotide bases to each other or
 // zero-cost matches to other characters. This allows us to encode

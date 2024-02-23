@@ -23,7 +23,7 @@ pub enum MergeStrategy {
 }
 
 
-impl SequenceLayoutDesign {
+impl SequenceLayout {
     /// Load up a YAML document describing the layout of specific sequences within the reads. This configuration is specific
     /// to each sequencing platform and sequencing type (10X, sci, etc). The layout is described below.
     ///
@@ -40,7 +40,7 @@ impl SequenceLayoutDesign {
     ///
     /// an example of this format is the *test_layout.yaml* file in the test_data directory
     ///
-    pub fn from_yaml(yaml_file: &String) -> SequenceLayoutDesign {
+    pub fn from_yaml(yaml_file: &str) -> SequenceLayout {
 
         let mut file = File::open(yaml_file).unwrap_or_else(|_x | panic!("Unable to open YAML configuration file: {}",yaml_file));
 
@@ -49,7 +49,7 @@ impl SequenceLayoutDesign {
         file.read_to_string(&mut yaml_contents)
             .unwrap_or_else(|_x | panic!("Unable to read contents of YAML configuration file: {}",&yaml_file));
 
-        let deserialized_map: SequenceLayoutDesign = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
+        let deserialized_map: SequenceLayout = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
         for reference in deserialized_map.references.values() {
 
@@ -156,7 +156,7 @@ pub struct ReferenceRecord {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub struct SequenceLayoutDesign {
+pub struct SequenceLayout {
     pub aligner: Option<String>,
     pub merge: Option<MergeStrategy>,
     pub reads: Vec<ReadPosition>,
@@ -164,7 +164,7 @@ pub struct SequenceLayoutDesign {
     pub references: BTreeMap<String,ReferenceRecord>,
 }
 
-impl SequenceLayoutDesign {
+impl SequenceLayout {
     pub fn get_sorted_umi_configurations(&self, reference_name: &String) -> Vec<UMIConfiguration> {
         let reference = self.references.get(reference_name);
         match reference {
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn test_basic_yaml_readback() {
         let configuration =
-            SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout.yaml"));
+            SequenceLayout::from_yaml(&String::from("test_data/test_layout.yaml"));
         assert!(configuration.references.contains_key("shorter_reference"));
         assert!(configuration.references.get("shorter_reference").unwrap().umi_configurations.contains_key("cell_id"));
         assert_eq!(configuration.references.get("shorter_reference").unwrap().umi_configurations.get("cell_id").unwrap().symbol,'*');
@@ -197,13 +197,13 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_basic_yaml_readback_invalid_ordering() {
-        SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid.yaml"));
+        SequenceLayout::from_yaml(&String::from("test_data/test_layout_invalid.yaml"));
     }
 
     #[test]
     #[should_panic]
     fn test_basic_yaml_readback_invalid_ordering2() {
-        SequenceLayoutDesign::from_yaml(&String::from("test_data/test_layout_invalid2.yaml"));
+        SequenceLayout::from_yaml(&String::from("test_data/test_layout_invalid2.yaml"));
     }
 
 

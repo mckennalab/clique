@@ -13,13 +13,11 @@ extern crate lazy_static;
 extern crate log;
 extern crate ndarray;
 extern crate needletail;
-extern crate noodles_fastq;
 extern crate num_traits;
 extern crate petgraph;
 extern crate pretty_env_logger;
 extern crate rand;
 extern crate rayon;
-extern crate rust_htslib;
 extern crate seq_io;
 extern crate serde;
 extern crate suffix;
@@ -31,6 +29,11 @@ extern crate shardio;
 extern crate anyhow;
 extern crate sift4;
 extern crate phf;
+extern crate rust_htslib;
+extern crate noodles_bam;
+#[feature(alignment)]
+extern crate noodles_util;
+extern crate bstr; 
 
 use ::std::io::Result;
 use std::path::{Path, PathBuf};
@@ -46,10 +49,9 @@ use clap::Subcommand;
 use nanoid::nanoid;
 
 use pretty_trace::*;
-use crate::alignment_functions::align_reads;
 use crate::calling::call_events::BamCallingParser;
 use crate::collapse::collapse;
-use crate::read_strategies::sequence_layout::SequenceLayoutDesign;
+use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::reference::fasta_reference::ReferenceManager;
 
 mod linked_alignment;
@@ -89,10 +91,11 @@ mod utils {
     pub mod read_utils;
 }
 
-mod alignment_functions;
+// mod alignment_functions;
 mod sorter;
 pub mod merger;
 mod collapse;
+mod alignment_manager;
 
 mod reference {
     pub mod fasta_reference;
@@ -115,16 +118,7 @@ enum Cmd {
         temp_dir: String,
 
         #[clap(long)]
-        read1: String,
-
-        #[clap(long, default_value = "NONE")]
-        read2: String,
-
-        #[clap(long, default_value = "NONE")]
-        index1: String,
-
-        #[clap(long, default_value = "NONE")]
-        index2: String,
+        inbam: String,
 
         #[clap(long)]
         find_inversions: bool,
@@ -134,7 +128,7 @@ enum Cmd {
 
         #[clap(long, default_value = "0")]
         max_deletion: usize,
-    },
+    }/*,
     Align {
         #[clap(long)]
         read_structure: String,
@@ -166,7 +160,7 @@ enum Cmd {
         #[clap(long)]
         find_inversions: bool,
 
-    },
+    }*/,
 
     Call {
         #[clap(long)]
@@ -206,37 +200,22 @@ fn main() {
             read_structure,
             threads,
             temp_dir: _,
-            read1,
-            read2,
-            index1,
-            index2,
+            inbam,
             find_inversions,
             fast_reference_lookup,
             max_deletion,
 
         } => {
-            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure);
+            let my_yaml = SequenceLayout::from_yaml(read_structure);
 
             let mut tmp = InstanceLivedTempDir::new().unwrap();
 
             collapse(outbam,
-                     fast_reference_lookup,
                      &mut tmp,
                      &my_yaml,
-                     &1.5,
-                     &50,
-                     read1,
-                     read2,
-                     index1,
-                     index2,
-                     threads,
-                     &find_inversions,
-                    &match max_deletion {
-                        &x if x > 0 => {Some(x)}
-                        _ => {None}
-                    });
-        }
-
+                     inbam);
+        },
+/*
         Cmd::Align {
             read_structure,
             output_bam_file: output,
@@ -265,13 +244,13 @@ fn main() {
                         index2,
                         threads,
                         find_inversions);
-        },
+        },*/
         Cmd::Call {
             read_structure,
             bam,
             output,
         } => {
-            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure);
+            let my_yaml = SequenceLayout::from_yaml(read_structure);
 
             let mut parser = BamCallingParser::new(&my_yaml);
 

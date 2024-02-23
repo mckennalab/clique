@@ -23,6 +23,7 @@ impl ScoringFunction for SimpleScoring {
         self.gap_score * length as f64
     }
 }
+
 /// Trait required to instantiate a Scoring instance
 pub trait ConvexScoringFunction {
     fn match_mismatch(&self, a: &u8, b: &u8) -> f64;
@@ -68,6 +69,7 @@ pub struct AffineScoring {
     pub(crate) final_gap_multiplier: f64,
 
 }
+
 impl AffineScoring {
     pub fn default() -> AffineScoring {
         AffineScoring {
@@ -81,9 +83,7 @@ impl AffineScoring {
     }
 
     pub fn match_mismatch(&self, bit_a: &FastaBase, bit_b: &FastaBase) -> f64 {
-        if bit_a == bit_b && (bit_a .identity(&FASTA_N) || bit_b.identity(&FASTA_N)) { self.special_character_score }
-        else if bit_a == bit_b {self.match_score}
-        else { self.mismatch_score }
+        if bit_a == bit_b && (bit_a.identity(&FASTA_N) || bit_b.identity(&FASTA_N)) { self.special_character_score } else if bit_a == bit_b { self.match_score } else { self.mismatch_score }
     }
 
     pub fn gap_open(&self) -> f64 {
@@ -94,39 +94,44 @@ impl AffineScoring {
         self.gap_extend
     }
 
-    pub fn final_gap_multiplier(&self) -> f64 {self.final_gap_multiplier}
+    pub fn final_gap_multiplier(&self) -> f64 { self.final_gap_multiplier }
 }
 
 
-pub trait InversionScoringFunction {
-    fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64;
-    fn gap_open(&self) -> f64;
-    fn gap_extend(&self) -> f64;
-    fn inversion_cost(&self) -> f64;
-}
 pub struct InversionScoring {
-    pub(crate) match_score: f64,
-    pub(crate) mismatch_score: f64,
-    pub(crate) gap_open: f64,
-    pub(crate) gap_extend: f64,
-    pub(crate) inversion_penalty: f64,
-    pub(crate) min_inversion_length: usize,
+    pub match_score: f64,
+    pub mismatch_score: f64,
+    pub gap_open: f64,
+    pub gap_extend: f64,
+    pub inversion_penalty: f64,
+    pub min_inversion_length: usize,
 }
 
 
-impl InversionScoringFunction for InversionScoring {
+impl InversionScoring {
 
-    fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64 {
+    pub fn default() -> InversionScoring {
+        InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        }
+    }
+
+    pub fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64 {
         if a == b { self.match_score } else { self.mismatch_score }
     }
-    fn gap_open(&self) -> f64 {
+    pub fn gap_open(&self) -> f64 {
         self.gap_open
     }
 
-    fn gap_extend(&self) -> f64 {
+    pub fn gap_extend(&self) -> f64 {
         self.gap_extend
     }
-    fn inversion_cost(&self) -> f64 {
+    pub fn inversion_cost(&self) -> f64 {
         self.inversion_penalty
     }
 }

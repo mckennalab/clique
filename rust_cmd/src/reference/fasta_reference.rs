@@ -6,7 +6,7 @@ use itertools::Itertools;
 use suffix::SuffixTable;
 use crate::alignment::fasta_bit_encoding::{FastaBase};
 use crate::read_strategies::read_set::ReadSetContainer;
-use crate::read_strategies::sequence_layout::SequenceLayoutDesign;
+use crate::read_strategies::sequence_layout::SequenceLayout;
 
 
 pub fn reference_sequences_to_structs(reference_sequences: Vec<Record>, kmer_size: usize) -> Vec<Reference<'static, 'static>> {
@@ -87,7 +87,7 @@ pub struct Reference<'s, 't> {
 
 impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
-    pub fn from_yaml_input(yaml_input: &SequenceLayoutDesign, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
+    pub fn from_yaml_input(yaml_input: &SequenceLayout, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
 
 
         let references: Vec<Reference> = yaml_input.references.iter().map(|(ref_name, ref_obj)| {

@@ -4,33 +4,35 @@ use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{CString};
+use std::fs::File;
 use shardio::{Range, ShardReader};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use counter::Counter;
 use spoa::{AlignmentEngine, Graph, AlignmentType};
-use indicatif::ProgressBar;
 use ndarray::Ix3;
 use rust_htslib::bam::record::{CigarString};
 use crate::alignment::alignment_matrix::{Alignment, AlignmentTag, AlignmentType as LocalAlignmentType, create_scoring_record_3d};
-use crate::alignment_functions::{align_two_strings, create_sam_record, simplify_cigar_string};
 use crate::reference::fasta_reference::ReferenceManager;
 use rand::prelude::*;
-use rust_htslib::bam::{Writer};
+use std::io::{BufWriter, Write};
 use crate::alignment::scoring_functions::{AffineScoring};
-use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments};
+use crate::alignment_manager::{align_two_strings, OutputAlignmentWriter, simplify_cigar_string};
+
+use noodles_bam;
+use noodles_sam::{
+    self as sam,
+    header::record::value::{map::Program, Map},
+};
 
 pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
-                             writer: &mut Writer,
-                             reference_to_bin: &HashMap<Vec<u8>,u16>,
+                             writer: &mut dyn OutputAlignmentWriter,
                              levels: usize,
-                             read_counts: &usize,
                              reference_manager: &ReferenceManager,
                              maximum_reads_before_downsampling: &usize) {
 
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
-    //let bar = ProgressBar::new(*read_counts as u64);
 
     let mut written_buffers = 0;
     let mut processed_reads = 0;
@@ -38,14 +40,12 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     let score = AffineScoring::default();
     let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d((reference_manager.longest_ref + 1) * 2, (reference_manager.longest_ref + 1) * 2, LocalAlignmentType::Affine, false);
 
+
     reader.iter_range(&Range::all()).unwrap().for_each(|x| {
-        //if processed_reads % 10000 == 0 {
-        //    bar.set_position(processed_reads as u64);
-        //}
         let x = x.unwrap();
         assert_eq!(x.ordered_sorting_keys.len(), levels);
         if !(last_read.is_some() && x.cmp(last_read.as_ref().unwrap()) == Ordering::Equal) && !buffered_reads.is_empty() {
-            output_buffered_read_set_to_sam_file(reference_manager, reference_to_bin, maximum_reads_before_downsampling, writer, &buffered_reads, &score, &mut alignment_mat);
+            output_buffered_read_set_to_sam_file(reference_manager,  maximum_reads_before_downsampling, writer, &buffered_reads, &score, &mut alignment_mat);
             written_buffers += 1;
             buffered_reads = VecDeque::new();
         }
@@ -55,17 +55,15 @@ pub fn write_consensus_reads(reader: &ShardReader<SortingReadSetContainer>,
     });
 
     if !buffered_reads.is_empty() {
-        output_buffered_read_set_to_sam_file(reference_manager, reference_to_bin, maximum_reads_before_downsampling, writer, &buffered_reads, &score, &mut alignment_mat);
+        output_buffered_read_set_to_sam_file(reference_manager, maximum_reads_before_downsampling, writer, &buffered_reads, &score, &mut alignment_mat);
         written_buffers += 1;
     }
-    //bar.set_position(processed_reads as u64);
     info!("Processed {} reads into {} consensus reads", processed_reads, written_buffers);
 }
 
 fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
-                                        reference_to_sam_bin: &HashMap<Vec<u8>, u16>,
                                         maximum_reads_before_downsampling: &usize,
-                                        writer: &mut Writer,
+                                        writer: &mut dyn OutputAlignmentWriter,
                                         buffered_reads: &VecDeque<SortingReadSetContainer>,
                                         my_aff_score: &AffineScoring,
                                         mut alignment_mat: &mut Alignment<Ix3>) {
@@ -76,17 +74,10 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
 
     if buffered_reads.len() > 1 {
         let consensus_reads = create_poa_consensus(buffered_reads, maximum_reads_before_downsampling);
-        let consensus_reference = Counter::<Vec<u8>, usize>::init(buffered_reads.iter().map(|x| x.aligned_read.ref_name.clone().as_bytes().to_vec()).collect::<Vec<Vec<u8>>>()).most_common_ordered();
+        let consensus_reference = Counter::<Vec<u8>, usize>::init(buffered_reads.iter().map(|x| x.aligned_read.reference_name.clone().as_bytes().to_vec()).collect::<Vec<Vec<u8>>>()).most_common_ordered();
 
         let top_ref = &consensus_reference.get(0).unwrap().clone().0;
         let reference_pointer = reference_manager.references.get(reference_manager.reference_name_to_ref.get(top_ref).unwrap()).unwrap();
-        let shared_segments = &reference_pointer.suffix_table;
-
-        //let shared_segs = find_greedy_non_overlapping_segments(
-         //   &consensus_reads,
-        //    &reference_pointer.sequence_u8,
-        //    shared_segments);
-
         let new_alignment = align_two_strings(&FastaBase::from_vec_u8(&consensus_reads), &reference_pointer.sequence, my_aff_score, false, None, None);
 
         let read_names = buffered_reads.iter().map(|x| x.aligned_read.read_name.clone()).collect::<Vec<String>>();
@@ -94,43 +85,18 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         added_tags.insert((b'a', b'r'), read_names.join(","));
         added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&new_alignment.reference_aligned, &new_alignment.read_aligned).to_string());
         added_tags.insert((b'a', b's'), new_alignment.score.to_string());
+        let new_sorting_read = buffered_reads.get(0).unwrap().with_new_alignment(new_alignment);
+        
+        writer.write_read(&new_sorting_read,&added_tags);
 
-        let bin = reference_to_sam_bin.get(&reference_pointer.name).unwrap();
-        //println!("TV2 READ {} Ref {} bin {}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin);
-        let mut sam_read = create_sam_record(bin,
-                                             read_names.get(0).unwrap(),
-                                             &new_alignment.read_aligned,
-                                             &new_alignment.reference_aligned,
-                                             &reference_pointer.sequence_u8,
-                                             &reference_read_to_cigar_string(&new_alignment.reference_aligned, &new_alignment.read_aligned),
-                                             &true,
-                                             added_tags);
-
-        sam_read.set_tid(*bin as i32);
-        writer.write(&sam_read).unwrap();
     } else {
         let single_read = buffered_reads.get(0).unwrap();
         added_tags.insert((b'a', b'r'), single_read.aligned_read.read_name.clone());
-        added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&single_read.aligned_read.aligned_ref,
-                                                                     &single_read.aligned_read.aligned_read).to_string());
+        added_tags.insert((b'r', b'm'), get_reference_alignment_rate(&single_read.aligned_read.reference_aligned,
+                                                                     &single_read.aligned_read.read_aligned).to_string());
         added_tags.insert((b'a', b's'), single_read.aligned_read.score.to_string());
 
-        let original_reference = reference_manager.references.get(reference_manager.reference_name_to_ref.get(single_read.aligned_read.ref_name.as_bytes()).unwrap()).unwrap().sequence_u8.as_ref();
-
-        let bin = reference_to_sam_bin.get(single_read.aligned_read.ref_name.as_bytes()).unwrap();
-        debug!("TV READ {} Ref {} bin {} {} {} {:?}",single_read.aligned_read.read_name.clone(), single_read.aligned_read.ref_name.clone(), bin, FastaBase::string(&single_read.aligned_read.aligned_ref), FastaBase::string(&single_read.aligned_read.aligned_read),single_read.aligned_read.cigar_string);
-
-        let mut sam_read = create_sam_record(bin,
-                                             single_read.aligned_read.read_name.as_str(),
-                                             &single_read.aligned_read.aligned_read,
-                                             &single_read.aligned_read.aligned_ref,
-                                             original_reference,
-                                             &single_read.aligned_read.to_cigar_string(),
-                                             &true,
-                                             added_tags);
-        sam_read.set_tid(*bin as i32);
-
-        writer.write(&sam_read).unwrap();
+        writer.write_read(&single_read,&added_tags).unwrap();
     };
 }
 
@@ -174,7 +140,7 @@ pub fn reference_read_to_cigar_string(reference_seq: &Vec<FastaBase>, read_seq: 
 
 pub fn create_poa_consensus(sequences: &VecDeque<SortingReadSetContainer>, downsample_to: &usize) -> Vec<u8> {
     let mut base_sequences = sequences.iter().map(|n| {
-        let mut y = FastaBase::vec_u8(&FastaBase::strip_gaps(&n.aligned_read.aligned_read));
+        let mut y = FastaBase::vec_u8(&FastaBase::strip_gaps(&n.aligned_read.read_aligned));
         y.push(b'\0');
         y
     }).collect::<Vec<Vec<u8>>>();

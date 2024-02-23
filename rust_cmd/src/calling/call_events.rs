@@ -10,7 +10,7 @@ use rust_htslib::bam::{Read, Record};
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView};
 use std::io::Write;
 use crate::alignment::fasta_bit_encoding::FastaBase;
-use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayoutDesign};
+use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout};
 use crate::reference::fasta_reference::ReferenceManager;
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq)]
@@ -417,14 +417,14 @@ impl TargetPositions {
 }
 
 pub struct BamCallingParser<'a, 's, 't> {
-    sequence_layout: SequenceLayoutDesign,
+    sequence_layout: SequenceLayout,
     reference_manager: ReferenceManager<'a, 's, 't>,
     target_positions: HashMap<String, TargetPositions>,
     ordered_target_ranges: HashMap<String, Vec<(TargetRange, String)>>, // keep a ordered list of target ranges for simplicity
 }
 
 impl BamCallingParser<'_, '_, '_> {
-    pub fn new(sequence_layout_design: &SequenceLayoutDesign) -> BamCallingParser {
+    pub fn new(sequence_layout_design: &SequenceLayout) -> BamCallingParser {
         let rm = ReferenceManager::from_yaml_input(sequence_layout_design, 12, 6);
 
         let mut ordered_target_ranges = HashMap::new();

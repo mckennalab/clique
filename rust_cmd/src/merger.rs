@@ -2,9 +2,9 @@ use bio::io::fastq::Record;
 use needletail::Sequence;
 use crate::alignment::fasta_bit_encoding::{encoding_to_u8, FASTA_UNSET, FastaBase, reverse_complement};
 use crate::alignment::scoring_functions::{AffineScoring};
-use crate::alignment_functions::align_two_strings;
+use crate::alignment_manager::align_two_strings;
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
-use crate::read_strategies::sequence_layout::{AlignedReadOrientation, MergeStrategy, ReadPosition, SequenceLayoutDesign};
+use crate::read_strategies::sequence_layout::{AlignedReadOrientation, MergeStrategy, ReadPosition, SequenceLayout};
 use crate::utils::read_utils::combine_phred_scores;
 
 /// Merges two DNA sequences (read1 and read2) into a single sequence, filling the gap with undefined bases, based on the given reference length.
@@ -34,7 +34,7 @@ use crate::utils::read_utils::combine_phred_scores;
 /// ```
 /// let merged_sequence = merge_reads_by_concatenation(&read1, &read2, &reference, &scoring);
 /// ```
-pub fn merge_reads_by_concatenation(reads: &ReadSetContainer, sequence_layout: &SequenceLayoutDesign) -> MergedSequence {
+pub fn merge_reads_by_concatenation(reads: &ReadSetContainer, sequence_layout: &SequenceLayout) -> MergedSequence {
 
     // aim to have too much capacity, it's faster this way, assuming the same for Vec instead of String (https://github.com/hoodie/concatenation_benchmarks-rs)
     let mut final_sequence: Vec<FastaBase> = Vec::with_capacity(reads.read_one.seq().len() * 4);
@@ -186,11 +186,11 @@ lazy_static! {
 
 pub struct MergedReadSequence {
     underlying_iterator: ReadIterator,
-    read_structure: SequenceLayoutDesign,
+    read_structure: SequenceLayout,
 }
 
 impl MergedReadSequence {
-    pub fn new(iterator: ReadIterator, read_structure: &SequenceLayoutDesign) -> MergedReadSequence {
+    pub fn new(iterator: ReadIterator, read_structure: &SequenceLayout) -> MergedReadSequence {
         MergedReadSequence {
             underlying_iterator: iterator,
             read_structure: read_structure.clone(),
@@ -198,25 +198,25 @@ impl MergedReadSequence {
     }
 
     // these functions are very dumb but save us from using a macro crate to do this for us
-    fn contains_read1(read_structure: &SequenceLayoutDesign) -> bool {
+    fn contains_read1(read_structure: &SequenceLayout) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::Read1 { chain_align: _, orientation: _ } => true,
             _ => false
         })
     }
-    fn contains_read2(read_structure: &SequenceLayoutDesign) -> bool {
+    fn contains_read2(read_structure: &SequenceLayout) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::Read2 { chain_align: _, orientation: _ } => true,
             _ => false
         })
     }
-    fn contains_index1(read_structure: &SequenceLayoutDesign) -> bool {
+    fn contains_index1(read_structure: &SequenceLayout) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::Index1 { chain_align: _, orientation: _ } => true,
             _ => false
         })
     }
-    fn contains_index2(read_structure: &SequenceLayoutDesign) -> bool {
+    fn contains_index2(read_structure: &SequenceLayout) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::Index2 { chain_align: _, orientation: _ } => true,
             _ => false
@@ -228,14 +228,14 @@ impl MergedReadSequence {
 pub struct UnifiedRead {
     name: Option<Vec<u8>>,
     seq: Option<Vec<FastaBase>>,
-    read_structure: SequenceLayoutDesign,
+    read_structure: SequenceLayout,
     read_pattern: (bool, bool, bool, bool),
     underlying_reads: ReadSetContainer,
 
 }
 
 impl UnifiedRead {
-    pub fn new(read_structure: SequenceLayoutDesign, underlying_reads: ReadSetContainer) -> UnifiedRead {
+    pub fn new(read_structure: SequenceLayout, underlying_reads: ReadSetContainer) -> UnifiedRead {
         UnifiedRead {
             name: None,
             seq: None,
@@ -305,7 +305,7 @@ impl Iterator for MergedReadSequence {
 }
 
 
-pub fn merged_iterator(iterator: ReadIterator, read_structure: &SequenceLayoutDesign) -> MergedReadSequence {
+pub fn merged_iterator(iterator: ReadIterator, read_structure: &SequenceLayout) -> MergedReadSequence {
     MergedReadSequence::new(iterator, read_structure)
 }
 
@@ -334,7 +334,7 @@ pub fn merged_iterator(iterator: ReadIterator, read_structure: &SequenceLayoutDe
 /// ```
 /// let merged_sequence = read_merger(&read1, &read2);
 /// ```
-pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_scoring: &AffineScoring, /*TODO use this */ _read_structure: &SequenceLayoutDesign) -> MergedSequence {
+pub fn merge_reads_by_alignment(read1: &Record, read2: &Record, merge_initial_scoring: &AffineScoring, /*TODO use this */ _read_structure: &SequenceLayout) -> MergedSequence {
     let read1_seq = FastaBase::from_vec_u8(&read1.seq().to_vec());
     let rev_comp_read2 = FastaBase::from_vec_u8(&read2.seq().reverse_complement().to_vec());
     let mut rev_comp_qual_read2 = read2.qual().to_vec();
@@ -448,8 +448,8 @@ mod tests {
     use super::*;
 
 
-    fn sld() -> SequenceLayoutDesign {
-        SequenceLayoutDesign {
+    fn sld() -> SequenceLayout {
+        SequenceLayout {
             aligner: None,
             merge: None,
             reads: vec![],
@@ -640,7 +640,7 @@ mod tests {
             index_two: None,
         };
 
-        let sequence_layout = SequenceLayoutDesign {
+        let sequence_layout = SequenceLayout {
             aligner: None,
             merge: None,
             reads: vec![Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, Read2 { chain_align: None, orientation: AlignedReadOrientation::ReverseComplement }],
@@ -651,7 +651,7 @@ mod tests {
         let fake_aligned = merge_reads_by_concatenation(&read_set, &sequence_layout);
         assert_eq!(fake_aligned.read_bases.cmp(&both_rc) == Ordering::Equal, true);
 
-        let sequence_layout = SequenceLayoutDesign {
+        let sequence_layout = SequenceLayout {
             aligner: None,
             merge: None,
             reads: vec![Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, Read2 { chain_align: None, orientation: AlignedReadOrientation::Reverse }],
@@ -663,7 +663,7 @@ mod tests {
         assert_ne!(fake_aligned.read_bases.cmp(&both_rc) == Ordering::Equal, true);
 
 
-        let sequence_layout = SequenceLayoutDesign {
+        let sequence_layout = SequenceLayout {
             aligner: None,
             merge: None,
             reads: vec![Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }, Read2 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
@@ -695,7 +695,7 @@ mod tests {
             index_two: None,
         };
 
-        let sequence_layout = SequenceLayoutDesign {
+        let sequence_layout = SequenceLayout {
             aligner: None,
             merge: None,
             reads: vec![Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward },
