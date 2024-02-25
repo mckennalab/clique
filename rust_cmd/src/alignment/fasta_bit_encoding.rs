@@ -34,7 +34,7 @@ impl FastaBase {
     }
 
     pub fn from_vec_u8(st: &[u8]) -> Vec<FastaBase> {
-        st.iter().map(|c| u8_to_encoding(c).unwrap()).collect()
+        st.iter().map(|c| u8_to_encoding(c).unwrap_or_else(|| panic!("Vec<u8> to FastaBase failed on: {}", c))).collect()
     }
 
     pub fn from_u8_slice(st: &[u8]) -> Vec<FastaBase> {

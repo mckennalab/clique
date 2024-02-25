@@ -1,44 +1,58 @@
-use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
-use std::path::{PathBuf};
-use actix::ActorStreamExt;
-use crate::InstanceLivedTempDir;
+use crate::alignment::fasta_bit_encoding::FastaBase;
+use crate::consensus::consensus_builders::write_consensus_reads;
+use crate::extractor::{
+    extract_tag_sequences, extract_tagged_sequences, get_sorting_order, recover_align_sequences,
+    stretch_sequence_to_alignment,
+};
+use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::{SequenceLayout, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
+use crate::umis::known_list::KnownList;
+use crate::umis::sequence_clustering::{
+    correct_to_known_list, get_connected_components, vantage_point_string_graph, InputList,
+};
+use crate::InstanceLivedTempDir;
+use actix::ActorStreamExt;
 use indicatif::ProgressBar;
 use itertools::Itertools;
-use shardio::{Range, ShardReader, ShardSender, ShardWriter};
-use crate::alignment::fasta_bit_encoding::FastaBase;
-use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
-use rustc_hash::FxHashMap;
-use crate::consensus::consensus_builders::write_consensus_reads;
-use crate::extractor::{extract_tag_sequences, extract_tagged_sequences, get_sorting_order, recover_align_sequences, stretch_sequence_to_alignment};
-use crate::umis::known_list::KnownList;
-use crate::umis::sequence_clustering::{correct_to_known_list, get_connected_components, InputList, vantage_point_string_graph};
 use noodles_bam as bam;
-use noodles_bam::{bai};
+use noodles_bam::bai;
 use noodles_sam::Header;
+use rustc_hash::FxHashMap;
+use shardio::{Range, ShardReader, ShardSender, ShardWriter};
+use std::cmp::Ordering;
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
 
-pub fn collapse(final_output: &String,
-                temp_directory: &mut InstanceLivedTempDir,
-                read_structure: &SequenceLayout,
-                bam_file: &String) {
-
+pub fn collapse(
+    final_output: &String,
+    temp_directory: &mut InstanceLivedTempDir,
+    read_structure: &SequenceLayout,
+    bam_file: &String,
+) {
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
 
     // validate that each reference has the specified capture groups
-    let validated_references = rm.references.iter().
-        map(|rf| {
-            let reference_config = read_structure.references.get(String::from_utf8(rf.1.name.clone()).unwrap().as_str()).unwrap();
-            SequenceLayout::validate_reference_sequence(&rf.1.sequence_u8, &reference_config.umi_configurations)
-        }).all(|x| x == true);
+    let validated_references = rm
+        .references
+        .iter()
+        .map(|rf| {
+            let reference_config = read_structure
+                .references
+                .get(String::from_utf8(rf.1.name.clone()).unwrap().as_str())
+                .unwrap();
+            SequenceLayout::validate_reference_sequence(
+                &rf.1.sequence_u8,
+                &reference_config.umi_configurations,
+            )
+        })
+        .all(|x| x == true);
 
     assert!(validated_references, "The reference sequences do not match the capture groups specified in the read structure file.");
-
 
     let mut known_level_lookups = get_known_level_lookups(read_structure);
 
@@ -50,32 +64,52 @@ pub fn collapse(final_output: &String,
     // for each reference, we fetch aligned reads, pull the sorting tags, and output the collapsed reads to a BAM file
     rm.references.iter().for_each(|(id, reference)| {
         let ref_name = String::from_utf8(reference.name.clone()).unwrap();
-        let mut sorted_reads: ShardReader<SortingReadSetContainer> = sort_reads_from_bam_file(bam_file, &ref_name, &rm, read_structure, temp_directory);
+        let mut sorted_reads_option: Option<ShardReader<SortingReadSetContainer>> =
+            sort_reads_from_bam_file(bam_file, &ref_name, &rm, read_structure, temp_directory);
 
         let mut levels = 0;
-        read_structure.get_sorted_umi_configurations(&ref_name).iter().for_each(|tag| {
-            match tag.sort_type {
-                UMISortType::KnownTag => {
-                    let ret = sort_known_level(temp_directory, &sorted_reads, &tag, &read_count, &mut known_level_lookups);
-                    sorted_reads = ret.1;
-                    read_count = ret.0;
-                }
-                UMISortType::DegenerateTag => {
-                    let ret = sort_degenerate_level(temp_directory, &sorted_reads, &tag, &levels, &read_count);
-                    sorted_reads = ret.1;
-                    read_count = ret.0;
-                }
-            }
-            levels += 1;
-        });
 
-        info!("writing consensus reads for reference {}",ref_name);
-        // collapse the final reads down to a single sequence and write everything to the disk
-        write_consensus_reads(&sorted_reads,
-                              &mut writer,
-                              levels,
-                              &rm,
-                              &40);
+        match sorted_reads_option {
+            None => {
+                warn!("No valid reads found for reference {}", ref_name);
+            }
+            Some(mut sorted_reads) => {
+                read_structure
+                    .get_sorted_umi_configurations(&ref_name)
+                    .iter()
+                    .for_each(|tag| {
+                        match tag.sort_type {
+                            UMISortType::KnownTag => {
+                                let ret = sort_known_level(
+                                    temp_directory,
+                                    &sorted_reads,
+                                    &tag,
+                                    &read_count,
+                                    &mut known_level_lookups,
+                                );
+                                sorted_reads = ret.1;
+                                read_count = ret.0;
+                            }
+                            UMISortType::DegenerateTag => {
+                                let ret = sort_degenerate_level(
+                                    temp_directory,
+                                    &sorted_reads,
+                                    &tag,
+                                    &levels,
+                                    &read_count,
+                                );
+                                sorted_reads = ret.1;
+                                read_count = ret.0;
+                            }
+                        }
+                        levels += 1;
+                    });
+
+                info!("writing consensus reads for reference {}", ref_name);
+                // collapse the final reads down to a single sequence and write everything to the disk
+                write_consensus_reads(&sorted_reads, &mut writer, levels, &rm, &40);
+            }
+        }
     });
 }
 
@@ -108,30 +142,64 @@ impl ReferenceLookupTable {
         let mut unified_name_to_seq = HashMap::new();
 
         // TODO: the header uses an in-order map for storing reference sequences, though this
-        bam_header.reference_sequences().iter().enumerate().for_each(|(index, (bstr_name, ref_map))| {
-            let string_name = bstr_name.to_string();
+        bam_header
+            .reference_sequences()
+            .iter()
+            .enumerate()
+            .for_each(|(index, (bstr_name, ref_map))| {
+                let string_name = bstr_name.to_string();
 
-            // we need to have this reference sequence stored in our database as well
-            if reference_manager.reference_name_to_ref.contains_key(string_name.as_bytes()) {
-                let our_index = reference_manager.reference_name_to_ref.get(string_name.as_bytes()).unwrap();
-                assert!(!bam_reference_id_to_name.contains_key(&index));
-                assert!(!fasta_reference_id_to_name.contains_key(our_index));
+                // we need to have this reference sequence stored in our database as well
+                if reference_manager
+                    .reference_name_to_ref
+                    .contains_key(string_name.as_bytes())
+                {
+                    let our_index = reference_manager
+                        .reference_name_to_ref
+                        .get(string_name.as_bytes())
+                        .unwrap();
+                    assert!(!bam_reference_id_to_name.contains_key(&index));
+                    assert!(!fasta_reference_id_to_name.contains_key(our_index));
 
-                bam_reference_id_to_name.insert(index, string_name.clone());
-                bam_reference_name_to_id.insert(string_name.clone(), index);
-                fasta_reference_id_to_name.insert(*our_index, string_name.clone());
-                fasta_reference_name_to_id.insert(string_name.clone(), *our_index);
-                name_to_joint_index.insert(string_name.clone(), JointLookup { bam_index: index, reference_manager_index: *our_index });
+                    bam_reference_id_to_name.insert(index, string_name.clone());
+                    bam_reference_name_to_id.insert(string_name.clone(), index);
+                    fasta_reference_id_to_name.insert(*our_index, string_name.clone());
+                    fasta_reference_name_to_id.insert(string_name.clone(), *our_index);
+                    name_to_joint_index.insert(
+                        string_name.clone(),
+                        JointLookup {
+                            bam_index: index,
+                            reference_manager_index: *our_index,
+                        },
+                    );
 
-                unified_name_to_seq.insert(string_name, String::from_utf8(reference_manager.references.get(our_index).unwrap().clone().sequence_u8).unwrap().clone());
-            }
-        });
+                    unified_name_to_seq.insert(
+                        string_name,
+                        String::from_utf8(
+                            reference_manager
+                                .references
+                                .get(our_index)
+                                .unwrap()
+                                .clone()
+                                .sequence_u8,
+                        )
+                        .unwrap()
+                        .clone(),
+                    );
+                }
+            });
 
-        reference_manager.references.iter().for_each(|(id, reference)| {
-            if !fasta_reference_id_to_name.contains_key(id) {
-                warn!("We dont have an entry in the BAM file for reference {}",String::from_utf8(reference.name.clone()).unwrap());
-            }
-        });
+        reference_manager
+            .references
+            .iter()
+            .for_each(|(id, reference)| {
+                if !fasta_reference_id_to_name.contains_key(id) {
+                    warn!(
+                        "We dont have an entry in the BAM file for reference {}",
+                        String::from_utf8(reference.name.clone()).unwrap()
+                    );
+                }
+            });
 
         ReferenceLookupTable {
             bam_reference_id_to_name,
@@ -145,98 +213,150 @@ impl ReferenceLookupTable {
 
     pub fn get_reference_sequence(&self, bam_id: &usize) -> Option<NamedRef> {
         match self.bam_reference_id_to_name.get(bam_id) {
-            None => { None }
-            Some(x) => {
-                match self.unified_name_to_seq.get(x) {
-                    None => { None }
-                    Some(y) => { Some(NamedRef { name: x.clone(), sequence: y.clone() }) }
-                }
-            }
+            None => None,
+            Some(x) => match self.unified_name_to_seq.get(x) {
+                None => None,
+                Some(y) => Some(NamedRef {
+                    name: x.clone(),
+                    sequence: y.clone(),
+                }),
+            },
         }
     }
 }
 
-
-pub fn sort_reads_from_bam_file(bam_file: &String,
-                                reference_name: &String,
-                                reference_manager: &ReferenceManager,
-                                read_structure: &SequenceLayout,
-                                temp_directory: &mut InstanceLivedTempDir) -> ShardReader<SortingReadSetContainer> {
+pub fn sort_reads_from_bam_file(
+    bam_file: &String,
+    reference_name: &String,
+    reference_manager: &ReferenceManager,
+    read_structure: &SequenceLayout,
+    temp_directory: &mut InstanceLivedTempDir,
+) -> Option<ShardReader<SortingReadSetContainer>> {
     let aligned_temp = temp_directory.temp_file("bam.reads.sorted.sharded");
 
-    let mut reader = bam::io::reader::Builder::default().build_from_path(bam_file).unwrap();
+    let mut reader = bam::io::reader::Builder::default()
+        .build_from_path(bam_file)
+        .unwrap();
     let mut bai_file = bam_file.clone();
     bai_file.push_str(".bai");
 
+    let mut reads = 0;
+    let mut valid_reads = 0;
     let index = bai::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();
+    {
+        let mut sharded_output: ShardWriter<SortingReadSetContainer> =
+            ShardWriter::new(&aligned_temp, 32, 256, 1 << 16).unwrap();
+        let mut sender = sharded_output.get_sender();
 
-    let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&aligned_temp, 32,
-                                                                                    256,
-                                                                                    1 << 16).unwrap();
-    let mut sender = sharded_output.get_sender();
+        let reference_sequence = reference_manager
+            .reference_name_to_ref
+            .get(reference_name.as_bytes())
+            .unwrap();
 
-    let reference_sequence = reference_manager.reference_name_to_ref.get(reference_name.as_bytes()).unwrap();
-    let reference_sequence = reference_manager.references.get(reference_sequence).unwrap().sequence_u8.clone();
+        let reference_sequence = reference_manager
+            .references
+            .get(reference_sequence)
+            .unwrap()
+            .sequence_u8
+            .clone();
 
-    let region = &reference_name.parse().expect("Unable to parse chromosome");
+        let reference_config = read_structure.references.get(reference_name).unwrap();
 
-    let records = reader.query(&header, &index, &region).map(Box::new).expect("Unable to parse out region information");
+        let region = &reference_name.parse().expect("Unable to parse chromosome");
 
-    for result in records {
-        let record = result.unwrap();
-        let seq = record.sequence();
-        let seq = seq.as_ref().clone();
-        let start_pos = record.alignment_start().unwrap().unwrap().get();
-        let cigar = record.cigar();
-        let read_name = record.name().unwrap();
-        let aligned_read = recover_align_sequences(seq, start_pos, &cigar, reference_sequence.as_slice());
-        let extracted_tags = extract_tagged_sequences(&aligned_read.aligned_read, &aligned_read.aligned_ref);
-        let sorted_tags = get_sorting_order(read_structure, reference_name);
+        let records = reader
+            .query(&header, &index, &region)
+            .map(Box::new)
+            .expect("Unable to parse out region information");
 
-        let (invalid_read, read_tags_ordered) = extract_tag_sequences(&sorted_tags, extracted_tags);
+        for result in records {
+            reads += 1;
+            let record = result.unwrap();
+            let seq: Vec<u8> = record.sequence().iter().collect();
+            let start_pos = record.alignment_start().unwrap().unwrap().get();
+            let cigar = record.cigar();
+            let read_name: bam::record::Name<'_> = record.name().unwrap();
 
-        if !invalid_read {
-            let new_sorted_read_container = SortingReadSetContainer {
-                ordered_sorting_keys: vec![], // for future use
-                ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
-                aligned_read: AlignmentResult {
-                    reference_name: reference_name.clone(),
-                    read_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_read),
-                    cigar_string: cigar.iter().map(|op| AlignmentTag::from(op.unwrap())).collect(),
-                    path: vec![],
-                    score: 0.0,
-                    reference_start: start_pos,
-                    read_start: 0,
-                    reference_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_ref),
-                    read_name: String::from_utf8(read_name.as_bytes().to_vec()).unwrap(),
-                    bounding_box: None,
-                },
-            };
+            let aligned_read = recover_align_sequences(
+                &seq,
+                start_pos,
+                &cigar,
+                &true,
+                reference_sequence.as_slice(),
+            );
+            println!(
+                "aligned read\n{}\n{}\n",
+                String::from_utf8(aligned_read.aligned_read.clone()).unwrap(),
+                String::from_utf8(aligned_read.aligned_ref.clone()).unwrap()
+            );
+            let extracted_tags =
+                extract_tagged_sequences(&aligned_read.aligned_read, &aligned_read.aligned_ref);
+            let sorted_tags = get_sorting_order(read_structure, reference_name);
 
-            sender.send(new_sorted_read_container).unwrap();
+            let (invalid_read, read_tags_ordered) =
+                extract_tag_sequences(reference_config, extracted_tags);
+
+            if !invalid_read {
+                valid_reads += 1;
+                let new_sorted_read_container = SortingReadSetContainer {
+                    ordered_sorting_keys: vec![],             // for future use
+                    ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
+                    aligned_read: AlignmentResult {
+                        reference_name: reference_name.clone(),
+                        read_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_read),
+                        cigar_string: cigar
+                            .iter()
+                            .map(|op| AlignmentTag::from(op.unwrap()))
+                            .collect(),
+                        path: vec![],
+                        score: 0.0,
+                        reference_start: start_pos,
+                        read_start: 0,
+                        reference_aligned: FastaBase::from_vec_u8_default_ns(
+                            &aligned_read.aligned_ref,
+                        ),
+                        read_name: String::from_utf8(read_name.as_bytes().to_vec()).unwrap(),
+                        bounding_box: None,
+                    },
+                };
+                sender.send(new_sorted_read_container).unwrap();
+            }
         }
+        println!(
+            "Read {} records, of which {} were valid",
+            reads, valid_reads
+        );
+        sender.finished().unwrap(); 
     }
-
-    ShardReader::open(aligned_temp).unwrap()
+    println!("Trying to reopen aligned temp file {:?}", aligned_temp);
+    if valid_reads > 0 {
+        Some(ShardReader::open(aligned_temp).unwrap())
+    } else {
+        None
+    }
 }
 
 fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, KnownList> {
     let mut ret: HashMap<String, KnownList> = HashMap::new();
 
-    read_structure.references.iter().for_each(|(_name, reference)| {
-        reference.umi_configurations.iter().for_each(|(_name, config)| {
-            match &config.file {
-                None => {}
-                Some(x) => {
-                    if !ret.contains_key(x.as_str()) {
-                        let known_lookup = KnownList::read_known_list_file(config, &8);
-                        ret.insert(x.clone(), known_lookup);
+    read_structure
+        .references
+        .iter()
+        .for_each(|(_name, reference)| {
+            reference
+                .umi_configurations
+                .iter()
+                .for_each(|(_name, config)| match &config.file {
+                    None => {}
+                    Some(x) => {
+                        if !ret.contains_key(x.as_str()) {
+                            let known_lookup = KnownList::read_known_list_file(config, &8);
+                            ret.insert(x.clone(), known_lookup);
+                        }
                     }
-                }
-            }
-        })
-    });
+                })
+        });
     ret
 }
 
@@ -249,9 +369,13 @@ fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
 
         // for each input string
         input.iter().for_each(|vector| {
-            assert_eq!(vector.len(), input[0].len(), "string {} is not the same length as the first string {}",
-                       String::from_utf8(vector.clone()).unwrap(),
-                       String::from_utf8(input[0].clone()).unwrap());
+            assert_eq!(
+                vector.len(),
+                input[0].len(),
+                "string {} is not the same length as the first string {}",
+                String::from_utf8(vector.clone()).unwrap(),
+                String::from_utf8(input[0].clone()).unwrap()
+            );
 
             *counter.entry(&vector[i]).or_insert(0) += 1;
         });
@@ -262,7 +386,10 @@ fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
         //println!("consensus {:?}",counter);
         for (byte, count) in counter {
             // if we're the new maximum OR we're tied for the maximum and we're an N or a gap, then we'll take the new value
-            if count > max || (count == max && consensus_byte == b'N') || (count == max && consensus_byte == b'-') {
+            if count > max
+                || (count == max && consensus_byte == b'N')
+                || (count == max && consensus_byte == b'-')
+            {
                 max = count;
                 consensus_byte = *byte;
             }
@@ -308,9 +435,15 @@ impl DegenerateBuffer {
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
         item.ordered_unsorted_keys.push_front(key_value.clone()); // we want to keep the key in the list for now, we'll remove it later
         assert_eq!(key_value.0, self.tag.symbol);
-        *self.hash_map.entry(FastaBase::string(&key_value.1)).or_insert(0) += 1;
+        *self
+            .hash_map
+            .entry(FastaBase::string(&key_value.1))
+            .or_insert(0) += 1;
 
-        match (&self.shard_writer, self.writen_reads >= self.max_buffer_size) {
+        match (
+            &self.shard_writer,
+            self.writen_reads >= self.max_buffer_size,
+        ) {
             (None, true) => {
                 self.buffer.push_back(item);
                 self.dump_buffer();
@@ -326,10 +459,9 @@ impl DegenerateBuffer {
 
     /// Dumps the buffer to disk
     pub fn dump_buffer(&mut self) {
-        self.shard_writer = Some(Box::new(ShardWriter::new(&self.output_file,
-                                                           32,
-                                                           256,
-                                                           1 << 16).unwrap()));
+        self.shard_writer = Some(Box::new(
+            ShardWriter::new(&self.output_file, 32, 256, 1 << 16).unwrap(),
+        ));
         self.shard_sender = Some(Box::new(self.shard_writer.as_mut().unwrap().get_sender()));
         self.buffer.iter().for_each(|x| {
             self.shard_sender.as_mut().unwrap().send(x.clone()).unwrap();
@@ -338,15 +470,24 @@ impl DegenerateBuffer {
 
     /// This function 'corrects' a list of barcodes using a connected components algorithm
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
-        let string_set = Vec::from_iter(self.hash_map.keys()).iter().map(|s| s.as_bytes().to_vec()).collect::<Vec<Vec<u8>>>();
-        let collection = InputList { strings: string_set, max_dist: self.tag.max_distance.clone() };
+        let string_set = Vec::from_iter(self.hash_map.keys())
+            .iter()
+            .map(|s| s.as_bytes().to_vec())
+            .collect::<Vec<Vec<u8>>>();
+        let collection = InputList {
+            strings: string_set,
+            max_dist: self.tag.max_distance.clone(),
+        };
         let graph = vantage_point_string_graph(&collection, self.hash_map.len() > 50000);
 
         let cc = get_connected_components(&graph);
         let mut final_correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
         for group in cc {
-            let minilist = InputList { strings: group, max_dist: self.tag.max_distance.clone() };
+            let minilist = InputList {
+                strings: group,
+                max_dist: self.tag.max_distance.clone(),
+            };
 
             // TODO enable this for a future improvement -- spliting connected components -- but a lot of work needs to go into validation here
             /*let mut minigraph = input_list_to_graph(&minilist, string_distance, false);
@@ -360,7 +501,7 @@ impl DegenerateBuffer {
             for s in minilist.strings {
                 //info!("correct_list from {} -> {}", String::from_utf8(s.clone()).unwrap(), String::from_utf8(conc.clone()).unwrap());
                 final_correction.insert(s.clone(), conc.clone());
-            };
+            }
             /*
                 }
                 Some(x) => {
@@ -375,9 +516,17 @@ impl DegenerateBuffer {
         final_correction
     }
 
-    pub fn close(&mut self) -> (VecDeque<SortingReadSetContainer>, FxHashMap<Vec<u8>, Vec<u8>>) {
+    pub fn close(
+        &mut self,
+    ) -> (
+        VecDeque<SortingReadSetContainer>,
+        FxHashMap<Vec<u8>, Vec<u8>>,
+    ) {
         let final_correction = self.correct_list();
-        let ret = (std::mem::replace(&mut self.buffer, VecDeque::new()), final_correction);
+        let ret = (
+            std::mem::replace(&mut self.buffer, VecDeque::new()),
+            final_correction,
+        );
         self.clean();
         ret
     }
@@ -387,7 +536,6 @@ impl DegenerateBuffer {
         self.hash_map.clear();
     }
 }
-
 
 /// Sorts the reads by the degenerate tag
 ///
@@ -412,19 +560,21 @@ impl DegenerateBuffer {
 ///
 /// # Examples
 ///
-pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
-                             reader: &ShardReader<SortingReadSetContainer>,
-                             tag: &UMIConfiguration,
-                             iteration: &usize, read_count: &usize) -> (usize, ShardReader<SortingReadSetContainer>) {
-    info!("Sorting degenerate level {}",tag.symbol);
+pub fn sort_degenerate_level(
+    temp_directory: &mut InstanceLivedTempDir,
+    reader: &ShardReader<SortingReadSetContainer>,
+    tag: &UMIConfiguration,
+    iteration: &usize,
+    read_count: &usize,
+) -> (usize, ShardReader<SortingReadSetContainer>) {
+    info!("Sorting degenerate level {}", tag.symbol);
 
     let mut all_read_count: usize = 0;
     let mut output_reads: usize = 0;
 
     let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
-    let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&aligned_temp, 32,
-                                                                                    256,
-                                                                                    1 << 16).unwrap();
+    let mut sharded_output: ShardWriter<SortingReadSetContainer> =
+        ShardWriter::new(&aligned_temp, 32, 256, 1 << 16).unwrap();
 
     let mut sender = sharded_output.get_sender();
     let mut bar: Option<ProgressBar> = match *read_count > 100000 {
@@ -492,7 +642,9 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
 
     match current_sorting_bin {
         None => {}
-        Some(mut bin) => { output_reads += close_and_write_bin(&mut sender, &mut bin); }
+        Some(mut bin) => {
+            output_reads += close_and_write_bin(&mut sender, &mut bin);
+        }
     }
 
     bar.as_mut().map(|b| b.set_position(all_read_count as u64));
@@ -505,28 +657,44 @@ pub fn sort_degenerate_level(temp_directory: &mut InstanceLivedTempDir,
     (output_reads, ShardReader::open(aligned_temp).unwrap())
 }
 
-fn close_and_write_bin(sender: &mut ShardSender<SortingReadSetContainer>, current_sorting_bin: &mut DegenerateBuffer) -> usize {
+fn close_and_write_bin(
+    sender: &mut ShardSender<SortingReadSetContainer>,
+    current_sorting_bin: &mut DegenerateBuffer,
+) -> usize {
     let (buffer, correction) = current_sorting_bin.close();
     let ret = buffer.len();
     for mut y in buffer {
         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
         let corrected = correction.get(&FastaBase::vec_u8(&key_value.1)).unwrap();
-        y.ordered_sorting_keys.push((key_value.0, FastaBase::from_vec_u8(corrected)));
+        y.ordered_sorting_keys
+            .push((key_value.0, FastaBase::from_vec_u8(corrected)));
         sender.send(y).unwrap();
     }
     ret
 }
 
-pub fn sort_known_level(temp_directory:
-                        &mut InstanceLivedTempDir,
-                        reader: &ShardReader<SortingReadSetContainer>,
-                        tag: &UMIConfiguration,
-                        read_count: &usize,
-                        known_lookup_obj: &mut HashMap<String, KnownList>) -> (usize, ShardReader<SortingReadSetContainer>) {
-    info!("Sorting known level {}",tag.symbol);
+pub fn sort_known_level(
+    temp_directory: &mut InstanceLivedTempDir,
+    reader: &ShardReader<SortingReadSetContainer>,
+    tag: &UMIConfiguration,
+    read_count: &usize,
+    known_lookup_obj: &mut HashMap<String, KnownList>,
+) -> (usize, ShardReader<SortingReadSetContainer>) {
+    info!("Sorting known level {}", tag.symbol);
 
-    info!("Loading the known lookup table for tag {}, this can take some time",tag.symbol);
-    let mut known_lookup = known_lookup_obj.get_mut(&tag.file.as_ref().unwrap().clone()).expect(format!("Unable to find pre-cached lookup table {}", &tag.file.as_ref().clone().unwrap()).as_str());
+    info!(
+        "Loading the known lookup table for tag {}, this can take some time",
+        tag.symbol
+    );
+    let mut known_lookup = known_lookup_obj
+        .get_mut(&tag.file.as_ref().unwrap().clone())
+        .expect(
+            format!(
+                "Unable to find pre-cached lookup table {}",
+                &tag.file.as_ref().clone().unwrap()
+            )
+            .as_str(),
+        );
     let mut processed_reads = 0;
     let mut dropped_reads = 0;
     let mut collided_reads = 0;
@@ -541,9 +709,8 @@ pub fn sort_known_level(temp_directory:
 
     // scoping required here to ensure proper handing of the senders
     {
-        let mut sharded_output: ShardWriter<SortingReadSetContainer> = ShardWriter::new(&aligned_temp, 32,
-                                                                                        256,
-                                                                                        1 << 16).unwrap();
+        let mut sharded_output: ShardWriter<SortingReadSetContainer> =
+            ShardWriter::new(&aligned_temp, 32, 256, 1 << 16).unwrap();
         let mut sender = sharded_output.get_sender();
 
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
@@ -552,12 +719,19 @@ pub fn sort_known_level(temp_directory:
                 bar.as_mut().map(|b| b.set_position(processed_reads as u64));
             }
             let mut sorting_read_set_container = x.unwrap();
-            assert_eq!(sorting_read_set_container.ordered_sorting_keys.len(), tag.order);
+            assert_eq!(
+                sorting_read_set_container.ordered_sorting_keys.len(),
+                tag.order
+            );
 
-            let next_key = sorting_read_set_container.ordered_unsorted_keys.pop_front().unwrap();
+            let next_key = sorting_read_set_container
+                .ordered_unsorted_keys
+                .pop_front()
+                .unwrap();
             assert_eq!(next_key.0, tag.symbol);
 
-            let corrected_hits = correct_to_known_list(&next_key.1, &mut known_lookup, &tag.max_distance);
+            let corrected_hits =
+                correct_to_known_list(&next_key.1, &mut known_lookup, &tag.max_distance);
             match (corrected_hits.hits.len(), corrected_hits.distance) {
                 (x, _) if x < 1 => {
                     dropped_reads += 1;
@@ -570,51 +744,78 @@ pub fn sort_known_level(temp_directory:
                     dropped_reads += 1;
                 }
                 (_x, _y) => {
-                    sorting_read_set_container.ordered_sorting_keys.push((next_key.0, corrected_hits.hits.get(0).unwrap().clone()));
+                    sorting_read_set_container
+                        .ordered_sorting_keys
+                        .push((next_key.0, corrected_hits.hits.get(0).unwrap().clone()));
                     sender.send(sorting_read_set_container).unwrap();
                 }
             };
         });
 
-        info!("Dropped {} reads (of which {} were collided reads), {} total reads",dropped_reads, collided_reads, processed_reads);
+        info!(
+            "Dropped {} reads (of which {} were collided reads), {} total reads",
+            dropped_reads, collided_reads, processed_reads
+        );
         sender.finished().unwrap();
         sharded_output.finish().unwrap();
     }
     bar.as_mut().map(|b| b.set_position(processed_reads as u64));
 
-    info!("For known tag {} we processed {} reads", &tag.symbol, processed_reads);
+    info!(
+        "For known tag {} we processed {} reads",
+        &tag.symbol, processed_reads
+    );
 
-    (processed_reads - dropped_reads, ShardReader::open(aligned_temp).unwrap())
+    (
+        processed_reads - dropped_reads,
+        ShardReader::open(aligned_temp).unwrap(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::utils::read_utils::fake_reads;
-    use super::*;
 
     #[test]
     fn test_consensus() {
-        let basic_seqs: Vec<Vec<u8>> = vec![String::from("ATCG").as_bytes().to_vec(), String::from("GCTA").as_bytes().to_vec(), String::from("ATCG").as_bytes().to_vec()];
+        let basic_seqs: Vec<Vec<u8>> = vec![
+            String::from("ATCG").as_bytes().to_vec(),
+            String::from("GCTA").as_bytes().to_vec(),
+            String::from("ATCG").as_bytes().to_vec(),
+        ];
         let cons = consensus(&basic_seqs);
         assert_eq!(cons, String::from("ATCG").as_bytes().to_vec());
 
-        let basic_seqs: Vec<Vec<u8>> = vec![String::from("ATCG").as_bytes().to_vec(), String::from("ATC-").as_bytes().to_vec()];
+        let basic_seqs: Vec<Vec<u8>> = vec![
+            String::from("ATCG").as_bytes().to_vec(),
+            String::from("ATC-").as_bytes().to_vec(),
+        ];
         let cons = consensus(&basic_seqs);
         assert_eq!(cons, String::from("ATCG").as_bytes().to_vec());
 
         // reverse the above to check that order doesn't matter (it did at one point)
-        let basic_seqs: Vec<Vec<u8>> = vec![String::from("ATC-").as_bytes().to_vec(), String::from("ATCG").as_bytes().to_vec()];
+        let basic_seqs: Vec<Vec<u8>> = vec![
+            String::from("ATC-").as_bytes().to_vec(),
+            String::from("ATCG").as_bytes().to_vec(),
+        ];
         let cons = consensus(&basic_seqs);
         assert_eq!(cons, String::from("ATCG").as_bytes().to_vec());
 
         // real world issue
-        let basic_seqs: Vec<Vec<u8>> = vec![String::from("TGGTATGCTGG-").as_bytes().to_vec(), String::from("TGGTATGCTGGG").as_bytes().to_vec()];
+        let basic_seqs: Vec<Vec<u8>> = vec![
+            String::from("TGGTATGCTGG-").as_bytes().to_vec(),
+            String::from("TGGTATGCTGGG").as_bytes().to_vec(),
+        ];
         let cons = consensus(&basic_seqs);
         assert_eq!(cons, String::from("TGGTATGCTGGG").as_bytes().to_vec());
 
         // reverse the above to check that order doesn't matter (it did at one point)
-        let basic_seqs: Vec<Vec<u8>> = vec![String::from("TGGTATGCTGG-").as_bytes().to_vec(), String::from("TGGTATGCTGGG").as_bytes().to_vec()];
+        let basic_seqs: Vec<Vec<u8>> = vec![
+            String::from("TGGTATGCTGG-").as_bytes().to_vec(),
+            String::from("TGGTATGCTGGG").as_bytes().to_vec(),
+        ];
         let cons = consensus(&basic_seqs);
         assert_eq!(cons, String::from("TGGTATGCTGGG").as_bytes().to_vec());
     }
@@ -622,7 +823,14 @@ mod tests {
     #[test]
     fn test_consensus_real_world() {
         let reads = fake_reads(10, 1);
-        let read_seq = reads.get(0).unwrap().read_one.seq().iter().map(|x| FastaBase::from(x.clone())).collect::<Vec<FastaBase>>();
+        let read_seq = reads
+            .get(0)
+            .unwrap()
+            .read_one
+            .seq()
+            .iter()
+            .map(|x| FastaBase::from(x.clone()))
+            .collect::<Vec<FastaBase>>();
         let fake_read = AlignmentResult {
             reference_name: "".to_string(),
             read_name: "".to_string(),
@@ -649,24 +857,27 @@ mod tests {
                 pad: None,
                 max_distance: 1,
                 maximum_subsequences: None,
-            });
-
+            },
+        );
 
         // real example we hit
         let st1 = SortingReadSetContainer {
-            ordered_sorting_keys: vec![('a', FastaBase::from_str("AAACCCATCAGCATTA")),
-                                       ('a', FastaBase::from_str("TATTGACAACCT"))],
+            ordered_sorting_keys: vec![
+                ('a', FastaBase::from_str("AAACCCATCAGCATTA")),
+                ('a', FastaBase::from_str("TATTGACAACCT")),
+            ],
             ordered_unsorted_keys: VecDeque::from(vec![('a', FastaBase::from_str("TGGTATGCTGG-"))]),
             aligned_read: fake_read.clone(),
         };
 
         let st2 = SortingReadSetContainer {
-            ordered_sorting_keys: vec![('a', FastaBase::from_str("AAACCCATCAGCATTA")),
-                                       ('a', FastaBase::from_str("TATTGACAACCT"))],
+            ordered_sorting_keys: vec![
+                ('a', FastaBase::from_str("AAACCCATCAGCATTA")),
+                ('a', FastaBase::from_str("TATTGACAACCT")),
+            ],
             ordered_unsorted_keys: VecDeque::from(vec![('a', FastaBase::from_str("TGGTATGCTGGG"))]),
             aligned_read: fake_read.clone(),
         };
-
 
         assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);
 
@@ -677,7 +888,10 @@ mod tests {
         let (_buffer, correction) = tbb.close();
 
         correction.iter().for_each(|x| {
-            assert_eq!(String::from_utf8(x.1.clone()).unwrap(), String::from("TGGTATGCTGGG"));
+            assert_eq!(
+                String::from_utf8(x.1.clone()).unwrap(),
+                String::from("TGGTATGCTGGG")
+            );
         });
     }
 }

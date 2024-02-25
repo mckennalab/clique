@@ -79,7 +79,7 @@ fn output_buffered_read_set_to_sam_file(reference_manager: &ReferenceManager,
         added_tags.insert((b'a', b's'), new_alignment.score.to_string());
         let new_sorting_read = buffered_reads.get(0).unwrap().with_new_alignment(new_alignment);
         
-        writer.write_read(&new_sorting_read,&added_tags);
+        writer.write_read(&new_sorting_read,&added_tags).expect("Unable to write read to file.");
 
     } else {
         let single_read = buffered_reads.get(0).unwrap();

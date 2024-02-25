@@ -4,13 +4,14 @@ use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::reference::fasta_reference::ReferenceManager;
 use bstr::BString;
 use ndarray::Ix3;
+use noodles_bam::io::Writer;
 use noodles_sam::header::record::value::map::ReferenceSequence;
 use noodles_sam::header::record::value::Map;
 use noodles_sam::Header;
 use noodles_util::alignment;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io;
+use std::io::{self, BufWriter};
 use std::io::Result;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -22,7 +23,6 @@ use crate::alignment::alignment_matrix::{
 };
 use crate::alignment::fasta_bit_encoding::FastaBase;
 use noodles_bam;
-use noodles_bgzf::Writer;
 use noodles_sam;
 
 /// something that writes aligned reads. The output may or may not respect all the fields
@@ -37,38 +37,37 @@ pub trait OutputAlignmentWriter {
 
 /// implement a OutputAlignmentWriter for BAM files
 pub struct BamFileAlignmentWriter<'a> {
-    underlying_bam_file: Arc<Mutex<noodles_bam::io::Writer<noodles_bgzf::Writer<Writer<File>>>>>,
+    underlying_bam_file: Arc<Mutex<noodles_util::alignment::io::Writer>>,
     header: noodles_sam::Header,
     reference_manager: ReferenceManager<'a, 'a, 'a>,
 }
 
 impl<'a> BamFileAlignmentWriter<'a> {
-    pub fn new(path: &PathBuf, reference_manager: &ReferenceManager<'a,'a,'a>) -> BamFileAlignmentWriter<'a> {
-        
-           let reference_sequences = [(
-    BString::from("sq0"),
-    Map::<ReferenceSequence>::new(NonZeroUsize::try_from(13).unwrap()),
-    )].into_iter().collect();
-    /*
-        let reference_sequences:  IndexMap<BString, Map<ReferenceSequence>> = IndexMap::new();
-        reference_manager
-            .references
-            .iter()
-            .for_each(|(id, reference)| {
-                reference_sequences.insert(BString::from(String::from_utf8(reference.name.clone()).unwrap()),
-                    Map::<ReferenceSequence>::new(NonZeroUsize::try_from(*id).unwrap()));
-            });
-*/
+    pub fn new(
+        path: &PathBuf,
+        reference_manager: &ReferenceManager<'a, 'a, 'a>,
+    ) -> BamFileAlignmentWriter<'a> {
+        let reference_sequences = [(
+            BString::from("sq0"),
+            Map::<ReferenceSequence>::new(NonZeroUsize::try_from(13).unwrap()),
+        )]
+        .into_iter()
+        .collect();
+
         let header = Header::builder()
             .set_header(Default::default())
             .add_comment("an example BAM written by noodles-bam")
             .set_reference_sequences(reference_sequences)
             .build();
 
-        let bgzf = Writer::new(File::open(path).expect("Unable to create output bam file"));
+        //let bgzf = File::create(path).expect("Unable to create output bam file");
 
-        let mut writer = noodles_bam::io::Writer::new(bgzf);
-
+        let mut writer = alignment::io::writer::builder::Builder::default()
+            .set_format(alignment::io::Format::Bam)
+            //.build_from_writer(bgzf)
+            .build_from_path(path)
+            .unwrap();
+        
         writer
             .write_header(&header)
             .expect("Unable to write header to output bam file");
@@ -107,11 +106,11 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
                 .to_sam_record(&(*reference_record as i32), &true, None);
 
         let mut output = writer.lock().unwrap();
-        let mut bam_writer = alignment::io::writer::builder::Builder::default()
+        /*let mut bam_writer = alignment::io::writer::builder::Builder::default()
             .set_format(alignment::io::Format::Bam)
             .build_from_writer(std::io::stdout().lock())
-            .unwrap();
-        bam_writer
+            .unwrap();*/
+        output
             .write_record(&self.header, &samrecord)
             .expect("Unable to write read to output bam file");
         Ok(())
