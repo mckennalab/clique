@@ -249,14 +249,14 @@ pub fn sort_reads_from_bam_file(
             ShardWriter::new(&aligned_temp, 32, 256, 1 << 16).unwrap();
         let mut sender = sharded_output.get_sender();
 
-        let reference_sequence = reference_manager
+        let reference_sequence_id = reference_manager
             .reference_name_to_ref
             .get(reference_name.as_bytes())
             .unwrap();
 
         let reference_sequence = reference_manager
             .references
-            .get(reference_sequence)
+            .get(reference_sequence_id)
             .unwrap()
             .sequence_u8
             .clone();
@@ -285,13 +285,14 @@ pub fn sort_reads_from_bam_file(
                 &true,
                 reference_sequence.as_slice(),
             );
-            println!(
-                "aligned read\n{}\n{}\n",
-                String::from_utf8(aligned_read.aligned_read.clone()).unwrap(),
-                String::from_utf8(aligned_read.aligned_ref.clone()).unwrap()
+            
+            let stretched_alignment = stretch_sequence_to_alignment(
+                &aligned_read.aligned_ref,
+                &reference_manager.references.get(reference_sequence_id).unwrap().sequence_u8
             );
+
             let extracted_tags =
-                extract_tagged_sequences(&aligned_read.aligned_read, &aligned_read.aligned_ref);
+                extract_tagged_sequences(&aligned_read.aligned_read, &stretched_alignment);
             let sorted_tags = get_sorting_order(read_structure, reference_name);
 
             let (invalid_read, read_tags_ordered) =
@@ -300,7 +301,7 @@ pub fn sort_reads_from_bam_file(
             if !invalid_read {
                 valid_reads += 1;
                 let new_sorted_read_container = SortingReadSetContainer {
-                    ordered_sorting_keys: vec![],             // for future use
+                    ordered_sorting_keys: vec![],             // for future use during sorting
                     ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
                     aligned_read: AlignmentResult {
                         reference_name: reference_name.clone(),

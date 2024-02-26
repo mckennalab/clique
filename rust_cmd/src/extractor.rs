@@ -37,9 +37,8 @@ pub fn error_out_on_unknown_base(base: &u8) {
     );
 }
 
-
-#[derive(Debug,Clone,PartialEq,Eq)]
-    pub struct RecoveredAlignedSeq {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveredAlignedSeq {
     pub aligned_read: Vec<u8>,
     pub aligned_ref: Vec<u8>,
 }
@@ -56,9 +55,16 @@ pub fn recover_align_sequences(
     let mut read_pos = 0;
     let mut ref_pos = start_pos - 1;
 
-    println!("ref: {} start: {} ", String::from_utf8(reference.to_vec()).unwrap(), start_pos);
-    println!("read: {}  start: {} ", String::from_utf8(unaligned_read.to_vec()).unwrap(), start_pos);
-    
+    if start_pos > 1 {
+        // usually we fill in with dashes -- unless it's a clipped read, we deal with that down below
+        let first_cigar = cigar.iter().next().unwrap().unwrap();
+        if first_cigar.kind() != Kind::SoftClip  {
+            aligned_ref.extend(reference[0..start_pos - 1 ].to_vec());
+            aligned_read.extend(b"-".repeat(start_pos - 1));
+        };
+    };
+        
+
     for (cigar_index, cigar_sub) in cigar.iter().enumerate() {
         let cigar_v = cigar_sub.unwrap();
         let len = cigar_v.len();
@@ -83,15 +89,21 @@ pub fn recover_align_sequences(
             Kind::SoftClip => {
                 if *soft_clip_as_match {
                     if cigar_index == 0 {
-                        println!("Cigar clip: ");
-                        // if we're the first cigar entry, reach back into the reference to extract the soft clip matches
-                        let slice_len = if ref_pos < len { ref_pos} else {len};
-                        aligned_read.extend(unaligned_read[read_pos..(read_pos + slice_len)].to_vec());
-                        aligned_ref.extend(reference[(ref_pos-slice_len)..(ref_pos)].to_vec());
-                        println!("soft clip match: {} ", String::from_utf8(reference[(ref_pos-slice_len)..ref_pos].to_vec()).unwrap());
-                        println!("read clip match: {} pos {} len {}", String::from_utf8(unaligned_read[read_pos..(read_pos + slice_len)].to_vec()).unwrap(),ref_pos,len);
+                        if ref_pos >= len {
+                            let dashes = ref_pos - len;
+                            aligned_ref.extend(reference[0..ref_pos].to_vec());
+                            aligned_read.extend(b"-".repeat(dashes));
+                            aligned_read.extend(unaligned_read[0..len].to_vec());
 
-                        read_pos += slice_len;
+                        } else {
+                            let ref_dashes = len - ref_pos;
+                            aligned_ref.extend(b"-".repeat(ref_dashes));
+                            aligned_ref.extend(reference[0..ref_pos].to_vec());
+                            aligned_read.extend(unaligned_read[0..len].to_vec());
+                        }
+
+                        read_pos += len;
+
                     } else {
                         aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
                         aligned_ref.extend(reference[ref_pos..ref_pos + len].to_vec());
@@ -111,6 +123,10 @@ pub fn recover_align_sequences(
                 panic!("Unknown cigar symbol {:?}", other_cigar);
             }
         }
+    }
+    if ref_pos < reference.len() {
+        aligned_ref.extend(reference[ref_pos..].to_vec());
+        aligned_read.extend(b"-".repeat(reference.len() - ref_pos));
     }
 
     RecoveredAlignedSeq {
@@ -246,12 +262,12 @@ pub fn extract_tag_sequences(
     reference_tags: &ReferenceRecord,
     ets: BTreeMap<u8, String>,
 ) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {
-
     let mut invalid_read = false;
     let queue = VecDeque::from(
-        reference_tags.umi_configurations
+        reference_tags
+            .umi_configurations
             .iter()
-            .map(|(umi_name,umi_obj)| {
+            .map(|(umi_name, umi_obj)| {
                 let ets_hit = ets.get(&umi_obj.symbol.to_string().as_bytes()[0]);
                 match ets_hit {
                     Some(e) => {
@@ -260,12 +276,13 @@ pub fn extract_tag_sequences(
                         };
 
                         Some((
-                        umi_obj.symbol,
-                        e.as_bytes()
-                            .iter()
-                            .map(|f| FastaBase::from(f.clone()))
-                            .collect::<Vec<FastaBase>>(),
-                    ))},
+                            umi_obj.symbol,
+                            e.as_bytes()
+                                .iter()
+                                .map(|f| FastaBase::from(f.clone()))
+                                .collect::<Vec<FastaBase>>(),
+                        ))
+                    }
                     None => {
                         invalid_read = true;
                         None

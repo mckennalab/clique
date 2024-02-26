@@ -24,6 +24,11 @@ impl FastaBase {
         //(*self ^ *other).0 == 0 //-- even this slight indirection (to double access the .0 member) was costing us -- we go right to the source below
         self.0 ^ other.0 == 0
     }
+    #[inline(always)]
+    pub fn strict_identity(&self, other: &FastaBase) -> bool {
+        //(*self ^ *other).0 == 0 //-- even this slight indirection (to double access the .0 member) was costing us -- we go right to the source below
+        self.0 == other.0
+    }
 
     pub fn from_string(st: &str) -> Vec<FastaBase> {
         st.chars().map(|c| u8_to_encoding(&(c as u8)).unwrap()).collect()
@@ -491,6 +496,8 @@ mod tests {
                            String::from_utf8(vec![*z]).unwrap());
             })
         });
+
+        assert!(!FASTA_N.strict_identity(&FASTA_A));
     }
 
     #[test]

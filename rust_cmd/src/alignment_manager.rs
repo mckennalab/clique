@@ -5,17 +5,20 @@ use crate::reference::fasta_reference::ReferenceManager;
 use bstr::BString;
 use ndarray::Ix3;
 use noodles_bam::io::Writer;
+use noodles_sam::alignment::record::QualityScores;
 use noodles_sam::header::record::value::map::ReferenceSequence;
 use noodles_sam::header::record::value::Map;
 use noodles_sam::Header;
 use noodles_util::alignment;
 use std::collections::HashMap;
+use std::f64::consts::E;
 use std::fs::File;
 use std::io::{self, BufWriter};
 use std::io::Result;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use indexmap::IndexMap;
 
 use crate::alignment::alignment_matrix::{
     create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment,
@@ -47,24 +50,20 @@ impl<'a> BamFileAlignmentWriter<'a> {
         path: &PathBuf,
         reference_manager: &ReferenceManager<'a, 'a, 'a>,
     ) -> BamFileAlignmentWriter<'a> {
-        let reference_sequences = [(
-            BString::from("sq0"),
-            Map::<ReferenceSequence>::new(NonZeroUsize::try_from(13).unwrap()),
-        )]
-        .into_iter()
-        .collect();
 
+        let reference_sequences : IndexMap<BString,Map<ReferenceSequence>> = reference_manager.references.iter().map(|(k, v)| {
+            (BString::from(v.name.clone()), 
+            Map::<ReferenceSequence>::new(NonZeroUsize::try_from(v.sequence_u8.len()).unwrap()))
+        }).into_iter().collect();
+        
         let header = Header::builder()
             .set_header(Default::default())
-            .add_comment("an example BAM written by noodles-bam")
+            .add_comment("Clique processed")
             .set_reference_sequences(reference_sequences)
             .build();
 
-        //let bgzf = File::create(path).expect("Unable to create output bam file");
-
         let mut writer = alignment::io::writer::builder::Builder::default()
             .set_format(alignment::io::Format::Bam)
-            //.build_from_writer(bgzf)
             .build_from_path(path)
             .unwrap();
         
@@ -87,7 +86,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
         additional_tags: &HashMap<(u8, u8), String>,
     ) -> Result<()> {
         let writer = Arc::clone(&self.underlying_bam_file);
-
+        
         let reference_record = self
             .reference_manager
             .reference_name_to_ref
@@ -99,64 +98,75 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
                     .to_vec(),
             )
             .unwrap();
-        //let reference_record = self.reference_manager.references.get(reference_record).unwrap();
+
+        let mut extra_annotations = HashMap::new();
+        read_set_container.ordered_sorting_keys.iter().for_each(|(key, value)| {
+            extra_annotations.insert(
+                ([b'e', *key as u8]),
+                FastaBase::string(value),
+            );
+        });
+
         let samrecord =
             read_set_container
                 .aligned_read
-                .to_sam_record(&(*reference_record as i32), &true, None);
+                .to_sam_record(&(*reference_record as i32), &extra_annotations, None);
 
         let mut output = writer.lock().unwrap();
-        /*let mut bam_writer = alignment::io::writer::builder::Builder::default()
-            .set_format(alignment::io::Format::Bam)
-            .build_from_writer(std::io::stdout().lock())
-            .unwrap();*/
-        output
-            .write_record(&self.header, &samrecord)
-            .expect("Unable to write read to output bam file");
+        
+        match output
+            .write_record(&self.header, &samrecord) {
+                Ok(x) => {},
+                Err(e) => {
+                    println!("Sequence: {:?}", samrecord);
+                    panic!("Unable to write record to bam file; error {}", e);
+                },
+            }
+            
         Ok(())
     }
 }
 
 pub fn align_two_strings(
-    read1_seq: &Vec<FastaBase>,
-    rev_comp_read2: &Vec<FastaBase>,
+    reference_sequence: &Vec<FastaBase>,
+    read_sequence: &Vec<FastaBase>,
     scoring_function: &AffineScoring,
     local: bool,
-    ref_name: Option<&Vec<u8>>,
+    ref_name: &String,
+    read_name: &String,
     reference_manager: Option<&ReferenceManager>,
 ) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(
-        read1_seq.len() + 1,
-        rev_comp_read2.len() + 1,
+        reference_sequence.len() + 1,
+        read_sequence.len() + 1,
         AlignmentType::Affine,
         local,
     );
 
-    match (reference_manager, ref_name) {
+    /*match (reference_manager, ref_name) {
         (Some(x), Some(y)) => {
             panic!("for now");
         }
 
-        _ => {
+        _ => {*/
             perform_affine_alignment(
                 &mut alignment_mat,
-                read1_seq,
-                rev_comp_read2,
+                reference_sequence,
+                read_sequence,
                 scoring_function,
             );
 
             perform_3d_global_traceback(
                 &mut alignment_mat,
                 None,
-                read1_seq,
-                rev_comp_read2,
-                &String::from_utf8(ref_name.unwrap_or(&"reference".as_bytes().to_vec()).clone())
-                    .unwrap(),
-                &String::from("read_name"),
+                reference_sequence,
+                read_sequence,
+                ref_name,
+                read_name,
                 None,
             )
-        }
-    }
+       // }
+    //}
 }
 
 /*

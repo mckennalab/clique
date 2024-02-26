@@ -706,10 +706,11 @@ impl AlignmentResult {
         Box::new(cigar)
     }
 
-    pub fn to_sam_record(&self, reference_id: &i32, extract_capture_tags: &bool, read_names: Option<Vec<String>>) -> noodles_sam::alignment::RecordBuf {
+    pub fn to_sam_record(&self, reference_id: &i32, extra_tags: &HashMap<[u8; 2],String>, read_names: Option<Vec<String>>) -> noodles_sam::alignment::RecordBuf {
 
         // set the aux. data with alignments stats and the extracted tags
         let mut data = Data::default();
+        extra_tags.iter().for_each(|(k,v)| {data.insert(Tag::from(k.clone()), Value::from(v.clone()));});
 
         data.insert(Tag::from([b'r', b'm']), Value::from(get_reference_alignment_rate(&self.reference_aligned, &self.read_aligned).to_string()));
         data.insert(Tag::from([b'r', b's']), Value::from(self.score.to_string()));
@@ -721,13 +722,6 @@ impl AlignmentResult {
 
         data.insert(Tag::from([b'a', b's']), Value::from(self.score.to_string()));
 
-        if *extract_capture_tags {
-            let ets = extract_tagged_sequences(&FastaBase::vec_u8(&self.read_aligned), &FastaBase::vec_u8(&self.reference_aligned));
-
-            ets.iter().for_each(|(tag, seq)| {
-                data.insert(Tag::from([b'e', *tag]), Value::from(seq.clone()));
-            });
-        }
         let seq_len = self.read_aligned.iter().filter(|b| **b != FASTA_UNSET).collect::<Vec<&FastaBase>>().len();
         
         // set the read name
@@ -735,10 +729,11 @@ impl AlignmentResult {
             .set_name(Name::from(self.read_name.as_bytes()))
             .set_sequence(FastaBase::vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>()).into())
             .set_cigar(Cigar::from_iter(self.cigar_string.iter().map(|m| m.to_op()).into_iter()).clone())
-            .set_alignment_start(noodles_core::Position::new(self.reference_start).unwrap())
+            .set_alignment_start(noodles_core::Position::new(self.reference_start+1).unwrap())
             .set_quality_scores(QualityScores::from(vec![b'H'; seq_len]))
             .set_reference_sequence_id(*reference_id as usize)
             .set_data(data).build()
+
     }
 
     #[allow(dead_code)]
