@@ -53,6 +53,7 @@ noodles-sam = "0.53.0"
 noodles-bgzf = "0.26.0"
 noodles-util = { version = "0.37.0", features = ["alignment"] }
 bstr = "*"
+indexmap = "2.0.0"
 
 rust-htslib = "*"
 
