@@ -76,6 +76,7 @@ pub fn cigar_alignment_to_full_string(read: &Vec<u8>, reference: &Vec<u8>, align
             AlignmentTag::SoftClip(_) => {
                 panic!("unclear how to handle SoftClip");
             }
+            AlignmentTag::HardClip(_) => {}, // we do nothing, the read segment doesn't align and is gone from the read
         }
     }
     (read_align,ref_align)
@@ -267,25 +268,27 @@ pub fn validate_cigar_string(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, 
                assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (M({})): {}",length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
                assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on read (M({})): {}",length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
                cigar_pos += length;
-           }
+           },
            AlignmentTag::Del(length) => {
                debug!("bit {}",FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
                assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (D({})): {}",length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
                assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on read (D({})): {}",length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
                cigar_pos += length;
-           }
+           },
            AlignmentTag::Ins(length) => {
                assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on reference (I({})): {}",length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
                assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (I({})): {}",length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
                cigar_pos += length;
-           }
+           },
            AlignmentTag::SoftClip(length) => {
                assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (S({})): {}",length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
                assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on reference (S({})): {}",length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
                cigar_pos += length;
-           }
-           AlignmentTag::InversionOpen => {}
-           AlignmentTag::InversionClose => {}
+           },
+           AlignmentTag::InversionOpen => {},
+           AlignmentTag::InversionClose => {},
+           AlignmentTag::HardClip(_) => {}, // we do nothing, the read segment doesn't align and is gone from the read
+
        }
     });
     assert_eq!(cigar_pos,reference.len());

@@ -273,62 +273,65 @@ pub fn sort_reads_from_bam_file(
         for result in records {
             reads += 1;
             let record = result.unwrap();
-            let seq: Vec<u8> = record.sequence().iter().collect();
-            let start_pos = record.alignment_start().unwrap().unwrap().get();
-            let cigar = record.cigar();
-            let read_name: bam::record::Name<'_> = record.name().unwrap();
 
-            let aligned_read = recover_align_sequences(
-                &seq,
-                start_pos,
-                &cigar,
-                &true,
-                reference_sequence.as_slice(),
-            );
-            
-            let stretched_alignment = stretch_sequence_to_alignment(
-                &aligned_read.aligned_ref,
-                &reference_manager.references.get(reference_sequence_id).unwrap().sequence_u8
-            );
+            if !record.flags().is_secondary() {
+                let seq: Vec<u8> = record.sequence().iter().collect();
+                let start_pos = record.alignment_start().unwrap().unwrap().get();
+                let cigar = record.cigar();
+                let read_name: bam::record::Name<'_> = record.name().unwrap();
 
-            let extracted_tags =
-                extract_tagged_sequences(&aligned_read.aligned_read, &stretched_alignment);
-            let sorted_tags = get_sorting_order(read_structure, reference_name);
+                let ref_slice = reference_sequence.as_slice();
 
-            let (invalid_read, read_tags_ordered) =
-                extract_tag_sequences(reference_config, extracted_tags);
+                let aligned_read =
+                    recover_align_sequences(&seq, start_pos, &cigar, &true, ref_slice);
 
-            if !invalid_read {
-                valid_reads += 1;
-                let new_sorted_read_container = SortingReadSetContainer {
-                    ordered_sorting_keys: vec![],             // for future use during sorting
-                    ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
-                    aligned_read: AlignmentResult {
-                        reference_name: reference_name.clone(),
-                        read_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_read),
-                        cigar_string: cigar
-                            .iter()
-                            .map(|op| AlignmentTag::from(op.unwrap()))
-                            .collect(),
-                        path: vec![],
-                        score: 0.0,
-                        reference_start: start_pos,
-                        read_start: 0,
-                        reference_aligned: FastaBase::from_vec_u8_default_ns(
-                            &aligned_read.aligned_ref,
-                        ),
-                        read_name: String::from_utf8(read_name.as_bytes().to_vec()).unwrap(),
-                        bounding_box: None,
-                    },
-                };
-                sender.send(new_sorted_read_container).unwrap();
+                let stretched_alignment = stretch_sequence_to_alignment(
+                    &aligned_read.aligned_ref,
+                    &reference_manager
+                        .references
+                        .get(reference_sequence_id)
+                        .unwrap()
+                        .sequence_u8,
+                );
+
+                let extracted_tags =
+                    extract_tagged_sequences(&aligned_read.aligned_read, &stretched_alignment);
+
+                let (invalid_read, read_tags_ordered) =
+                    extract_tag_sequences(reference_config, extracted_tags);
+
+                if !invalid_read {
+                    valid_reads += 1;
+                    let new_sorted_read_container = SortingReadSetContainer {
+                        ordered_sorting_keys: vec![], // for future use during sorting
+                        ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
+                        aligned_read: AlignmentResult {
+                            reference_name: reference_name.clone(),
+                            read_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_read),
+                            cigar_string: cigar
+                                .iter()
+                                .map(|op| AlignmentTag::from(op.unwrap()))
+                                .collect(),
+                            path: vec![],
+                            score: 0.0,
+                            reference_start: start_pos,
+                            read_start: 0,
+                            reference_aligned: FastaBase::from_vec_u8_default_ns(
+                                &aligned_read.aligned_ref,
+                            ),
+                            read_name: String::from_utf8(read_name.as_bytes().to_vec()).unwrap(),
+                            bounding_box: None,
+                        },
+                    };
+                    sender.send(new_sorted_read_container).unwrap();
+                }
             }
         }
         println!(
             "Read {} records, of which {} were valid",
             reads, valid_reads
         );
-        sender.finished().unwrap(); 
+        sender.finished().unwrap();
     }
     println!("Trying to reopen aligned temp file {:?}", aligned_temp);
     if valid_reads > 0 {

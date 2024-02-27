@@ -64,10 +64,12 @@ pub fn recover_align_sequences(
         };
     };
         
-
+    println!("read length {} cigar: {:?}", unaligned_read.len(), cigar, );
     for (cigar_index, cigar_sub) in cigar.iter().enumerate() {
         let cigar_v = cigar_sub.unwrap();
         let len = cigar_v.len();
+        println!("read pos {} ref pos: {}", read_pos, ref_pos);
+
 
         match cigar_v.kind() {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
@@ -104,6 +106,13 @@ pub fn recover_align_sequences(
 
                         read_pos += len;
 
+                    } else if ref_pos + len >= reference.len() {
+                        let dashes = ref_pos + len - reference.len();
+                        aligned_ref.extend(reference[ref_pos..].to_vec());
+                        aligned_ref.extend(b"-".repeat(dashes));
+                        aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
+                        read_pos += len;
+                        
                     } else {
                         aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
                         aligned_ref.extend(reference[ref_pos..ref_pos + len].to_vec());
@@ -116,8 +125,7 @@ pub fn recover_align_sequences(
                 }
             }
             Kind::HardClip | Kind::Pad => {
-                read_pos += len;
-                ref_pos += len;
+                // do nothing
             }
             other_cigar => {
                 panic!("Unknown cigar symbol {:?}", other_cigar);

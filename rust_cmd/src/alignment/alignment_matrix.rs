@@ -57,6 +57,7 @@ pub enum AlignmentTag {
     Del(usize),
     Ins(usize),
     SoftClip(usize),
+    HardClip(usize),
     InversionOpen,
     InversionClose,
 }
@@ -78,6 +79,7 @@ impl From<Op> for AlignmentTag {
             Kind::Deletion => {AlignmentTag::Del(value.len())}
             Kind::Insertion => {AlignmentTag::Ins(value.len())}
             Kind::SoftClip => {AlignmentTag::SoftClip(value.len())}
+            Kind::HardClip => {AlignmentTag::HardClip(value.len())}
             _ => {panic!("Unmatched op tag")}
         }
     }
@@ -93,6 +95,7 @@ impl AlignmentTag {
             AlignmentTag::SoftClip(x) => {Op::new(Kind::SoftClip, *x)}
             AlignmentTag::InversionOpen => {panic!("Not sure how to translate the inversion open tag")}
             AlignmentTag::InversionClose => {panic!("Not sure how to translate the inversion close tag")}
+            AlignmentTag::HardClip(x) => {Op::new(Kind::HardClip, *x)}
         }
     }
 }
@@ -106,6 +109,7 @@ impl fmt::Display for AlignmentTag {
             AlignmentTag::InversionOpen => write!(f, "<"),
             AlignmentTag::InversionClose => write!(f, ">"),
             AlignmentTag::SoftClip(size) => write!(f, "{}S", size),
+            AlignmentTag::HardClip(size) => write!(f, "{}H", size),
         }
     }
 }
