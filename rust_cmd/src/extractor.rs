@@ -64,11 +64,11 @@ pub fn recover_align_sequences(
         };
     };
         
-    println!("read length {} cigar: {:?}", unaligned_read.len(), cigar, );
+    //println!("read length {} cigar: {:?}", unaligned_read.len(), cigar, );
     for (cigar_index, cigar_sub) in cigar.iter().enumerate() {
         let cigar_v = cigar_sub.unwrap();
         let len = cigar_v.len();
-        println!("read pos {} ref pos: {}", read_pos, ref_pos);
+        //println!("read pos {} ref pos: {}", read_pos, ref_pos);
 
 
         match cigar_v.kind() {
