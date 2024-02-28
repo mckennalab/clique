@@ -8,9 +8,7 @@ use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::{SequenceLayout, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
 use crate::umis::known_list::KnownList;
-use crate::umis::sequence_clustering::{
-    correct_to_known_list, get_connected_components, vantage_point_string_graph, InputList,
-};
+use crate::umis::sequence_clustering::{get_connected_components, vantage_point_string_graph, InputList,};
 use crate::InstanceLivedTempDir;
 use actix::ActorStreamExt;
 use indicatif::ProgressBar;
@@ -78,6 +76,7 @@ pub fn collapse(
                     .get_sorted_umi_configurations(&ref_name)
                     .iter()
                     .for_each(|tag| {
+
                         match tag.sort_type {
                             UMISortType::KnownTag => {
                                 let ret = sort_known_level(
@@ -90,6 +89,7 @@ pub fn collapse(
                                 sorted_reads = ret.1;
                                 read_count = ret.0;
                             }
+
                             UMISortType::DegenerateTag => {
                                 let ret = sort_degenerate_level(
                                     temp_directory,
@@ -102,6 +102,7 @@ pub fn collapse(
                                 read_count = ret.0;
                             }
                         }
+
                         levels += 1;
                     });
 
@@ -210,18 +211,34 @@ impl ReferenceLookupTable {
             unified_name_to_seq,
         }
     }
+}
 
-    pub fn get_reference_sequence(&self, bam_id: &usize) -> Option<NamedRef> {
-        match self.bam_reference_id_to_name.get(bam_id) {
-            None => None,
-            Some(x) => match self.unified_name_to_seq.get(x) {
-                None => None,
-                Some(y) => Some(NamedRef {
-                    name: x.clone(),
-                    sequence: y.clone(),
-                }),
-            },
-        }
+#[derive(Default,Copy,Clone,Debug)]
+struct BamReadFiltering {
+    total_reads: usize,
+    unmapped_flag_reads: usize,
+    secondary_flag_reads: usize,
+    failed_alignment_filters: usize,
+    duplicate_reads: usize,
+    invalid_tags: usize, 
+}
+
+impl BamReadFiltering {
+    pub fn passing_reads(&self) -> usize {
+        self.total_reads - self.unmapped_flag_reads - self.secondary_flag_reads - self.failed_alignment_filters - self.duplicate_reads - self.invalid_tags
+    }
+
+    pub fn results(&self) {
+        info!(
+            "Bam file processed, Total reads: {}, Unmapped reads: {}, Secondary reads: {}, Failed alignment filters: {}, Duplicate reads: {}, Invalid_tags: {}, Passing reads: {}",
+            self.total_reads,
+            self.unmapped_flag_reads,
+            self.secondary_flag_reads,
+            self.failed_alignment_filters,
+            self.duplicate_reads,
+            self.invalid_tags,
+            self.passing_reads(),
+        );
     }
 }
 
@@ -232,6 +249,7 @@ pub fn sort_reads_from_bam_file(
     read_structure: &SequenceLayout,
     temp_directory: &mut InstanceLivedTempDir,
 ) -> Option<ShardReader<SortingReadSetContainer>> {
+
     let aligned_temp = temp_directory.temp_file("bam.reads.sorted.sharded");
 
     let mut reader = bam::io::reader::Builder::default()
@@ -240,8 +258,8 @@ pub fn sort_reads_from_bam_file(
     let mut bai_file = bam_file.clone();
     bai_file.push_str(".bai");
 
-    let mut reads = 0;
-    let mut valid_reads = 0;
+    let mut read_stats = BamReadFiltering::default();
+
     let index = bai::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();
     {
@@ -271,10 +289,10 @@ pub fn sort_reads_from_bam_file(
             .expect("Unable to parse out region information");
 
         for result in records {
-            reads += 1;
+            read_stats.total_reads += 1;
             let record = result.unwrap();
 
-            if !record.flags().is_secondary() {
+            if !record.flags().is_secondary() && !record.flags().is_unmapped() {
                 let seq: Vec<u8> = record.sequence().iter().collect();
                 let start_pos = record.alignment_start().unwrap().unwrap().get();
                 let cigar = record.cigar();
@@ -297,11 +315,11 @@ pub fn sort_reads_from_bam_file(
                 let extracted_tags =
                     extract_tagged_sequences(&aligned_read.aligned_read, &stretched_alignment);
 
-                let (invalid_read, read_tags_ordered) =
+                let (valid_tags_extracted, read_tags_ordered) =
                     extract_tag_sequences(reference_config, extracted_tags);
 
-                if !invalid_read {
-                    valid_reads += 1;
+                if !valid_tags_extracted {
+                    
                     let new_sorted_read_container = SortingReadSetContainer {
                         ordered_sorting_keys: vec![], // for future use during sorting
                         ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
@@ -324,17 +342,24 @@ pub fn sort_reads_from_bam_file(
                         },
                     };
                     sender.send(new_sorted_read_container).unwrap();
+                } else {
+                    read_stats.invalid_tags += 1;
+                }
+            } else {
+                if record.flags().is_secondary() {
+                    read_stats.secondary_flag_reads += 1;
+                }
+                if record.flags().is_unmapped() {
+                    read_stats.unmapped_flag_reads += 1;
                 }
             }
         }
-        println!(
-            "Read {} records, of which {} were valid",
-            reads, valid_reads
-        );
         sender.finished().unwrap();
+        sharded_output.finish().unwrap();
+        
     }
-    println!("Trying to reopen aligned temp file {:?}", aligned_temp);
-    if valid_reads > 0 {
+    read_stats.results();
+    if read_stats.passing_reads() > 0 {
         Some(ShardReader::open(aligned_temp).unwrap())
     } else {
         None
@@ -355,7 +380,7 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, K
                     None => {}
                     Some(x) => {
                         if !ret.contains_key(x.as_str()) {
-                            let known_lookup = KnownList::read_known_list_file(config, &8);
+                            let known_lookup = KnownList::new(config, &8);
                             ret.insert(x.clone(), known_lookup);
                         }
                     }
@@ -702,6 +727,7 @@ pub fn sort_known_level(
     let mut processed_reads = 0;
     let mut dropped_reads = 0;
     let mut collided_reads = 0;
+    let mut sent_reads = 0;
     info!("Sorting reads");
     let mut bar: Option<ProgressBar> = match *read_count > 100000 {
         true => Some(ProgressBar::new(read_count.clone() as u64)),
@@ -735,7 +761,7 @@ pub fn sort_known_level(
             assert_eq!(next_key.0, tag.symbol);
 
             let corrected_hits =
-                correct_to_known_list(&next_key.1, &mut known_lookup, &tag.max_distance);
+            known_lookup.correct_to_known_list(&next_key.1,  &(tag.max_distance as f32));
             match (corrected_hits.hits.len(), corrected_hits.distance) {
                 (x, _) if x < 1 => {
                     dropped_reads += 1;
@@ -744,10 +770,11 @@ pub fn sort_known_level(
                     collided_reads += 1;
                     dropped_reads += 1;
                 }
-                (_x, y) if y > tag.max_distance => {
+                (_x, y) if y > (tag.max_distance as f32)=> {
                     dropped_reads += 1;
                 }
                 (_x, _y) => {
+                    sent_reads += 1;
                     sorting_read_set_container
                         .ordered_sorting_keys
                         .push((next_key.0, corrected_hits.hits.get(0).unwrap().clone()));
@@ -757,8 +784,8 @@ pub fn sort_known_level(
         });
 
         info!(
-            "Dropped {} reads (of which {} were collided reads), {} total reads",
-            dropped_reads, collided_reads, processed_reads
+            "Dropped {} reads (of which {} were collided reads), {} total reads, sent reads: {}",
+            dropped_reads, collided_reads, processed_reads, sent_reads
         );
         sender.finished().unwrap();
         sharded_output.finish().unwrap();

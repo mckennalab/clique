@@ -54,6 +54,7 @@ noodles-bgzf = "0.26.0"
 noodles-util = { version = "0.37.0", features = ["alignment"] }
 bstr = "*"
 indexmap = "2.0.0"
+triple_accel = "*"
 
 rust-htslib = "*"
 

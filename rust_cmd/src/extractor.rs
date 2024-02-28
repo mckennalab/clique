@@ -50,6 +50,7 @@ pub fn recover_align_sequences(
     soft_clip_as_match: &bool,
     reference: &[u8],
 ) -> RecoveredAlignedSeq {
+    
     let mut aligned_read = Vec::new();
     let mut aligned_ref = Vec::new();
     let mut read_pos = 0;

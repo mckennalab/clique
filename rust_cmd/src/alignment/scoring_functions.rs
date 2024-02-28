@@ -72,7 +72,7 @@ pub struct AffineScoring {
 
 impl AffineScoring {
     /// this is the default, matching DNAFull from Emboss' WATER
-    pub fn default() -> AffineScoring {
+    pub fn default_DNA() -> AffineScoring {
         AffineScoring {
             match_score: 5.0,
             mismatch_score: -4.0,
@@ -80,6 +80,18 @@ impl AffineScoring {
             gap_open: -10.0,
             gap_extend: -0.5,
             final_gap_multiplier: 0.5,
+        }
+    }
+
+    /// inverted for a distance metric
+    pub fn distance_DNA() -> AffineScoring {
+        AffineScoring {
+            match_score: 0.0,
+            mismatch_score: -1.0,
+            special_character_score: -1.0,
+            gap_open: 0.0, // gap open costs gap_open + gap_extend, we automatically get -1.0 for the start of a gap
+            gap_extend: -1.0,
+            final_gap_multiplier: 1.0,
         }
     }
 

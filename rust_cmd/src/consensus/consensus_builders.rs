@@ -18,6 +18,8 @@ use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::CString;
+use std::sync::{Arc, Mutex};
+use indicatif::style::ProgressTracker;
 
 pub fn write_consensus_reads(
     reader: &ShardReader<SortingReadSetContainer>,
@@ -32,45 +34,74 @@ pub fn write_consensus_reads(
     let mut written_buffers = 0;
     let mut processed_reads = 0;
 
-    let score = AffineScoring::default();
-    let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
-        (reference_manager.longest_ref + 1) * 2,
-        (reference_manager.longest_ref + 1) * 2,
-        LocalAlignmentType::Affine,
-        false,
-    );
+    let score = AffineScoring::default_DNA();
 
-    reader.iter_range(&Range::all()).unwrap().for_each(|x| {
-        let x = x.unwrap();
-        assert_eq!(x.ordered_sorting_keys.len(), levels);
-        if !(last_read.is_some() && x.cmp(last_read.as_ref().unwrap()) == Ordering::Equal)
-            && !buffered_reads.is_empty()
-        {
-            output_buffered_read_set_to_sam_file(
-                reference_manager,
-                maximum_reads_before_downsampling,
-                writer,
-                &buffered_reads,
-                &score,
-                &mut alignment_mat,
-            );
-            written_buffers += 1;
-            buffered_reads = VecDeque::new();
-        }
-        processed_reads += 1;
-        buffered_reads.push_back(x.clone());
-        last_read = Some(x);
+
+    let arc_output = Arc::new(Mutex::new(writer));
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(8)
+        .build()
+        .unwrap();
+    
+    pool.scope(|s| {
+        let mut handled_reads = 0;
+        reader.iter_range(&Range::all()).unwrap().for_each(|x| {
+            let x = x.unwrap();
+            assert_eq!(x.ordered_sorting_keys.len(), levels);
+            if !(last_read.is_some() && x.cmp(last_read.as_ref().unwrap()) == Ordering::Equal)
+                && !buffered_reads.is_empty()
+            {
+                let my_buffered_reads = buffered_reads.clone();
+                buffered_reads = VecDeque::new();
+                s.spawn( |y| {
+                    let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
+                        (reference_manager.longest_ref + 1) * 2,
+                        (reference_manager.longest_ref + 1) * 2,
+                        LocalAlignmentType::Affine,
+                        false,
+                    );
+
+                    let my_buffered_reads = my_buffered_reads;
+                    let new_read = create_sam_read(
+                        reference_manager,
+                        maximum_reads_before_downsampling,
+                        &my_buffered_reads,
+                        &AffineScoring::default_DNA(),
+                        &mut alignment_mat,
+                    );
+
+                    let arc_writer = arc_output.clone();
+                    let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
+                    arc_writer.write_read(&new_read.read, &new_read.added_tags);
+                });
+                written_buffers += 1;
+            }
+            processed_reads += 1;
+            buffered_reads.push_back(x.clone());
+            last_read = Some(x);
+        });
     });
 
+
     if !buffered_reads.is_empty() {
-        output_buffered_read_set_to_sam_file(
+        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
+            (reference_manager.longest_ref + 1) * 2,
+            (reference_manager.longest_ref + 1) * 2,
+            LocalAlignmentType::Affine,
+            false,
+        );
+
+        let new_read = create_sam_read(
             reference_manager,
             maximum_reads_before_downsampling,
-            writer,
             &buffered_reads,
             &score,
             &mut alignment_mat,
         );
+        let arc_writer = arc_output.clone();
+        let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
+        arc_writer.write_read(&new_read.read, &new_read.added_tags);
         written_buffers += 1;
     }
     info!(
@@ -79,17 +110,18 @@ pub fn write_consensus_reads(
     );
 }
 
+pub struct SamReadyOutput {
+    read: SortingReadSetContainer,
+    added_tags: HashMap<(u8, u8), String>,
+}
 
-
-
-fn output_buffered_read_set_to_sam_file(
+fn create_sam_read(
     reference_manager: &ReferenceManager,
     maximum_reads_before_downsampling: &usize,
-    writer: &mut dyn OutputAlignmentWriter,
     buffered_reads: &VecDeque<SortingReadSetContainer>,
     my_aff_score: &AffineScoring,
     mut alignment_mat: &mut Alignment<Ix3>,
-) {
+) -> SamReadyOutput {
     let mut added_tags = HashMap::new();
     added_tags.insert((b'r', b'c'), buffered_reads.len().to_string());
     added_tags.insert(
@@ -106,7 +138,7 @@ fn output_buffered_read_set_to_sam_file(
                 .map(|x| x.aligned_read.reference_name.clone().as_bytes().to_vec())
                 .collect::<Vec<Vec<u8>>>(),
         )
-        .most_common_ordered();
+            .most_common_ordered();
 
         let top_ref = &consensus_reference.get(0).unwrap().clone().0;
         let reference_pointer = reference_manager
@@ -119,7 +151,13 @@ fn output_buffered_read_set_to_sam_file(
             )
             .unwrap();
 
-        let read_name = buffered_reads.iter().next().unwrap().aligned_read.read_name.clone();
+        let read_name = buffered_reads
+            .iter()
+            .next()
+            .unwrap()
+            .aligned_read
+            .read_name
+            .clone();
 
         let new_alignment = align_two_strings(
             &reference_pointer.sequence,
@@ -128,7 +166,7 @@ fn output_buffered_read_set_to_sam_file(
             false,
             &String::from_utf8(reference_pointer.name.clone()).unwrap(),
             &read_name,
-            None
+            None,
         );
         //println!("New alignment: \n{}\n{}\n{:?}", FastaBase::string(&new_alignment.read_aligned),FastaBase::string(&new_alignment.reference_aligned),simplify_cigar_string(&new_alignment.cigar_string));
         let read_names = buffered_reads
@@ -143,7 +181,7 @@ fn output_buffered_read_set_to_sam_file(
                 &new_alignment.reference_aligned,
                 &new_alignment.read_aligned,
             )
-            .to_string(),
+                .to_string(),
         );
 
         added_tags.insert((b'a', b's'), new_alignment.score.to_string());
@@ -152,11 +190,9 @@ fn output_buffered_read_set_to_sam_file(
             .unwrap()
             .with_new_alignment(new_alignment);
 
-        writer
-            .write_read(&new_sorting_read, &added_tags)
-            .expect("Unable to write read to file.");
+        SamReadyOutput { read: new_sorting_read, added_tags }
     } else {
-        let single_read = buffered_reads.get(0).unwrap();
+        let single_read = buffered_reads.get(0).unwrap().clone();
         added_tags.insert((b'a', b'r'), single_read.aligned_read.read_name.clone());
         added_tags.insert(
             (b'r', b'm'),
@@ -164,12 +200,11 @@ fn output_buffered_read_set_to_sam_file(
                 &single_read.aligned_read.reference_aligned,
                 &single_read.aligned_read.read_aligned,
             )
-            .to_string(),
+                .to_string(),
         );
         added_tags.insert((b'a', b's'), single_read.aligned_read.score.to_string());
-
-        writer.write_read(&single_read, &added_tags).unwrap();
-    };
+        SamReadyOutput { read: single_read, added_tags }
+    }
 }
 
 pub fn get_reference_alignment_rate(reference: &[FastaBase], read: &[FastaBase]) -> f64 {
@@ -178,7 +213,9 @@ pub fn get_reference_alignment_rate(reference: &[FastaBase], read: &[FastaBase])
 
     //println!("reference: {} read: {}", FastaBase::string(&reference),FastaBase::string(&read));
     for index in 0..reference.len() {
-        if reference.get(index).unwrap() != &FASTA_UNSET && !reference.get(index).unwrap().strict_identity(&FASTA_N) && read.get(index).unwrap() != &FASTA_UNSET
+        if reference.get(index).unwrap() != &FASTA_UNSET
+            && !reference.get(index).unwrap().strict_identity(&FASTA_N)
+            && read.get(index).unwrap() != &FASTA_UNSET
         {
             if reference.get(index).unwrap() == read.get(index).unwrap() {
                 matches += 1;
@@ -216,7 +253,7 @@ pub fn reference_read_to_cigar_string(
             .join("")
             .as_bytes(),
     )
-    .expect("Unable to parse cigar string.")
+        .expect("Unable to parse cigar string.")
 }
 
 pub fn create_poa_consensus(

@@ -1,113 +1,215 @@
-use std::collections::{HashMap};
-use std::collections::btree_set::BTreeSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-use log::{info};
-
-use crate::umis::sequence_clustering::BestHits;
-
-use crate::alignment::fasta_bit_encoding::{FastaBase, reverse_complement};
+use log::info;
+use serde::{Deserialize, Serialize};
+use triple_accel::levenshtein_exp;
+use vpsearch::Tree;
+use vpsearch::{BestCandidate, MetricSpace};
+use crate::alignment::fasta_bit_encoding::{reverse_complement, FastaBase};
 use crate::read_strategies::sequence_layout::{UMIConfiguration, UMIPadding};
 
+use super::sequence_clustering::{vantage_point_string_graph, RadiusBasedNeighborhood};
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FastaString {
+    pub fa: Vec<FastaBase>,
+}
+
+impl FastaString {
+    pub fn new(fa: Vec<FastaBase>) -> FastaString {
+        FastaString { fa }
+    }
+}
+
+impl MetricSpace for FastaString {
+    type UserData = ();
+    type Distance = f32;
+
+    fn distance(&self, other: &Self, _: &Self::UserData) -> Self::Distance {
+        levenshtein_exp(&&FastaBase::vec_u8(&self.fa), &FastaBase::vec_u8(&other.fa)) as f32
+    }
+}
+
+// #[derive(Serialize, Deserialize, Clone, )]
 pub struct KnownList {
-    pub name: UMIConfiguration,
-    pub known_list_map: HashMap<Vec<FastaBase>, BestHits>,
-    pub known_list_subset: HashMap<Vec<FastaBase>, Vec<Vec<FastaBase>>>,
-    pub known_list_subset_key_size: usize,
+    config: UMIConfiguration,
+    vantage_tree: Tree<FastaString>,
+    input_list: Vec<FastaString>,
 }
 
 impl KnownList {
-
-    pub fn read_known_list_file(umi_type: &UMIConfiguration, starting_nmer_size: &usize) -> KnownList {
-
+    pub fn new(umi_type: &UMIConfiguration, starting_nmer_size: &usize) -> KnownList {
         let filename = umi_type.file.clone().unwrap();
         let filename = filename.as_str();
 
-        info!("Setting up known list reader for {}", filename);
-        let min_max = KnownList::get_min_max_length(filename);
+        info!("Setting up known list reader using a vantage tree for file {}; large files may take a long time", filename);
 
-        let rev_comp = umi_type.reverse_complement_sequences.clone().unwrap_or(false);
-        let btree = KnownList::create_b_tree(filename, &umi_type.pad, &rev_comp, &min_max.1);
+        let rev_comp = umi_type
+            .reverse_complement_sequences
+            .unwrap_or(false);
 
-        // now that the barcodes are read and in-order, we'll make a prefix lookup. This should speed up matching later on
-        let mut prefix: Option<Vec<FastaBase>> = None;
-        let mut container: Vec<Vec<FastaBase>> = Vec::new();
+        let input_list = KnownList::create_input_set(filename, &rev_comp);
 
-        let mut existing_mapping = HashMap::new();
-        let mut known_list_subset: HashMap<Vec<FastaBase>, Vec<Vec<FastaBase>>> = HashMap::new();
-
-        for bytes in &btree {
-            if !prefix.is_some() { prefix = Some(bytes[0..*starting_nmer_size].to_vec()); }
-
-            existing_mapping.insert(bytes.clone(), BestHits { hits: vec![bytes.clone()], distance: 0 });
-
-            let first_x = bytes.clone()[0..*starting_nmer_size].to_vec();
-            if FastaBase::edit_distance(&first_x, prefix.as_ref().unwrap()) > 0 {
-                known_list_subset.insert(prefix.unwrap(), container.clone());
-                container.clear();
-                prefix = Some(first_x);
-            }
-            container.push(bytes.clone());
-        }
-        known_list_subset.insert(prefix.unwrap(), container.clone());
+        let vantage_tree = vpsearch::Tree::new(&input_list);
 
         KnownList {
-            name: umi_type.clone(),
-            known_list_map: existing_mapping,
-            known_list_subset,
-            known_list_subset_key_size: starting_nmer_size.clone(),
+            config: umi_type.clone(),
+            vantage_tree,
+            input_list,
         }
     }
 
-    pub fn create_b_tree(filename: &str, pad_dir: &Option<UMIPadding>, reverse_comp: &bool, pad_length: &usize) -> BTreeSet<Vec<FastaBase>> {
+    pub fn vantage_tree(&self) -> &Tree<FastaString> {
+        &self.vantage_tree
+    }
 
+    pub fn create_input_set(filename: &str, reverse_comp: &bool) -> Vec<FastaString> {
         let raw_reader = BufReader::new(File::open(filename).unwrap());
-        let mut btree = BTreeSet::new();
+        let mut input_set = Vec::new();
         for line in raw_reader.lines() {
             let mut bytes = line.unwrap();
             if *reverse_comp {
                 bytes = FastaBase::string(&reverse_complement(&FastaBase::from_string(&bytes)));
             }
-            match pad_dir {
-                None => {
-                    btree.insert(FastaBase::from_string(&bytes));
-                }
-                Some(x) => {
-                    if bytes.len() < *pad_length {
-                        match x {
-                            UMIPadding::Left => {
-                                let mut padded_bytes = bytes.clone();
-                                padded_bytes.insert_str(0, &"-".repeat(pad_length - bytes.len()));
-                                btree.insert(FastaBase::from_string(&padded_bytes));
-                            }
-                            UMIPadding::Right => {
-                                let mut padded_bytes = bytes.clone();
-                                padded_bytes.push_str(&"-".repeat(pad_length - bytes.len()));
-                                btree.insert(FastaBase::from_string(&padded_bytes));
-                            }
-                        }
-                    } else if bytes.len() == *pad_length {
-                        btree.insert(FastaBase::from_string(&bytes));
-                    } else {
-                        panic!("Barcode {} is longer than the specified padding length of {}", &bytes, *pad_length);
-                    }
-                }
-            }
+            input_set.push(FastaString::new(FastaBase::from_string(&bytes)));
         }
-        btree
+        input_set
     }
 
-    pub fn get_min_max_length(filename: &str) -> (usize,usize) {
+    pub fn get_min_max_length(filename: &str) -> (usize, usize) {
         let raw_reader = BufReader::new(File::open(filename).unwrap());
         let mut min = usize::MAX;
         let mut max = usize::MIN;
         for line in raw_reader.lines() {
             let bytes = line.unwrap();
             let len = bytes.len();
-            if len < min { min = len; }
-            if len > max { max = len; }
+            if len < min {
+                min = len;
+            }
+            if len > max {
+                max = len;
+            }
         }
-        (min,max)
+        (min, max)
+    }
+
+    pub fn correct_to_known_list(
+        &self,
+        barcode: &Vec<FastaBase>,
+        max_distance: &f32,
+    ) -> BestF32Hits {
+        let nearest = self.vantage_tree.find_nearest_custom(
+            &FastaString::new(barcode.clone()),
+            &(),
+            RadiusBasedNeighborhood::new(*max_distance),
+        );
+
+        BestF32Hits {
+            hits: nearest.iter().map(|(id, dist)| self.input_list.get(*id as usize).unwrap().fa.clone()).collect(),
+            distance: nearest.iter().map(|(id, dist)| *dist).next().unwrap_or(max_distance + 1.0),
+        }
+    }
+}
+
+
+pub struct BestF32Hits {
+    pub hits: Vec<Vec<FastaBase>>,
+    pub distance: f32,
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs::File,
+        io::{self, BufRead, BufReader},
+        path::Path,
+    };
+    use vpsearch::MetricSpace;
+    use crate::{
+        alignment::fasta_bit_encoding::FastaBase,
+        read_strategies::sequence_layout::{UMIConfiguration, UMISortType},
+        umis::known_list::{FastaString, KnownList},
+    };
+
+    fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+        where
+            P: AsRef<Path>,
+    {
+        let file = File::open(filename)?;
+        Ok(io::BufReader::new(file).lines())
+    }
+
+    #[test]
+    fn test_real_known_set() {
+        let known_5p_list = UMIConfiguration {
+            symbol: '0',
+            file: Some("test_data/subset_barcode_list_500.txt".to_string()),
+            reverse_complement_sequences: Some(false),
+            sort_type: UMISortType::KnownTag,
+            length: 16,
+            order: 0,
+            pad: None,
+            max_distance: 0,
+            maximum_subsequences: Some(25000),
+        };
+
+        println!("Creating vantage point tree");
+        let mut known_lookup = KnownList::new(&known_5p_list, &8);
+        let file = File::open("test_data/subset_barcode_list_500.txt".to_string()).unwrap();
+        let reader = BufReader::new(file);
+
+        println!("Testing the top 100 events");
+        for line in reader.lines().take(100) {
+            //println!("{}", line?);
+            assert_eq!(
+                known_lookup.correct_to_known_list(
+                    &FastaBase::from_string(&line.unwrap()),
+                    &1.0,
+                )
+                    .hits
+                    .len(),
+                1
+            );
+        }
+        assert_eq!(
+            known_lookup.correct_to_known_list(
+                &FastaBase::from_string(&"AAACCCAAGCAGATAA".to_string()),
+                &1.0,
+            )
+                .hits
+                .len(),
+            1
+        );
+
+        assert_eq!(
+            known_lookup.correct_to_known_list(
+                &FastaBase::from_string(&"TAACCCAAGCAGATAT".to_string()),
+                &1.0,
+            )
+                .hits
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_fastabase_edit_distance() {
+        let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
+        let str2 = FastaString { fa: FastaBase::from_str("AAAAA") };
+        assert_eq!(str1.distance(&str2, &()), 0.0);
+
+        let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
+        let str2 = FastaString { fa: FastaBase::from_str("AAAAT") };
+        assert_eq!(str1.distance(&str2, &()), 1.0);
+
+        let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
+        let str2 = FastaString { fa: FastaBase::from_str("AAAA") };
+        assert_eq!(str1.distance(&str2, &()), 1.0);
+
+        let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
+        let str2 = FastaString { fa: FastaBase::from_str("TTTTT") };
+        assert_eq!(str1.distance(&str2, &()), 5.0);
     }
 }

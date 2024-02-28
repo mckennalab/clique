@@ -30,7 +30,7 @@ use noodles_sam;
 
 /// something that writes aligned reads. The output may or may not respect all the fields
 /// of the SortingReadSetContainer
-pub trait OutputAlignmentWriter {
+pub trait OutputAlignmentWriter: Sync + Send {
     fn write_read(
         &mut self,
         read_set_container: &SortingReadSetContainer,
@@ -44,6 +44,8 @@ pub struct BamFileAlignmentWriter<'a> {
     header: noodles_sam::Header,
     reference_manager: ReferenceManager<'a, 'a, 'a>,
 }
+unsafe impl<'a> Send for BamFileAlignmentWriter<'a> {}
+unsafe impl<'a> Sync for BamFileAlignmentWriter<'a> {}
 
 impl<'a> BamFileAlignmentWriter<'a> {
     pub fn new(
@@ -213,7 +215,7 @@ impl<'a> AlignmentParameters<'a> {
         read_structure: &'a SequenceLayout,
         reference_manager: &'a ReferenceManager,
     ) -> AlignmentParameters<'a> {
-        let affine_scores = AffineScoring::default();
+        let affine_scores = AffineScoring::default_DNA();
         let inversion_scores = InversionScoring::default();
 
         AlignmentParameters {
