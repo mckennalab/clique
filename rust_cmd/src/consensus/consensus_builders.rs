@@ -43,7 +43,7 @@ pub fn write_consensus_reads(
         .num_threads(8)
         .build()
         .unwrap();
-    
+
     pool.scope(|s| {
         let mut handled_reads = 0;
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {

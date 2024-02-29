@@ -6,17 +6,11 @@ use std::collections::{BTreeMap};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum UMISortType {
-    /// This enum represents how we should extract molecular identifiers and known sequences from the
-    /// stream of reads. It specifies the location (as aligned to the reference), the maximum distance
-    /// you allow before not considering two sequences to be from the same source.
     KnownTag,
     DegenerateTag,
 }
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum MergeStrategy {
-    /// This enum represents how we should extract molecular identifiers and known sequences from the
-    /// stream of reads. It specifies the location (as aligned to the reference), the maximum distance
-    /// you allow before not considering two sequences to be from the same source.
     Align,
     Concatenate,
     ConcatenateBothForward,

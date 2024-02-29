@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 use log::info;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use triple_accel::levenshtein_exp;
 use vpsearch::Tree;
@@ -11,7 +13,7 @@ use crate::read_strategies::sequence_layout::{UMIConfiguration, UMIPadding};
 
 use super::sequence_clustering::{vantage_point_string_graph, RadiusBasedNeighborhood};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct FastaString {
     pub fa: Vec<FastaBase>,
 }
@@ -35,6 +37,7 @@ impl MetricSpace for FastaString {
 pub struct KnownList {
     config: UMIConfiguration,
     vantage_tree: Tree<FastaString>,
+    exact_matches: HashMap<FastaString, BestF32Hits>,
     input_list: Vec<FastaString>,
 }
 
@@ -53,9 +56,14 @@ impl KnownList {
 
         let vantage_tree = vpsearch::Tree::new(&input_list);
 
+        let mut exact_matches : HashMap< FastaString, BestF32Hits> =
+            input_list.iter().map(|le|
+                (le.clone(),BestF32Hits{ hits: vec![le.fa.clone()], distance: 0.0 })).collect();
+
         KnownList {
             config: umi_type.clone(),
             vantage_tree,
+            exact_matches,
             input_list,
         }
     }
@@ -95,24 +103,37 @@ impl KnownList {
     }
 
     pub fn correct_to_known_list(
-        &self,
+        &mut self,
         barcode: &Vec<FastaBase>,
         max_distance: &f32,
     ) -> BestF32Hits {
-        let nearest = self.vantage_tree.find_nearest_custom(
-            &FastaString::new(barcode.clone()),
-            &(),
-            RadiusBasedNeighborhood::new(*max_distance),
-        );
+        let string_rep = FastaString::new(barcode.clone());
 
-        BestF32Hits {
-            hits: nearest.iter().map(|(id, dist)| self.input_list.get(*id as usize).unwrap().fa.clone()).collect(),
-            distance: nearest.iter().map(|(id, dist)| *dist).next().unwrap_or(max_distance + 1.0),
+        match self.exact_matches.get(&string_rep) {
+            None => {
+                let nearest = self.vantage_tree.find_nearest_custom(
+                    &string_rep,
+                    &(),
+                    RadiusBasedNeighborhood::new(*max_distance),
+                );
+
+                let ret = BestF32Hits {
+                    hits: nearest.iter().map(|(id, dist)| self.input_list.get(*id as usize).unwrap().fa.clone()).collect(),
+                    distance: nearest.iter().map(|(id, dist)| *dist).next().unwrap_or(max_distance + 1.0),
+                };
+
+                self.exact_matches.insert(string_rep.clone(),ret.clone());
+                ret
+            }
+            Some(x) => {
+                x.clone()
+            }
         }
+
     }
 }
 
-
+#[derive(Clone,Debug,PartialEq)]
 pub struct BestF32Hits {
     pub hits: Vec<Vec<FastaBase>>,
     pub distance: f32,

@@ -71,6 +71,7 @@ mod umis {
     pub mod sequence_clustering;
     pub mod bronkerbosch;
     pub mod known_list;
+    pub mod degenerate_ml;
 }
 mod calling {
 //    pub mod bam_file_to_cell_list;
