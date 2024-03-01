@@ -162,7 +162,7 @@ impl MLCorrector {
     fn find_closest(entry: &FastaString, others: &Vec<FastaString>, max_dist: u32) -> (Vec<FastaString>, u32) {
         let mut best_hits = Vec::new();
         let mut best_dist: u32 = max_dist;
-        println!("entry {} best dist {} others size {}",FastaBase::string(&entry.fa),best_dist,others.len());
+        //println!("entry {} best dist {} others size {}",FastaBase::string(&entry.fa),best_dist,others.len());
         for other in others.iter() {
             let dist = entry.hamming_distance(other);
             if dist < best_dist {
@@ -279,12 +279,12 @@ mod tests {
 
     #[test]
     fn test_ml_corrector() {
-        let fake_list = HashMap::from_iter(create_fake_data(3, 21).into_iter().enumerate().map(|(i, c)| (String::from_utf8(c).unwrap(), i+100)));
+        let fake_list = HashMap::from_iter(create_fake_data(3, 24).into_iter().enumerate().map(|(i, c)| (String::from_utf8(c).unwrap(), i+100)));
         let mutated_lists = one_off_errors(&fake_list);
         let ml = MLCorrector { max_lev_distance: 1 };
-        println!("correct {}",mutated_lists.0.len());
+        //println!("correct {}",mutated_lists.0.len());
         let corrected = ml.correct_list(&mutated_lists.0);
-        println!("correct {}",mutated_lists.0.len());
+        //println!("correct {}",mutated_lists.0.len());
         assert_eq!(corrected.len(), fake_list.len()*2);
         for (og, correct) in corrected {
             assert_eq!(mutated_lists.1.get(&String::from_utf8(og).unwrap()).unwrap().as_bytes(), correct);

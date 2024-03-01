@@ -28,7 +28,13 @@ impl FastaString {
 
     pub fn hamming_distance(&self, other: &FastaString) -> u32 {
         assert_eq!(self.fa.len(),other.fa.len());
-        self.fa.iter().zip(&other.fa).map(|(x,y)| x.identity(y)).filter(|b| !*b).count() as u32
+        let mut diff = 0;
+        for (x,y) in self.fa.iter().zip(&other.fa) {
+            if !x.identity(y) {
+                diff += 1;
+            }
+        }
+        diff
     }
 }
 
