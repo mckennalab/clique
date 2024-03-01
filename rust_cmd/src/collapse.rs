@@ -626,7 +626,7 @@ pub fn sort_known_level(
             assert_eq!(next_key.0, tag.symbol);
 
             let corrected_hits =
-            known_lookup.correct_to_known_list(&next_key.1,  &(tag.max_distance as f32));
+            known_lookup.correct_to_known_list(&next_key.1,  &(tag.max_distance as u32));
             match (corrected_hits.hits.len(), corrected_hits.distance) {
                 (x, _) if x < 1 => {
                     dropped_reads += 1;
@@ -635,7 +635,7 @@ pub fn sort_known_level(
                     collided_reads += 1;
                     dropped_reads += 1;
                 }
-                (_x, y) if y > (tag.max_distance as f32)=> {
+                (_x, y) if y > (tag.max_distance as u32)=> {
                     dropped_reads += 1;
                 }
                 (_x, _y) => {

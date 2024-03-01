@@ -22,14 +22,22 @@ impl FastaString {
     pub fn new(fa: Vec<FastaBase>) -> FastaString {
         FastaString { fa }
     }
+    pub fn from_string(st: &String) -> FastaString {
+        FastaString { fa: FastaBase::from_string(st) }
+    }
+
+    pub fn hamming_distance(&self, other: &FastaString) -> u32 {
+        assert_eq!(self.fa.len(),other.fa.len());
+        self.fa.iter().zip(&other.fa).map(|(x,y)| x.identity(y)).filter(|b| !*b).count() as u32
+    }
 }
 
 impl MetricSpace for FastaString {
     type UserData = ();
-    type Distance = f32;
+    type Distance = u32;
 
     fn distance(&self, other: &Self, _: &Self::UserData) -> Self::Distance {
-        levenshtein_exp(&&FastaBase::vec_u8(&self.fa), &FastaBase::vec_u8(&other.fa)) as f32
+        levenshtein_exp(&&FastaBase::vec_u8(&self.fa), &FastaBase::vec_u8(&other.fa))
     }
 }
 
@@ -58,7 +66,7 @@ impl KnownList {
 
         let mut exact_matches : HashMap< FastaString, BestF32Hits> =
             input_list.iter().map(|le|
-                (le.clone(),BestF32Hits{ hits: vec![le.fa.clone()], distance: 0.0 })).collect();
+                (le.clone(),BestF32Hits{ hits: vec![le.fa.clone()], distance: 0 })).collect();
 
         KnownList {
             config: umi_type.clone(),
@@ -105,7 +113,7 @@ impl KnownList {
     pub fn correct_to_known_list(
         &mut self,
         barcode: &Vec<FastaBase>,
-        max_distance: &f32,
+        max_distance: &u32,
     ) -> BestF32Hits {
         let string_rep = FastaString::new(barcode.clone());
 
@@ -119,7 +127,7 @@ impl KnownList {
 
                 let ret = BestF32Hits {
                     hits: nearest.iter().map(|(id, dist)| self.input_list.get(*id as usize).unwrap().fa.clone()).collect(),
-                    distance: nearest.iter().map(|(id, dist)| *dist).next().unwrap_or(max_distance + 1.0),
+                    distance: nearest.iter().map(|(id, dist)| *dist).next().unwrap_or(max_distance + 1),
                 };
 
                 self.exact_matches.insert(string_rep.clone(),ret.clone());
@@ -136,7 +144,7 @@ impl KnownList {
 #[derive(Clone,Debug,PartialEq)]
 pub struct BestF32Hits {
     pub hits: Vec<Vec<FastaBase>>,
-    pub distance: f32,
+    pub distance: u32,
 }
 
 
@@ -187,7 +195,7 @@ mod tests {
             assert_eq!(
                 known_lookup.correct_to_known_list(
                     &FastaBase::from_string(&line.unwrap()),
-                    &1.0,
+                    &1,
                 )
                     .hits
                     .len(),
@@ -197,7 +205,7 @@ mod tests {
         assert_eq!(
             known_lookup.correct_to_known_list(
                 &FastaBase::from_string(&"AAACCCAAGCAGATAA".to_string()),
-                &1.0,
+                &1,
             )
                 .hits
                 .len(),
@@ -207,7 +215,7 @@ mod tests {
         assert_eq!(
             known_lookup.correct_to_known_list(
                 &FastaBase::from_string(&"TAACCCAAGCAGATAT".to_string()),
-                &1.0,
+                &1,
             )
                 .hits
                 .len(),
@@ -216,21 +224,27 @@ mod tests {
     }
 
     #[test]
-    fn test_fastabase_edit_distance() {
+    fn test_fastastring_edit_distance() {
         let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
         let str2 = FastaString { fa: FastaBase::from_str("AAAAA") };
-        assert_eq!(str1.distance(&str2, &()), 0.0);
+        assert_eq!(str1.distance(&str2, &()), 0);
+        assert_eq!(str1.hamming_distance(&str2), 0);
 
         let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
         let str2 = FastaString { fa: FastaBase::from_str("AAAAT") };
-        assert_eq!(str1.distance(&str2, &()), 1.0);
+        assert_eq!(str1.distance(&str2, &()), 1);
+        assert_eq!(str1.hamming_distance(&str2), 1);
 
         let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
         let str2 = FastaString { fa: FastaBase::from_str("AAAA") };
-        assert_eq!(str1.distance(&str2, &()), 1.0);
+        assert_eq!(str1.distance(&str2, &()), 1);
+        //assert_eq!(str1.hamming_distance(&str2), 0);
 
         let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
         let str2 = FastaString { fa: FastaBase::from_str("TTTTT") };
-        assert_eq!(str1.distance(&str2, &()), 5.0);
+        assert_eq!(str1.distance(&str2, &()), 5);
+        assert_eq!(str1.hamming_distance(&str2), 5);
+
+
     }
 }
