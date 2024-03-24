@@ -2,14 +2,15 @@
 known_strand: true
 merge: "Concatenate"
 reads:
-  - !READ1
+  - !Read1
     orientation: Forward
-  - !READ2
+  - !Read2
     orientation: Forward
 references:
   shorter_reference:
     sequence: "ATCG"
-    target_sequences: ["ATCG"]
+    targets: ["ATCG"]
+    target_types: ["Cas9WT"]
     umi_configurations:
       cell_id:
         symbol: '*'

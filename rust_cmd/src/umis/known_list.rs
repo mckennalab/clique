@@ -5,8 +5,9 @@ use std::io::{BufRead, BufReader};
 use log::info;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use triple_accel::levenshtein_exp;
-use vpsearch::Tree;
+use triple_accel::levenshtein::{EditCosts, levenshtein_naive_k_with_opts};
+use triple_accel::{EditType, levenshtein_exp};
+use vpsearch::{Owned, Tree};
 use vpsearch::{BestCandidate, MetricSpace};
 use crate::alignment::fasta_bit_encoding::{reverse_complement, FastaBase};
 use crate::read_strategies::sequence_layout::{UMIConfiguration, UMIPadding};
@@ -16,20 +17,24 @@ use super::sequence_clustering::{vantage_point_string_graph, RadiusBasedNeighbor
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct FastaString {
     pub fa: Vec<FastaBase>,
+    pub fa_u8: Vec<u8>,
+    pub distance: u32,
+    pub count: usize,
 }
 
 impl FastaString {
     pub fn new(fa: Vec<FastaBase>) -> FastaString {
-        FastaString { fa }
+        FastaString { fa: fa.clone(), fa_u8: FastaBase::vec_u8(&fa), distance: u32::MAX, count: 0 }
     }
     pub fn from_string(st: &String) -> FastaString {
-        FastaString { fa: FastaBase::from_string(st) }
+        FastaString { fa: FastaBase::from_string(st), fa_u8: st.clone().into_bytes(), distance: u32::MAX, count: 0 }
     }
 
+    #[inline(always)]
     pub fn hamming_distance(&self, other: &FastaString) -> u32 {
-        assert_eq!(self.fa.len(),other.fa.len());
+        assert_eq!(self.fa.len(), other.fa.len());
         let mut diff = 0;
-        for (x,y) in self.fa.iter().zip(&other.fa) {
+        for (x, y) in self.fa.iter().zip(&other.fa) {
             if !x.identity(y) {
                 diff += 1;
             }
@@ -40,17 +45,48 @@ impl FastaString {
 
 impl MetricSpace for FastaString {
     type UserData = ();
+    //type UserData = HashMap<FastaString,bool>; // I dont want to deal with options this friday morning
     type Distance = u32;
 
-    fn distance(&self, other: &Self, _: &Self::UserData) -> Self::Distance {
-        levenshtein_exp(&&FastaBase::vec_u8(&self.fa), &FastaBase::vec_u8(&other.fa))
+    fn distance(&self, other: &Self, consider: &()) -> Self::Distance {
+        levenshtein_exp(&self.fa_u8, &other.fa_u8)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
     }
+    /*
+    fn distance(&self, other: &Self, consider: &Self::UserData) -> Self::Distance {
+        let st1 = "GAGTTTGGGAAA";
+        let st2 = "GGGTTTGGGAAA";
+        let str1 = "GAGTTTGGGAAA".as_bytes().to_vec();
+        let str2 = "GGGTTTGGGAAA".as_bytes().to_vec();
+        if self.fa_u8 == str1 && other.fa_u8 == str2 {
+            println!("here consider contains: {} contains {}",consider.contains_key(&FastaString::new(FastaBase::from_str(&st1))),consider.contains_key(&FastaString::new(FastaBase::from_str(&st2))));
+        }
+        if consider.is_empty() {
+            if self.fa_u8 == str1 && other.fa_u8 == str2 {
+                println!("empty");
+            }
+            //self.hamming_distance(other)
+            levenshtein_exp(&self.fa_u8, &other.fa_u8)
+        } else if consider.contains_key(other) {
+            if self.fa_u8 == str1 && other.fa_u8 == str2 {
+                println!("contains");
+            }
+            //self.hamming_distance(other) //
+            levenshtein_exp(&self.fa_u8, &other.fa_u8)
+        } else {
+            if self.fa_u8 == str1 && other.fa_u8 == str2 {
+                println!("fall");
+            }
+            self.fa.len().try_into().unwrap()
+        }
+    }
+     */
 }
 
 // #[derive(Serialize, Deserialize, Clone, )]
 pub struct KnownList {
     config: UMIConfiguration,
     vantage_tree: Tree<FastaString>,
+    //, (), Owned<HashMap<FastaString,bool>>>,
     exact_matches: HashMap<FastaString, BestF32Hits>,
     input_list: Vec<FastaString>,
 }
@@ -68,11 +104,12 @@ impl KnownList {
 
         let input_list = KnownList::create_input_set(filename, &rev_comp);
 
+        //let vantage_tree = vpsearch::Tree::new_with_user_data_owned(&input_list, HashMap::new());
         let vantage_tree = vpsearch::Tree::new(&input_list);
 
-        let mut exact_matches : HashMap< FastaString, BestF32Hits> =
+        let mut exact_matches: HashMap<FastaString, BestF32Hits> =
             input_list.iter().map(|le|
-                (le.clone(),BestF32Hits{ hits: vec![le.fa.clone()], distance: 0 })).collect();
+                (le.clone(), BestF32Hits { hits: vec![le.fa.clone()], distance: 0 })).collect();
 
         KnownList {
             config: umi_type.clone(),
@@ -82,7 +119,7 @@ impl KnownList {
         }
     }
 
-    pub fn vantage_tree(&self) -> &Tree<FastaString> {
+    pub fn vantage_tree(&self) -> &Tree<FastaString> { //}, (), Owned<HashMap<FastaString,bool>>> {
         &self.vantage_tree
     }
 
@@ -136,18 +173,17 @@ impl KnownList {
                     distance: nearest.iter().map(|(id, dist)| *dist).next().unwrap_or(max_distance + 1),
                 };
 
-                self.exact_matches.insert(string_rep.clone(),ret.clone());
+                self.exact_matches.insert(string_rep.clone(), ret.clone());
                 ret
             }
             Some(x) => {
                 x.clone()
             }
         }
-
     }
 }
 
-#[derive(Clone,Debug,PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BestF32Hits {
     pub hits: Vec<Vec<FastaBase>>,
     pub distance: u32,
@@ -161,6 +197,7 @@ mod tests {
         io::{self, BufRead, BufReader},
         path::Path,
     };
+    use std::collections::HashMap;
     use vpsearch::MetricSpace;
     use crate::{
         alignment::fasta_bit_encoding::FastaBase,
@@ -231,26 +268,37 @@ mod tests {
 
     #[test]
     fn test_fastastring_edit_distance() {
-        let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
-        let str2 = FastaString { fa: FastaBase::from_str("AAAAA") };
-        assert_eq!(str1.distance(&str2, &()), 0);
+        let str1 = FastaString::from_string(&"AAAAA".to_ascii_uppercase());
+        let str2 = FastaString::from_string(&"AAAAA".to_ascii_uppercase());
+        let consider = ();
+        assert_eq!(str1.distance(&str2, &consider), 0);//, &HashMap::new()), 0);
         assert_eq!(str1.hamming_distance(&str2), 0);
 
-        let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
-        let str2 = FastaString { fa: FastaBase::from_str("AAAAT") };
-        assert_eq!(str1.distance(&str2, &()), 1);
+        let str1 = FastaString::from_string(&"CTCCCCTTTCCC".to_ascii_uppercase());
+        let str2 = FastaString::from_string(&"CCCCCCTTTCCC".to_ascii_uppercase());
+        assert_eq!(str1.distance(&str2, &consider), 1);
         assert_eq!(str1.hamming_distance(&str2), 1);
 
-        let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
-        let str2 = FastaString { fa: FastaBase::from_str("AAAA") };
-        assert_eq!(str1.distance(&str2, &()), 1);
+        //CCCAAAGGGTTT CCCAAAGGGTTT
+        let str1 = FastaString::from_string(&"TGTTTTTTTAAA".to_ascii_uppercase());
+        let str2 = FastaString::from_string(&"TTTTTTTTTAAA".to_ascii_uppercase());
+        assert_eq!(str1.distance(&str2, &consider), 1);
+        assert_eq!(str2.distance(&str1, &consider), 1);
+        assert_eq!(str1.hamming_distance(&str2), 1);
+
+        let str1 = FastaString::from_string(&"AAAAA".to_ascii_uppercase());
+        let str2 = FastaString::from_string(&"AAAAT".to_ascii_uppercase());
+        assert_eq!(str1.distance(&str2, &consider), 1);
+        assert_eq!(str1.hamming_distance(&str2), 1);
+
+        let str1 = FastaString::from_string(&"AAAAA".to_ascii_uppercase());
+        let str2 = FastaString::from_string(&"AAAA".to_ascii_uppercase());
+        //assert_eq!(str1.distance(&str2, &consider), 1);
         //assert_eq!(str1.hamming_distance(&str2), 0);
 
-        let str1 = FastaString { fa: FastaBase::from_str("AAAAA") };
-        let str2 = FastaString { fa: FastaBase::from_str("TTTTT") };
-        assert_eq!(str1.distance(&str2, &()), 5);
+        let str1 = FastaString::from_string(&"AAAAA".to_ascii_uppercase());
+        let str2 = FastaString::from_string(&"TTTTT".to_ascii_uppercase());
+        assert_eq!(str1.distance(&str2, &consider), 5);
         assert_eq!(str1.hamming_distance(&str2), 5);
-
-
     }
 }

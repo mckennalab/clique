@@ -1,3 +1,6 @@
+#![feature(extern_types)]
+
+
 #![feature(ascii_char)]
 extern crate backtrace;
 extern crate bgzip;
@@ -33,7 +36,9 @@ extern crate rust_htslib;
 extern crate noodles_bam;
 #[feature(alignment)]
 extern crate noodles_util;
-extern crate bstr; 
+extern crate bstr;
+
+extern crate libc;
 
 use ::std::io::Result;
 use std::path::{Path, PathBuf};
@@ -72,6 +77,9 @@ mod umis {
     pub mod bronkerbosch;
     pub mod known_list;
     pub mod degenerate_ml;
+    pub mod vp_collapse;
+
+    pub mod starcode_tree;
 }
 mod calling {
 //    pub mod bam_file_to_cell_list;
@@ -99,6 +107,12 @@ mod reference {
     pub mod fasta_reference;
 }
 
+mod starcode {
+    pub mod trie;
+    pub mod starcode;
+
+
+}
 
 #[derive(Subcommand, Debug)]
 enum Cmd {

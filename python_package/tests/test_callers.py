@@ -9,7 +9,7 @@ import logging
 
 class TargetTypeTest(unittest.TestCase):
     def testTargetTypeCAS9DSB(self):
-        target_type = TargetType.CAS9DSB
+        target_type = TargetType.CAS9_DSB
 
         self.assertEqual(target_type.length(), 23)
         self.assertEqual(target_type.validate_sequence("ACGTAACGTAACGTAACGTACGG"), True)
@@ -17,14 +17,14 @@ class TargetTypeTest(unittest.TestCase):
         self.assertEqual(target_type.validate_sequence("CCGTAACGTAACGTAACGTACAT"), True)
 
     def testTargetTypeCAS9BaseEditors(self):
-        target_type = TargetType.CAS9ABE
+        target_type = TargetType.CAS9_ABE
 
         self.assertEqual(target_type.length(), 23)
         self.assertEqual(target_type.validate_sequence("ACGTAACGTAACGTAACGTACGG"), True)
         self.assertEqual(target_type.validate_sequence("ACGTAACGTAACGTAACGTACAT"), False)
         self.assertEqual(target_type.validate_sequence("CCGTAACGTAACGTAACGTACAT"), True)
 
-        target_type = TargetType.CAS9CBE
+        target_type = TargetType.CAS9_CBE
 
         self.assertEqual(target_type.length(), 23)
         self.assertEqual(target_type.validate_sequence("ACGTAACGTAACGTAACGTACGG"), True)
@@ -32,12 +32,20 @@ class TargetTypeTest(unittest.TestCase):
         self.assertEqual(target_type.validate_sequence("CCGTAACGTAACGTAACGTACAT"), True)
 
     def testTargetTypeCAS12A(self):
-        target_type = TargetType.CAS12ADSB
+        target_type = TargetType.CAS12A_DSB
 
         self.assertEqual(target_type.length(), 24)
         self.assertEqual(target_type.validate_sequence("TTTACGTAACGTAACGTAACGTAC"), True)
         self.assertEqual(target_type.validate_sequence("ACGTAACGTAACGTAACGTACAAT"), False)
         self.assertEqual(target_type.validate_sequence("TTAACGTAACGTAACGTACATAAA"), True)
+
+    def testTargetTypeCAS9_PAL_ABE(self):
+        target_type = TargetType.CAS9_PAL_ABE
+
+        self.assertEqual(target_type.length(), 26)
+        self.assertEqual(target_type.validate_sequence("CCAAAAAATTTTTAAAAATTTTTCGG"), True)
+        self.assertEqual(target_type.validate_sequence("CAAAAAAATTTTTAAAAATTTTTCGG"), False)
+        self.assertEqual(target_type.validate_sequence("CCAAAAAATTTTTAAAAATTTTTCGA"), False)
 
 class EventCigarTypeTest(unittest.TestCase):
     def testEventCigar(self):
@@ -101,19 +109,18 @@ class TargetTest(unittest.TestCase):
     def testTargetCreation(self):
 
         # some correct target creation steps
-        target = Target("ACGTAACGTAACGTAACGTACGG", TargetType.CAS9ABE)
-        target = Target("TTTACGTAACGTAACGTAACGTAC", TargetType.CAS12ADSB)
-        target = Target("ACGTAACGTAACGTAACGTACGG", TargetType.CAS9DSB)
+        target = Target("ACGTAACGTAACGTAACGTACGG", TargetType.CAS9_ABE)
+        target = Target("TTTACGTAACGTAACGTAACGTAC", TargetType.CAS12A_DSB)
+        target = Target("ACGTAACGTAACGTAACGTACGG", TargetType.CAS9_DSB)
 
         # assertions
         with self.assertRaises(TypeError):
-            Target("ACGTAACGTAACGTAACGTACAG", TargetType.CAS9ABE)
-            Target("ACGTAACGTAACGTAACGTACAG", TargetType.CAS12ADSB)
+            Target("ACGTAACGTAACGTAACGTACAG", TargetType.CAS9_ABE)
+            Target("ACGTAACGTAACGTAACGTACAG", TargetType.CAS12A_DSB)
 
 
 class ReverseCompTest(unittest.TestCase):
     def testReverseComp(self):
-
         # some correct target creation steps
         self.assertEqual(reverse_comp("AAAAaaaa"), "ttttTTTT")
         self.assertEqual(reverse_comp("AAAAzzzZ"), "NnnnTTTT")
@@ -121,7 +128,7 @@ class ReverseCompTest(unittest.TestCase):
 
 class EventCallerTest(unittest.TestCase):
     def testSimpleFindInReference(self):
-        target = Target("ACGTAACGTAACGTAACGTACGG",TargetType.CAS9DSB)
+        target = Target("ACGTAACGTAACGTAACGTACGG", TargetType.CAS9_DSB)
         eventCaller = EventCaller("ACGTAACGTAACGTAACGTACGGAAAACGTAACGTAACGTAACGTACGGAAA",[target])
         self.assertEqual(len(eventCaller.target_locations), 1,
                          msg='targets = {0}'.format(pprint(eventCaller.target_locations)))
@@ -130,8 +137,13 @@ class EventCallerTest(unittest.TestCase):
 
 
     def testMixFindInReference(self):
-        target1 = Target("ACGTAACGTAACGTAACGTACGG",TargetType.CAS9DSB)
-        target2 = Target("ACGTAACGTAACGTAACGTTAAAA", TargetType.CAS12ADSB)
+        target1 = Target("ACGTAACGTAACGTAACGTACGG", TargetType.CAS9_DSB)
+        target2 = Target("ACGTAACGTAACGTAACGTTAAAA", TargetType.CAS12A_DSB)
+
+        # ACGTAACGTAACGTAACGTACGGACGTAACGTAACGTAACGTTAAAAAAAACGTAACGTAACGTAACGTACGGAAACCGTACGTTACGTTACGTTACGT
+        # ACGTAACGTAACGTAACGTACGG                           ACGTAACGTAACGTAACGTACGG
+        #                        ACGTAACGTAACGTAACGTTAAAA
+        #          |10       |20       |30       |40       |50       |60
 
         eventCaller = EventCaller("ACGTAACGTAACGTAACGTACGGACGTAACGTAACGTAACGTTAAAAAAAACGTAACGTAACGTAACGTACGGAAACCGTACGTTACGTTACGTTACGT",[target1,target2])
         self.assertEqual(len(eventCaller.target_locations), 2,
@@ -145,11 +157,17 @@ class EventCallerTest(unittest.TestCase):
     def testOverlappingTargets(self):
         #      target 1                   target 2
         # [ 0 ---------------- 22][ 23 ---------------- 45]
+        #
+        # ACGTAACGTAACGTAACGTACGGACGTAACGTAACGTAACGTTAAAAAAAACGTAACGTAACGTAACGTACGGAAACCGTACGTTACGTTACGTTACGT
+        #          |10       |20       |30       |40        |50        |60       |70       |80
+        target1 = Target("ACGTAACGTAACGTAACGTACGG", TargetType.CAS9_DSB) # position 0, 50
+        target2 = Target("ACGTAACGTAACGTAACGTTAAAA", TargetType.CAS12A_DSB) # 23
 
-        target1 = Target("ACGTAACGTAACGTAACGTACGG",TargetType.CAS9DSB) # position 0, 50
-        target2 = Target("ACGTAACGTAACGTAACGTTAAAA", TargetType.CAS12ADSB) # 23
+
 
         eventCaller = EventCaller("ACGTAACGTAACGTAACGTACGGACGTAACGTAACGTAACGTTAAAAAAAACGTAACGTAACGTAACGTACGGAAACCGTACGTTACGTTACGTTACGT",[target1,target2])
         self.assertEqual(eventCaller.overlapping_targets(10,20), True)
         self.assertEqual(eventCaller.overlapping_targets(30,40), True)
-        self.assertEqual(eventCaller.overlapping_targets(45, 55), False)
+        self.assertEqual(eventCaller.overlapping_targets(47, 49), False)
+        self.assertEqual(eventCaller.overlapping_targets(45, 50), True)
+        self.assertEqual(eventCaller.overlapping_targets(75, 80), False)

@@ -8,13 +8,21 @@ class TenXSingleCellStats:
     def __init__(self, ten_x_out_directory, matching_list, read_coverage):
         self.ten_x_out_directory = ten_x_out_directory
         print("Loading data from " + self.ten_x_out_directory)
-        (self.filtered_list, self.path_to_unfiltered_list) = self.read10X_cell_lists()
+        (self.filtered_list, self.unfiltered_list) = self.read10X_cell_lists()
 
         print("reading mapping file of barcodes")
+        self.matching_list = {}
         self.map_feature_barcode(matching_list)
 
         if read_coverage:
             self.read_cell_coverage()
+
+    def get_passing_cell_ids(self,mapped_to_known_tag):
+        if mapped_to_known_tag:
+            return [self.matching_list[x] for x in self.filtered_list]
+        else:
+            return self.filtered_list
+
 
     def map_feature_barcode(self, matching_list_file):
         '''
@@ -32,15 +40,15 @@ class TenXSingleCellStats:
 
     def read10X_cell_lists(self):
         path_to_filtered_list = "filtered_feature_bc_matrix/barcodes.tsv.gz"
-        path_to_unfiltered_list = "raw_feature_bc_matrix/barcodes.tsv.gz"
+        unfiltered_list = "raw_feature_bc_matrix/barcodes.tsv.gz"
 
         filtered_list = read_10x_cell_list(os.path.join(self.ten_x_out_directory, path_to_filtered_list))
-        path_to_unfiltered_list = read_10x_cell_list(os.path.join(self.ten_x_out_directory, path_to_unfiltered_list))
+        unfiltered_list = read_10x_cell_list(os.path.join(self.ten_x_out_directory, unfiltered_list))
 
         # sanity check that the filtered list is fully a subset of the unfiltered list
-        assert len(set(filtered_list).intersection(path_to_unfiltered_list)) == len(filtered_list)
+        assert len(set(filtered_list).intersection(unfiltered_list)) == len(filtered_list)
 
-        return ((filtered_list, path_to_unfiltered_list))
+        return ((filtered_list, unfiltered_list))
 
     def read_cell_coverage(self):
         assert hasattr(self, 'filtered_list')
@@ -49,7 +57,7 @@ class TenXSingleCellStats:
 
         raw_coverage = mmread(os.path.join(self.ten_x_out_directory, matrix_market_file))
         self.unfiltered_cell_coverage = raw_coverage.sum(0)
-        assert self.unfiltered_cell_coverage.shape[1] == len(self.path_to_unfiltered_list)
+        assert self.unfiltered_cell_coverage.shape[1] == len(self.unfiltered_list)
 
     def coverage_by_lineage_intersection(selfself, lineage_cell_ids):
         '''returns a data frame with the coverage of cells that do and don't have a corresponding lineage barcode'''

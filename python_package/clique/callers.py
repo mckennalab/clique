@@ -7,32 +7,38 @@ import logging
 
 
 class TargetType(Enum):
-    CAS9DSB = 1
-    CAS12ADSB = 2
-    CAS9ABE = 3
-    CAS9CBE = 4
+    CAS9_DSB = 1 # Cas9 WT -- creates double stranded breaks (insertions and deletions)
+    CAS12A_DSB = 2 # Cas12a - double-stranded beaks
+    CAS9_ABE = 3 # Cas9 abe editing
+    CAS9_CBE = 4 # Cas9 cbe editing
+    CAS9_PAL_ABE = 5 # ABE palindrome editing
 
     def length(self):
-        if self is TargetType.CAS9DSB or self is TargetType.CAS9ABE or self is TargetType.CAS9CBE:
+        if self is TargetType.CAS9_DSB or self is TargetType.CAS9_ABE or self is TargetType.CAS9_CBE:
             return 23
-        elif self is TargetType.CAS12ADSB:
+        elif self is TargetType.CAS12A_DSB:
             return 24
+        elif self is TargetType.CAS9_PAL_ABE:
+            return 26
         else:
             raise NameError("Unknown type " + self.name)
 
     def editing_window(self, is_forward):
-        if self is TargetType.CAS9DSB:
+        if self is TargetType.CAS9_DSB:
             if is_forward:
                 return [14,19]
             else:
                 return [3,9]
-        if self is TargetType.CAS9ABE or self is TargetType.CAS9CBE:
 
+        elif self is TargetType.CAS9_PAL_ABE:
+            return [2, 19]
+
+        elif self is TargetType.CAS9_ABE or self is TargetType.CAS9_CBE:
             if is_forward:
                 return [2, 19]
             else:
                 return [3, 21]
-        elif self is TargetType.CAS12ADSB:
+        elif self is TargetType.CAS12A_DSB:
             if is_forward:
                 return [14, 23]
             else:
@@ -43,9 +49,11 @@ class TargetType(Enum):
     def validate_sequence(self,sequence):
         if self.length() != len(sequence):
             raise NameError("Invalid length for " + self.name)
-        if self == TargetType.CAS9DSB or self == TargetType.CAS9ABE or self == TargetType.CAS9CBE:
+        if self == TargetType.CAS9_DSB or self == TargetType.CAS9_ABE or self == TargetType.CAS9_CBE:
             return sequence[0:2].upper() == "CC" or sequence[-2:].upper() == "GG"
-        elif self == TargetType.CAS12ADSB:
+        elif self == TargetType.CAS9_PAL_ABE:
+            return sequence[0:2].upper() == "CC" and sequence[-2:].upper() == "GG" # require both ends
+        elif self == TargetType.CAS12A_DSB:
             return sequence[0:3].upper() == "TTT" or sequence[-3:].upper() == "AAA"
         else:
             raise NameError("Unknown type " + self.name)
@@ -189,6 +197,7 @@ class Event:
             if event_cigar == EventCigar.S:
                 return Event(event_cigar, type_length, int(tokens[1]), tokens[2])
             raise TypeError("unable to parse a INS or SCAR from a length 3 event string: " + event_string)
+
         if len(tokens) == 2:
             type_char = tokens[0][-1]
             type_length = int(tokens[0][0:len(tokens[0]) - 1])
@@ -264,7 +273,7 @@ class EventCaller:
         self.target_locations = target_positions
 
 
-    def call_events(self, clique_read):
+    def call_events(self, clique_read: ):
         """
         Creates an array of numerical representations of the differences between the reference
         and read sequences, based on a given CIGAR string.
@@ -345,3 +354,5 @@ class EventCaller:
                     (event_start <= target_editing_start and event_stop >= target_editing_stop):
                     return True
         return False
+
+
