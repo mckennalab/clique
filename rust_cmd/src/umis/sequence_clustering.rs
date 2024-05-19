@@ -1,19 +1,19 @@
-use std::cmp::Ordering::Less;
+
 use std::collections::{HashMap, HashSet};
 
 use petgraph::algo::{tarjan_scc};
 use petgraph::prelude::*;
-use rand::{Rng};
+
 use rand::prelude::*;
 
 use indicatif::ProgressBar;
 use vpsearch::{BestCandidate, MetricSpace};
 use crate::alignment::fasta_bit_encoding::FastaBase;
 
-use crate::alignment::scoring_functions::AffineScoring;
-use crate::alignment_manager::align_two_strings;
-use crate::umis::bronkerbosch::BronKerbosch;
-use crate::umis::known_list::KnownList;
+
+
+
+
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,
@@ -263,15 +263,10 @@ pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>>
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io;
-    use std::io::{BufRead, BufReader};
-    use std::path::Path;
+
     use std::time::Instant;
-    use actix::fut::result;
     use rand::distributions::{Slice, Uniform};
     use triple_accel::levenshtein_exp;
-    use crate::read_strategies::sequence_layout::{UMIConfiguration, UMISortType};
     use crate::utils::base_utils::edit_distance;
     use super::*;
 

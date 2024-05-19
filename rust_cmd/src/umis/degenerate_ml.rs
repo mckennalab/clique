@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::hash::BuildHasherDefault;
 use std::path::PathBuf;
-use std::thread::current;
+
 use itertools::enumerate;
 use num_traits::Bounded;
 use rustc_hash::{FxHasher, FxHashMap};
@@ -11,7 +11,7 @@ use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
 use crate::umis::known_list::FastaString;
-use crate::umis::sequence_clustering::{get_connected_components, InputList, RadiusBasedNeighborhood, vantage_point_string_graph};
+use crate::umis::sequence_clustering::{get_connected_components, InputList, vantage_point_string_graph};
 
 pub struct DegenerateBuffer {
     buffer: VecDeque<SortingReadSetContainer>,
@@ -105,7 +105,7 @@ impl DegenerateBuffer {
                 max_dist: self.tag.max_distance.clone(),
             };
 
-            // TODO enable this for a future improvement -- spliting connected components -- but a lot of work needs to go into validation here
+            // TODO enable this for a future improvement -- splitting connected components -- but a lot of work needs to go into validation here
             /*let mut minigraph = input_list_to_graph(&minilist, string_distance, false);
 
             let is_subgroups = split_subgroup(&mut minigraph);
@@ -280,7 +280,7 @@ impl ListCorrector for MLCorrector {
 
 
     fn correct_list(&self, counts: &FxHashMap<String, usize>) -> HashMap<Vec<u8>, Vec<u8>, BuildHasherDefault<FxHasher>> {
-        let keys: Vec<FastaString> = counts.iter().enumerate().map(|(index,(key, value))| {
+        let keys: Vec<FastaString> = counts.iter().enumerate().map(|(_index,(key, _value))| {
             FastaString::new(FastaBase::from_str(key.as_str()))
         }).collect();
 
@@ -292,7 +292,7 @@ impl ListCorrector for MLCorrector {
         let vantage_tree = Tree::new(&keys);
         let mut current_mapping: FxHashMap<Vec<u8>, Vec<u8>> = HashMap::default();
 
-        for (index, (fb_string, count)) in enumerate(count_vec) {
+        for (index, (fb_string, _count)) in enumerate(count_vec) {
             let vec_u8_version = fb_string.clone().into_bytes();
             let fasta_string = FastaString::new(FastaBase::from_string(fb_string));
             if index == 0 {
@@ -314,14 +314,14 @@ impl ListCorrector for MLCorrector {
                         let strin = keys.get(ht).unwrap().clone();
                         let is_in = incorporated_list.contains_key(&strin);
                         (ht,is_in, dist)
-                    }).filter(|(p,x, dist)| *x && *dist <= self.max_lev_distance).collect();
+                    }).filter(|(_p,x, dist)| *x && *dist <= self.max_lev_distance).collect();
 
                     match first_best.len() {
                         x if x == 0 => {
                             current_mapping.insert(vec_u8_version.clone(), vec_u8_version.clone());
                             incorporated_list.insert(fasta_string, true);
                         }
-                        x => {
+                        _x => {
                             let best = keys.get(first_best.iter().next().unwrap().0).unwrap();
 
                             current_mapping.insert(vec_u8_version.clone(), FastaBase::vec_u8(&best.fa));

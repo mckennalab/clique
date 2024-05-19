@@ -1,25 +1,25 @@
 use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::extractor::{
-    extract_tag_sequences, extract_tagged_sequences, get_sorting_order, recover_align_sequences,
+    extract_tag_sequences, extract_tagged_sequences, recover_align_sequences,
     stretch_sequence_to_alignment,
 };
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::{SequenceLayout, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
 use crate::umis::known_list::KnownList;
-use crate::umis::sequence_clustering::{get_connected_components, vantage_point_string_graph, InputList,};
+
 use crate::InstanceLivedTempDir;
 use actix::ActorStreamExt;
 use indicatif::ProgressBar;
-use itertools::Itertools;
+
 use noodles_bam as bam;
 use noodles_bam::bai;
 use noodles_sam::Header;
-use rustc_hash::FxHashMap;
+
 use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap};
 use std::path::PathBuf;
 
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
@@ -57,13 +57,13 @@ pub fn collapse(
 
     let mut writer = BamFileAlignmentWriter::new(&PathBuf::from(final_output), &rm);
 
-    let mut levels = 0;
+    let _levels = 0;
     let mut read_count = 0;
 
     // for each reference, we fetch aligned reads, pull the sorting tags, and output the collapsed reads to a BAM file
-    rm.references.iter().for_each(|(id, reference)| {
+    rm.references.iter().for_each(|(_id, reference)| {
         let ref_name = String::from_utf8(reference.name.clone()).unwrap();
-        let mut sorted_reads_option: Option<ShardReader<SortingReadSetContainer>> =
+        let sorted_reads_option: Option<ShardReader<SortingReadSetContainer>> =
             sort_reads_from_bam_file(bam_file, &ref_name, &rm, read_structure, temp_directory);
 
         let mut levels = 0;
@@ -148,7 +148,7 @@ impl ReferenceLookupTable {
             .reference_sequences()
             .iter()
             .enumerate()
-            .for_each(|(index, (bstr_name, ref_map))| {
+            .for_each(|(index, (bstr_name, _ref_map))| {
                 let string_name = bstr_name.to_string();
 
                 // we need to have this reference sequence stored in our database as well
@@ -580,7 +580,7 @@ pub fn sort_known_level(
         "Loading the known lookup table for tag {}, this can take some time",
         tag.symbol
     );
-    let mut known_lookup = known_lookup_obj
+    let known_lookup = known_lookup_obj
         .get_mut(&tag.file.as_ref().unwrap().clone())
         .expect(
             format!(
@@ -670,6 +670,7 @@ pub fn sort_known_level(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::utils::read_utils::fake_reads;

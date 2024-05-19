@@ -13,17 +13,17 @@ use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_compl
 use crate::alignment::scoring_functions::*;
 
 use noodles_sam;
-use noodles_sam::alignment::record::cigar;
-use noodles_sam::alignment;
+
+
 use noodles_sam::alignment::RecordBuf;
-use noodles_sam::alignment::Record;
+
 use noodles_sam::alignment::record::data::field::Tag;
 use noodles_sam::alignment::record_buf::data::field::Value;
 use noodles_sam::alignment::record_buf::{Cigar, Data, Name, QualityScores};
 use crate::consensus::consensus_builders::get_reference_alignment_rate;
-use crate::extractor::{extract_tagged_sequences, stretch_sequence_to_alignment};
+
 use noodles_sam::alignment::record::cigar::op::Kind;
-use noodles_sam::record::data::field::value::base_modifications::group::UnmodifiedBase::A;
+
 use crate::alignment_manager::simplify_cigar_string;
 use noodles_sam::alignment::record::cigar::Op as Op;
 use noodles_sam::alignment::record_buf::Cigar as CigarBuf;

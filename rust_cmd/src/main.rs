@@ -108,8 +108,8 @@ mod reference {
 }
 
 mod starcode {
-    pub mod trie;
-    pub mod starcode;
+    //pub mod trie;
+    //pub mod starcode;
 
 
 }
@@ -210,12 +210,12 @@ fn main() {
         Cmd::Collapse {
             outbam,
             read_structure,
-            threads,
+            threads: _,
             temp_dir: _,
             inbam,
-            find_inversions,
-            fast_reference_lookup,
-            max_deletion,
+            find_inversions: _,
+            fast_reference_lookup: _,
+            max_deletion: _,
 
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);

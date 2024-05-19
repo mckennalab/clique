@@ -474,7 +474,7 @@ impl BamCallingParser<'_, '_, '_> {
     }
 
     pub fn target_overlaps(reference_targets: &Vec<(TargetRange, String)>, full_alignment_tokens: &Vec<FullAlignment>) -> Vec<String> {
-        let target_overlap = reference_targets.iter().map(|(target_pos, name)| {
+        let target_overlap = reference_targets.iter().map(|(target_pos, _name)| {
             full_alignment_tokens.iter().filter(|tk| {
                 let range = tk.to_range();
                 match tk {
@@ -522,7 +522,7 @@ impl BamCallingParser<'_, '_, '_> {
 
                     // TODO output extractor tags
                     let extractor_tokens = self.extraction_tags(&record);
-                    let token_output : Vec<(String,ExtractorPair)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id).unwrap().clone())).into_iter().collect::<Vec<(String,ExtractorPair)>>();
+                    let _token_output : Vec<(String,ExtractorPair)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id).unwrap().clone())).into_iter().collect::<Vec<(String,ExtractorPair)>>();
 
                     let cigar_tokens = extract_read_cigar_elements(&(alignment_start as u32), &reference_sequence, &record.seq().as_bytes(), &record.cigar());
 

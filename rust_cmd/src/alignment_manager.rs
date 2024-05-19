@@ -3,17 +3,17 @@ use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::reference::fasta_reference::ReferenceManager;
 use bstr::BString;
-use ndarray::Ix3;
-use noodles_bam::io::Writer;
+
+
 use noodles_sam::alignment::record::QualityScores;
 use noodles_sam::header::record::value::map::ReferenceSequence;
 use noodles_sam::header::record::value::Map;
 use noodles_sam::Header;
 use noodles_util::alignment;
 use std::collections::HashMap;
-use std::f64::consts::E;
-use std::fs::File;
-use std::io::{self, BufWriter};
+
+
+
 use std::io::Result;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -53,7 +53,7 @@ impl<'a> BamFileAlignmentWriter<'a> {
         reference_manager: &ReferenceManager<'a, 'a, 'a>,
     ) -> BamFileAlignmentWriter<'a> {
 
-        let reference_sequences : IndexMap<BString,Map<ReferenceSequence>> = reference_manager.references.iter().map(|(k, v)| {
+        let reference_sequences : IndexMap<BString,Map<ReferenceSequence>> = reference_manager.references.iter().map(|(_k, v)| {
             (BString::from(v.name.clone()), 
             Map::<ReferenceSequence>::new(NonZeroUsize::try_from(v.sequence_u8.len()).unwrap()))
         }).into_iter().collect();
@@ -85,7 +85,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
     fn write_read(
         &mut self,
         read_set_container: &SortingReadSetContainer,
-        additional_tags: &HashMap<(u8, u8), String>,
+        _additional_tags: &HashMap<(u8, u8), String>,
     ) -> Result<()> {
         let writer = Arc::clone(&self.underlying_bam_file);
         
@@ -104,7 +104,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
         let mut extra_annotations = HashMap::new();
         read_set_container.ordered_sorting_keys.iter().for_each(|(key, value)| {
             extra_annotations.insert(
-                ([b'e', *key as u8]),
+                [b'e', *key as u8],
                 FastaBase::string(value),
             );
         });
@@ -118,7 +118,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
         
         match output
             .write_record(&self.header, &samrecord) {
-                Ok(x) => {},
+                Ok(_x) => {},
                 Err(e) => {
                     println!("Sequence: {:?}", samrecord);
                     panic!("Unable to write record to bam file; error {}", e);
@@ -136,7 +136,7 @@ pub fn align_two_strings(
     local: bool,
     ref_name: &String,
     read_name: &String,
-    reference_manager: Option<&ReferenceManager>,
+    _reference_manager: Option<&ReferenceManager>,
 ) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(
         reference_sequence.len() + 1,

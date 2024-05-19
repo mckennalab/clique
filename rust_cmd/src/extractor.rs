@@ -276,7 +276,7 @@ pub fn extract_tag_sequences(
         reference_tags
             .umi_configurations
             .iter()
-            .map(|(umi_name, umi_obj)| {
+            .map(|(_umi_name, umi_obj)| {
                 let ets_hit = ets.get(&umi_obj.symbol.to_string().as_bytes()[0]);
                 match ets_hit {
                     Some(e) => {

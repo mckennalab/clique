@@ -3,16 +3,16 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 use log::info;
-use rustc_hash::FxHashMap;
+
 use serde::{Deserialize, Serialize};
-use triple_accel::levenshtein::{EditCosts, levenshtein_naive_k_with_opts};
-use triple_accel::{EditType, levenshtein_exp};
-use vpsearch::{Owned, Tree};
+
+use triple_accel::{levenshtein_exp};
+use vpsearch::{Tree};
 use vpsearch::{BestCandidate, MetricSpace};
 use crate::alignment::fasta_bit_encoding::{reverse_complement, FastaBase};
-use crate::read_strategies::sequence_layout::{UMIConfiguration, UMIPadding};
+use crate::read_strategies::sequence_layout::{UMIConfiguration};
 
-use super::sequence_clustering::{vantage_point_string_graph, RadiusBasedNeighborhood};
+use super::sequence_clustering::{RadiusBasedNeighborhood};
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct FastaString {
@@ -48,7 +48,7 @@ impl MetricSpace for FastaString {
     //type UserData = HashMap<FastaString,bool>; // I dont want to deal with options this friday morning
     type Distance = u32;
 
-    fn distance(&self, other: &Self, consider: &()) -> Self::Distance {
+    fn distance(&self, other: &Self, _consider: &()) -> Self::Distance {
         levenshtein_exp(&self.fa_u8, &other.fa_u8)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
     }
     /*
@@ -92,7 +92,7 @@ pub struct KnownList {
 }
 
 impl KnownList {
-    pub fn new(umi_type: &UMIConfiguration, starting_nmer_size: &usize) -> KnownList {
+    pub fn new(umi_type: &UMIConfiguration, _starting_nmer_size: &usize) -> KnownList {
         let filename = umi_type.file.clone().unwrap();
         let filename = filename.as_str();
 
@@ -107,7 +107,7 @@ impl KnownList {
         //let vantage_tree = vpsearch::Tree::new_with_user_data_owned(&input_list, HashMap::new());
         let vantage_tree = vpsearch::Tree::new(&input_list);
 
-        let mut exact_matches: HashMap<FastaString, BestF32Hits> =
+        let exact_matches: HashMap<FastaString, BestF32Hits> =
             input_list.iter().map(|le|
                 (le.clone(), BestF32Hits { hits: vec![le.fa.clone()], distance: 0 })).collect();
 
@@ -169,8 +169,8 @@ impl KnownList {
                 );
 
                 let ret = BestF32Hits {
-                    hits: nearest.iter().map(|(id, dist)| self.input_list.get(*id as usize).unwrap().fa.clone()).collect(),
-                    distance: nearest.iter().map(|(id, dist)| *dist).next().unwrap_or(max_distance + 1),
+                    hits: nearest.iter().map(|(id, _dist)| self.input_list.get(*id as usize).unwrap().fa.clone()).collect(),
+                    distance: nearest.iter().map(|(_id, dist)| *dist).next().unwrap_or(max_distance + 1),
                 };
 
                 self.exact_matches.insert(string_rep.clone(), ret.clone());

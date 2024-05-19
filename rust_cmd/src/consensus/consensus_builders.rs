@@ -19,7 +19,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};
-use indicatif::style::ProgressTracker;
+
 
 pub fn write_consensus_reads(
     reader: &ShardReader<SortingReadSetContainer>,
@@ -45,7 +45,7 @@ pub fn write_consensus_reads(
         .unwrap();
 
     pool.scope(|s| {
-        let mut handled_reads = 0;
+        let _handled_reads = 0;
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
             let x = x.unwrap();
             assert_eq!(x.ordered_sorting_keys.len(), levels);
@@ -54,7 +54,7 @@ pub fn write_consensus_reads(
             {
                 let my_buffered_reads = buffered_reads.clone();
                 buffered_reads = VecDeque::new();
-                s.spawn( |y| {
+                s.spawn( |_y| {
                     let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
                         (reference_manager.longest_ref + 1) * 2,
                         (reference_manager.longest_ref + 1) * 2,
@@ -120,7 +120,7 @@ fn create_sam_read(
     maximum_reads_before_downsampling: &usize,
     buffered_reads: &VecDeque<SortingReadSetContainer>,
     my_aff_score: &AffineScoring,
-    mut alignment_mat: &mut Alignment<Ix3>,
+    _alignment_mat: &mut Alignment<Ix3>,
 ) -> SamReadyOutput {
     let mut added_tags = HashMap::new();
     added_tags.insert((b'r', b'c'), buffered_reads.len().to_string());
