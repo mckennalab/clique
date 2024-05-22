@@ -461,6 +461,7 @@ pub fn sort_degenerate_level(
     iteration: &usize,
     read_count: &usize,
 ) -> (usize, ShardReader<SortingReadSetContainer>) {
+
     info!("Sorting degenerate level {}", tag.symbol);
 
     let mut all_read_count: usize = 0;
