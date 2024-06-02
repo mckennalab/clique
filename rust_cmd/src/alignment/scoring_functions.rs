@@ -72,7 +72,7 @@ pub struct AffineScoring {
 
 impl AffineScoring {
     /// this is the default, matching DNAFull from Emboss' WATER
-    pub fn default_DNA() -> AffineScoring {
+    pub fn default_dna() -> AffineScoring {
         AffineScoring {
             match_score: 5.0,
             mismatch_score: -4.0,
@@ -84,7 +84,7 @@ impl AffineScoring {
     }
 
     /// inverted for a distance metric
-    pub fn distance_DNA() -> AffineScoring {
+    pub fn distance_dna() -> AffineScoring {
         AffineScoring {
             match_score: 0.0,
             mismatch_score: -1.0,
@@ -123,6 +123,7 @@ pub struct InversionScoring {
 
 impl InversionScoring {
 
+    #[allow(dead_code)]
     pub fn default() -> InversionScoring {
         InversionScoring {
             match_score: 9.0,

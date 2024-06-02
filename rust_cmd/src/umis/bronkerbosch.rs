@@ -8,11 +8,13 @@ use petgraph::Undirected;
 ///
 /// connected is a symmetrical bolean matrix, N the number of nodes in the graph,
 /// values of the diagonal should be true.
+#[allow(dead_code)]
 pub struct BronKerbosch<N: NodeTrait, E> {
     pub graph: GraphMap<N, E, Undirected>,
     pub max_cliques: Vec<HashSet<N>>,
 }
 
+#[allow(dead_code)]
 impl<N: NodeTrait, E> BronKerbosch<N, E> {
     pub fn new(graphmap: GraphMap<N, E, Undirected>) -> BronKerbosch<N, E> {
         BronKerbosch {

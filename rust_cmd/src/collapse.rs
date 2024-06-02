@@ -10,7 +10,6 @@ use crate::reference::fasta_reference::ReferenceManager;
 use crate::umis::known_list::KnownList;
 
 use crate::InstanceLivedTempDir;
-use actix::ActorStreamExt;
 use indicatif::ProgressBar;
 
 use noodles_bam as bam;
@@ -115,16 +114,19 @@ pub fn collapse(
     });
 }
 
+#[allow(dead_code)]
 struct JointLookup {
     bam_index: usize,
     reference_manager_index: usize,
 }
 
+#[allow(dead_code)]
 struct NamedRef {
     name: String,
     sequence: String,
 }
 
+#[allow(dead_code)]
 struct ReferenceLookupTable {
     bam_reference_id_to_name: HashMap<usize, String>,
     bam_reference_name_to_id: HashMap<String, usize>,
@@ -134,6 +136,7 @@ struct ReferenceLookupTable {
     unified_name_to_seq: HashMap<String, String>,
 }
 
+#[allow(dead_code)]
 impl ReferenceLookupTable {
     pub fn new(reference_manager: &ReferenceManager, bam_header: &Header) -> ReferenceLookupTable {
         let mut bam_reference_id_to_name = HashMap::new();
@@ -143,7 +146,7 @@ impl ReferenceLookupTable {
         let mut name_to_joint_index = HashMap::new();
         let mut unified_name_to_seq = HashMap::new();
 
-        // TODO: the header uses an in-order map for storing reference sequences, though this
+        // TODO: the header uses an in-order map for storing reference sequences, think through this
         bam_header
             .reference_sequences()
             .iter()
@@ -560,7 +563,14 @@ fn close_and_write_bin(
     let ret = buffer.len();
     for mut y in buffer {
         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
-        let corrected = correction.get(&FastaBase::vec_u8(&key_value.1)).unwrap();
+        let corrected = match correction.get(&FastaBase::vec_u8_strip_gaps(&key_value.1)) {
+            None => {
+                panic!("Unable to find match for key {} in corrected values", FastaBase::string(&key_value.1));
+            },
+            Some(x) => {
+                x
+            },
+        };
         y.ordered_sorting_keys
             .push((key_value.0, FastaBase::from_vec_u8(corrected)));
         sender.send(y).unwrap();
@@ -721,6 +731,7 @@ mod tests {
     #[test]
     fn test_consensus_real_world() {
         let reads = fake_reads(10, 1);
+
         let read_seq = reads
             .get(0)
             .unwrap()
@@ -729,6 +740,7 @@ mod tests {
             .iter()
             .map(|x| FastaBase::from(x.clone()))
             .collect::<Vec<FastaBase>>();
+
         let fake_read = AlignmentResult {
             reference_name: "".to_string(),
             read_name: "".to_string(),
@@ -753,7 +765,7 @@ mod tests {
                 length: 0,
                 order: 0,
                 pad: None,
-                max_distance: 1,
+                max_distance: 2,
                 maximum_subsequences: None,
             },
         );
@@ -780,9 +792,9 @@ mod tests {
         assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);
 
         tbb.push(st1);
-        tbb.push(st2.clone());
-        tbb.push(st2.clone());
-
+        for _ in 0..10 {
+            tbb.push(st2.clone());
+        }
         let (_buffer, correction) = tbb.close();
 
         correction.iter().for_each(|x| {

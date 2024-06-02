@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use triple_accel::{levenshtein_exp};
 use vpsearch::{Tree};
-use vpsearch::{BestCandidate, MetricSpace};
+use vpsearch::{MetricSpace};
 use crate::alignment::fasta_bit_encoding::{reverse_complement, FastaBase};
 use crate::read_strategies::sequence_layout::{UMIConfiguration};
 
@@ -26,21 +26,6 @@ impl FastaString {
     pub fn new(fa: Vec<FastaBase>) -> FastaString {
         FastaString { fa: fa.clone(), fa_u8: FastaBase::vec_u8(&fa), distance: u32::MAX, count: 0 }
     }
-    pub fn from_string(st: &String) -> FastaString {
-        FastaString { fa: FastaBase::from_string(st), fa_u8: st.clone().into_bytes(), distance: u32::MAX, count: 0 }
-    }
-
-    #[inline(always)]
-    pub fn hamming_distance(&self, other: &FastaString) -> u32 {
-        assert_eq!(self.fa.len(), other.fa.len());
-        let mut diff = 0;
-        for (x, y) in self.fa.iter().zip(&other.fa) {
-            if !x.identity(y) {
-                diff += 1;
-            }
-        }
-        diff
-    }
 }
 
 impl MetricSpace for FastaString {
@@ -51,40 +36,10 @@ impl MetricSpace for FastaString {
     fn distance(&self, other: &Self, _consider: &()) -> Self::Distance {
         levenshtein_exp(&self.fa_u8, &other.fa_u8)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
     }
-    /*
-    fn distance(&self, other: &Self, consider: &Self::UserData) -> Self::Distance {
-        let st1 = "GAGTTTGGGAAA";
-        let st2 = "GGGTTTGGGAAA";
-        let str1 = "GAGTTTGGGAAA".as_bytes().to_vec();
-        let str2 = "GGGTTTGGGAAA".as_bytes().to_vec();
-        if self.fa_u8 == str1 && other.fa_u8 == str2 {
-            println!("here consider contains: {} contains {}",consider.contains_key(&FastaString::new(FastaBase::from_str(&st1))),consider.contains_key(&FastaString::new(FastaBase::from_str(&st2))));
-        }
-        if consider.is_empty() {
-            if self.fa_u8 == str1 && other.fa_u8 == str2 {
-                println!("empty");
-            }
-            //self.hamming_distance(other)
-            levenshtein_exp(&self.fa_u8, &other.fa_u8)
-        } else if consider.contains_key(other) {
-            if self.fa_u8 == str1 && other.fa_u8 == str2 {
-                println!("contains");
-            }
-            //self.hamming_distance(other) //
-            levenshtein_exp(&self.fa_u8, &other.fa_u8)
-        } else {
-            if self.fa_u8 == str1 && other.fa_u8 == str2 {
-                println!("fall");
-            }
-            self.fa.len().try_into().unwrap()
-        }
-    }
-     */
 }
 
 // #[derive(Serialize, Deserialize, Clone, )]
 pub struct KnownList {
-    config: UMIConfiguration,
     vantage_tree: Tree<FastaString>,
     //, (), Owned<HashMap<FastaString,bool>>>,
     exact_matches: HashMap<FastaString, BestF32Hits>,
@@ -112,15 +67,10 @@ impl KnownList {
                 (le.clone(), BestF32Hits { hits: vec![le.fa.clone()], distance: 0 })).collect();
 
         KnownList {
-            config: umi_type.clone(),
             vantage_tree,
             exact_matches,
             input_list,
         }
-    }
-
-    pub fn vantage_tree(&self) -> &Tree<FastaString> { //}, (), Owned<HashMap<FastaString,bool>>> {
-        &self.vantage_tree
     }
 
     pub fn create_input_set(filename: &str, reverse_comp: &bool) -> Vec<FastaString> {
@@ -134,23 +84,6 @@ impl KnownList {
             input_set.push(FastaString::new(FastaBase::from_string(&bytes)));
         }
         input_set
-    }
-
-    pub fn get_min_max_length(filename: &str) -> (usize, usize) {
-        let raw_reader = BufReader::new(File::open(filename).unwrap());
-        let mut min = usize::MAX;
-        let mut max = usize::MIN;
-        for line in raw_reader.lines() {
-            let bytes = line.unwrap();
-            let len = bytes.len();
-            if len < min {
-                min = len;
-            }
-            if len > max {
-                max = len;
-            }
-        }
-        (min, max)
     }
 
     pub fn correct_to_known_list(
@@ -265,7 +198,7 @@ mod tests {
             1
         );
     }
-
+/*
     #[test]
     fn test_fastastring_edit_distance() {
         let str1 = FastaString::from_string(&"AAAAA".to_ascii_uppercase());
@@ -300,5 +233,5 @@ mod tests {
         let str2 = FastaString::from_string(&"TTTTT".to_ascii_uppercase());
         assert_eq!(str1.distance(&str2, &consider), 5);
         assert_eq!(str1.hamming_distance(&str2), 5);
-    }
+    }*/
 }

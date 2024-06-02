@@ -1,11 +1,7 @@
 
 use std::collections::{HashMap, HashSet};
-
 use petgraph::algo::{tarjan_scc};
 use petgraph::prelude::*;
-
-use rand::prelude::*;
-
 use indicatif::ProgressBar;
 use vpsearch::{BestCandidate, MetricSpace};
 use crate::alignment::fasta_bit_encoding::FastaBase;
@@ -269,6 +265,8 @@ mod tests {
     use triple_accel::levenshtein_exp;
     use crate::utils::base_utils::edit_distance;
     use super::*;
+    use crate::rand::distributions::Distribution;
+    use crate::rand::Rng;
 
     #[test]
     fn string_distance_test() {

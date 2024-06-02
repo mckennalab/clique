@@ -34,10 +34,9 @@ extern crate sift4;
 extern crate phf;
 extern crate rust_htslib;
 extern crate noodles_bam;
-#[feature(alignment)]
 extern crate noodles_util;
 extern crate bstr;
-
+extern crate rust_starcode;
 extern crate libc;
 
 use ::std::io::Result;
@@ -77,7 +76,6 @@ mod umis {
     pub mod bronkerbosch;
     pub mod known_list;
     pub mod degenerate_ml;
-    pub mod vp_collapse;
 
     pub mod starcode_tree;
 }

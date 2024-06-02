@@ -9,6 +9,7 @@ use crate::read_strategies::read_set::ReadSetContainer;
 use crate::read_strategies::sequence_layout::SequenceLayout;
 
 
+#[allow(dead_code)]
 pub fn reference_sequences_to_structs(reference_sequences: Vec<Record>, kmer_size: usize) -> Vec<Reference<'static, 'static>> {
     let mut references = Vec::new();
 
@@ -25,6 +26,7 @@ pub fn reference_sequences_to_structs(reference_sequences: Vec<Record>, kmer_siz
     references
 }
 
+#[allow(dead_code)]
 pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> Vec<Reference> {
     let reader = Reader::from_file(reference_file).unwrap();
     let fasta_entries: Vec<Record> = reader.records().map(|f| f.unwrap()).collect();
@@ -85,6 +87,7 @@ pub struct Reference<'s, 't> {
 
  */
 
+#[allow(dead_code)]
 impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
     pub fn from_yaml_input(yaml_input: &SequenceLayout, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {

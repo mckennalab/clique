@@ -28,6 +28,8 @@ pub enum ExtractorTag {
 }
 
 impl ExtractorTag {
+
+    #[allow(dead_code)]
     pub fn to_id_value(&self) -> usize {
         match self {
             ExtractorTag::E0 => {0}
@@ -380,11 +382,13 @@ impl TargetRange {
         }
     }
 
+    #[allow(dead_code)]
     pub fn intersect(&self, other: &TargetRange) -> bool {
         self.intersect_position(other.start, other.end)
     }
 }
 
+#[allow(dead_code)]
 struct TargetPositions {
     reference: String,
     targets: Vec<String>,
@@ -416,6 +420,7 @@ impl TargetPositions {
     }
 }
 
+#[allow(dead_code)]
 pub struct BamCallingParser<'a, 's, 't> {
     sequence_layout: SequenceLayout,
     reference_manager: ReferenceManager<'a, 's, 't>,
@@ -451,7 +456,7 @@ impl BamCallingParser<'_, '_, '_> {
         }
     }
 
-    pub fn extraction_tags(&mut self, bam_entry: &Record) -> Vec<ExtractorPair> {
+    fn extraction_tags(&mut self, bam_entry: &Record) -> Vec<ExtractorPair> {
         let mut extractors = Vec::new();
 
         bam_entry.aux_iter().for_each(|c| {
@@ -473,7 +478,7 @@ impl BamCallingParser<'_, '_, '_> {
         extractors
     }
 
-    pub fn target_overlaps(reference_targets: &Vec<(TargetRange, String)>, full_alignment_tokens: &Vec<FullAlignment>) -> Vec<String> {
+    fn target_overlaps(reference_targets: &Vec<(TargetRange, String)>, full_alignment_tokens: &Vec<FullAlignment>) -> Vec<String> {
         let target_overlap = reference_targets.iter().map(|(target_pos, _name)| {
             full_alignment_tokens.iter().filter(|tk| {
                 let range = tk.to_range();

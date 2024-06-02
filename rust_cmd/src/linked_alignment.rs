@@ -9,6 +9,7 @@ use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::reference::fasta_reference::SuffixTableLookup;
 
+#[allow(dead_code)]
 /// find a read's orientation using the greatest total number of matching bases
 ///
 /// # Arguments
@@ -28,6 +29,7 @@ pub fn orient_by_longest_segment(search_string: &Vec<FastaBase>, reference: &Vec
 }
 
 
+#[allow(dead_code)]
 /// create an alignment string, with matching lengths, from a read, reference, and their CIGAR string
 ///
 /// # Arguments
@@ -35,7 +37,6 @@ pub fn orient_by_longest_segment(search_string: &Vec<FastaBase>, reference: &Vec
 /// * `search_string` - a u8 Vec representing the search string
 /// * `reference` - a u8 Vec representing the reference string
 /// * `alignment` - contains the starting position and the alignment CIGAR strings
-#[allow(dead_code)]
 pub fn cigar_alignment_to_full_string(read: &Vec<u8>, reference: &Vec<u8>, alignment: &AlignmentCigar) -> (String, String) {
     let mut read_align = String::new();
     let mut ref_align = String::new();
@@ -83,7 +84,7 @@ pub fn cigar_alignment_to_full_string(read: &Vec<u8>, reference: &Vec<u8>, align
 
 }
 
-
+#[allow(dead_code)]
 /// find a series of exact matches between the search string and the reference
 ///
 /// # Arguments
@@ -256,6 +257,7 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
     }
 }
 */
+#[allow(dead_code)]
 pub fn validate_cigar_string(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, cigars: &Vec<AlignmentTag>) {
     assert_eq!(reference.len(),read.len());
     debug!("CIGARS: {:?}",cigars);
@@ -294,6 +296,7 @@ pub fn validate_cigar_string(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, 
     assert_eq!(cigar_pos,reference.len());
 }
 
+#[allow(dead_code)]
 pub fn calculate_score_from_strings(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, my_aff_score: &AffineScoring) -> f64 {
     assert_eq!(reference.len(),read.len());
     let mut in_indel = false;
@@ -314,12 +317,14 @@ pub fn calculate_score_from_strings(reference: &Vec<FastaBase>, read: &Vec<Fasta
     }).sum()
 }
 
+#[allow(dead_code)]
 pub fn slice_for_alignment(read: &Vec<FastaBase>, read_start: usize, read_stop: usize) -> Vec<FastaBase> {
     assert!(read_stop <= read.len(),"Read position requested {} when our length is only {} for read {} ",read_stop,read.len(), FastaBase::string(read));
     read[read_start..read_stop].to_vec()
 }
 
 /// Extend a seed hit within the reference to its maximum length, using degenerate base matching
+#[allow(dead_code)]
 pub fn extend_hit(search_string: &[u8], search_location: usize, reference: &[u8], reference_location: usize) -> usize {
     let mut current_length = 0;
     while current_length + search_location < search_string.len() && current_length + reference_location < reference.len() {

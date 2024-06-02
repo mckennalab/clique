@@ -5,7 +5,6 @@ use crate::reference::fasta_reference::ReferenceManager;
 use bstr::BString;
 
 
-use noodles_sam::alignment::record::QualityScores;
 use noodles_sam::header::record::value::map::ReferenceSequence;
 use noodles_sam::header::record::value::Map;
 use noodles_sam::Header;
@@ -25,7 +24,6 @@ use crate::alignment::alignment_matrix::{
     AlignmentResult, AlignmentTag, AlignmentType,
 };
 use crate::alignment::fasta_bit_encoding::FastaBase;
-use noodles_bam;
 use noodles_sam;
 
 /// something that writes aligned reads. The output may or may not respect all the fields
@@ -191,6 +189,7 @@ impl BamFileAlignmentWriter {
     }
 }*/
 
+#[allow(dead_code)]
 struct AlignmentParameters<'a> {
     read_structure: &'a SequenceLayout,
     rm: &'a ReferenceManager<'a, 'a, 'a>,
@@ -207,6 +206,8 @@ struct AlignmentParameters<'a> {
 }
 
 impl<'a> AlignmentParameters<'a> {
+
+    #[allow(dead_code)]
     pub fn default_affine_alignment(
         read1: PathBuf,
         read2: Option<PathBuf>,
@@ -215,7 +216,7 @@ impl<'a> AlignmentParameters<'a> {
         read_structure: &'a SequenceLayout,
         reference_manager: &'a ReferenceManager,
     ) -> AlignmentParameters<'a> {
-        let affine_scores = AffineScoring::default_DNA();
+        let affine_scores = AffineScoring::default_dna();
         let inversion_scores = InversionScoring::default();
 
         AlignmentParameters {

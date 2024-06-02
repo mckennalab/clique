@@ -34,7 +34,7 @@ pub fn write_consensus_reads(
     let mut written_buffers = 0;
     let mut processed_reads = 0;
 
-    let score = AffineScoring::default_DNA();
+    let score = AffineScoring::default_dna();
 
 
     let arc_output = Arc::new(Mutex::new(writer));
@@ -67,13 +67,13 @@ pub fn write_consensus_reads(
                         reference_manager,
                         maximum_reads_before_downsampling,
                         &my_buffered_reads,
-                        &AffineScoring::default_DNA(),
+                        &AffineScoring::default_dna(),
                         &mut alignment_mat,
                     );
 
                     let arc_writer = arc_output.clone();
                     let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
-                    arc_writer.write_read(&new_read.read, &new_read.added_tags);
+                    arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC1)");
                 });
                 written_buffers += 1;
             }
@@ -101,7 +101,7 @@ pub fn write_consensus_reads(
         );
         let arc_writer = arc_output.clone();
         let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
-        arc_writer.write_read(&new_read.read, &new_read.added_tags);
+        arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC2)");
         written_buffers += 1;
     }
     info!(
@@ -228,6 +228,7 @@ pub fn get_reference_alignment_rate(reference: &[FastaBase], read: &[FastaBase])
     (matches as f64) / ((matches + mismatches) as f64)
 }
 
+#[allow(dead_code)]
 pub fn reference_read_to_cigar_string(
     reference_seq: &Vec<FastaBase>,
     read_seq: &[FastaBase],

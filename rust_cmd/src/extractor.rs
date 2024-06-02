@@ -128,9 +128,6 @@ pub fn recover_align_sequences(
             Kind::HardClip | Kind::Pad => {
                 // do nothing
             }
-            other_cigar => {
-                panic!("Unknown cigar symbol {:?}", other_cigar);
-            }
         }
     }
     if ref_pos < reference.len() {

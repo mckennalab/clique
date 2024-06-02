@@ -59,6 +59,9 @@ indexmap = "2.0.0"
 triple_accel = "*"
 
 rust-htslib = "*"
+rust_starcode = { path = "/dartfs/rc/lab/M/McKennaLab/projects/clique/rust_starcode_base/rust-starcode" }
+
+
 
 [profile.release]
 lto = true
@@ -67,7 +70,3 @@ debug = true
 [target.x86_64-unknown-linux-gnu]
 linker = "/usr/bin/clang"
 rustflags = ["-Clink-arg=-fuse-ld=lld", "-Clink-arg=-Wl,--no-rosegment"]
-
-[build-dependencies]
-#bindgen = "*"
-

@@ -132,7 +132,7 @@ pub enum InvMove {
     Left(usize),
     Diag(usize),
 }
-
+#[allow(dead_code)]
 #[derive(Eq, PartialEq, Debug, Copy, Clone, Hash)]
 pub enum AlignmentDirection {
     Up(usize),
@@ -256,6 +256,7 @@ pub fn create_scoring_record_3d(hint_seq_a_len: usize, hint_seq_b_len: usize, al
 /// let updates = update_sub_vector3d(&mut alignment, &sequence1, &sequence2, &scoring_function, row, column, by_row);
 /// println!("Number of updates made: {}", updates);
 /// ```
+#[allow(dead_code)]
 #[inline(always)]
 fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
                        sequence1: &[FastaBase],
@@ -321,6 +322,7 @@ fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
 /// // The alignment matrix within `alignment` is now updated based on `previous_result` and further refinement.
 /// ```
 #[inline(always)]
+#[allow(dead_code)]
 fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
                                      sequence1: &[FastaBase],
                                      sequence2: &[FastaBase],
@@ -415,6 +417,7 @@ pub fn perform_affine_alignment_bandwidth(alignment: &mut Alignment<Ix3>,
 }
 
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
+#[allow(dead_code)]
 fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
                                      alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
                                      sequence1: &Vec<FastaBase>,
@@ -454,6 +457,7 @@ fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
     }
 }
 
+#[allow(dead_code)]
 fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
                               alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
                               sequence1: &[FastaBase],
@@ -685,6 +689,7 @@ pub struct AlignmentResult {
     pub bounding_box: Option<(AlignmentLocation, AlignmentLocation)>,
 }
 
+#[allow(dead_code)]
 impl AlignmentResult {
     pub fn from_match_segment(str1: &[FastaBase], str2: &[FastaBase], reference_name: &String, read_name: &String, start_x: usize, start_y: usize, af_score: &AffineScoring) -> AlignmentResult {
         let cigar_string: Vec<AlignmentTag> = vec![AlignmentTag::MatchMismatch(str1.len())];
@@ -869,6 +874,7 @@ pub struct BoundedAlignment {
     bounding_box: (AlignmentLocation, AlignmentLocation),
 }
 
+#[allow(dead_code)]
 pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, reference_name: &String, read_name: &String, inversion_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, local);
     let mut inversion_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, true);
@@ -1259,7 +1265,7 @@ mod tests {
         let reference = str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT");
         let test_read = str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACCAACAAGTTTTTCAACACCTAGCGTGT");
 
-        let my_score = AffineScoring::default_DNA();
+        let my_score = AffineScoring::default_dna();
 
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
