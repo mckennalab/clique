@@ -74,7 +74,7 @@ impl KnownList {
     }
 
     pub fn create_input_set(filename: &str, reverse_comp: &bool) -> Vec<FastaString> {
-        let raw_reader = BufReader::new(File::open(filename).unwrap());
+        let raw_reader = BufReader::new(File::open(filename).expect(&format!("Unable to open input file {}",filename)));
         let mut input_set = Vec::new();
         for line in raw_reader.lines() {
             let mut bytes = line.unwrap();

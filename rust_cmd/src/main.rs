@@ -75,7 +75,7 @@ mod umis {
     pub mod sequence_clustering;
     pub mod bronkerbosch;
     pub mod known_list;
-    pub mod degenerate_ml;
+    pub mod degenerate_tags;
 
     pub mod starcode_tree;
 }

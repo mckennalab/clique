@@ -125,6 +125,8 @@ pub struct UMIConfiguration {
     pub pad: Option<UMIPadding>,
     pub max_distance: usize,
     pub maximum_subsequences: Option<usize>,
+    pub max_gaps: Option<usize>,
+
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]

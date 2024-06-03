@@ -20,6 +20,7 @@ impl SortingReadSetContainer {
             aligned_read: new_alignment,
         }
     }
+
 }
 impl Eq for SortingReadSetContainer {}
 

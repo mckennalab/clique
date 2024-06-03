@@ -1,4 +1,4 @@
-use crate::alignment::fasta_bit_encoding::FastaBase;
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use nohash_hasher::NoHashHasher;
 use noodles_bam::record::Cigar;
 use noodles_sam::alignment::record::cigar::op::*;
@@ -280,13 +280,28 @@ pub fn extract_tag_sequences(
                         if e.len() != umi_obj.length {
                             invalid_read = true;
                         };
+                        let mut gaps = 0;
+                        let str = e.as_bytes()
+                            .iter()
+                            .map(|f| {
+                                let base = FastaBase::from(f.clone());
+                                if base == FASTA_UNSET {
+                                    gaps += 1;
+                                }
+                                base
+                            })
+                            .collect::<Vec<FastaBase>>();
+
+                        if gaps > umi_obj.max_gaps.unwrap_or(gaps) {
+                            //println!("tossing reads {} {}",gaps, e);
+                            invalid_read = true;
+                        } //else {
+                            //println!("keeping reads {} {} level {}",gaps, e, umi_obj.max_gaps.unwrap_or(gaps));
+                        //}
 
                         Some((
                             umi_obj.symbol,
-                            e.as_bytes()
-                                .iter()
-                                .map(|f| FastaBase::from(f.clone()))
-                                .collect::<Vec<FastaBase>>(),
+                            str
                         ))
                     }
                     None => {

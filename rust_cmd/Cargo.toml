@@ -59,7 +59,7 @@ indexmap = "2.0.0"
 triple_accel = "*"
 
 rust-htslib = "*"
-rust_starcode = { path = "/dartfs/rc/lab/M/McKennaLab/projects/clique/rust_starcode_base/rust-starcode" }
+rust_starcode = { path = "/Users/aaronmck/Desktop/code/rust-starcode" }
 
 
 

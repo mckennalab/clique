@@ -78,6 +78,9 @@ pub fn write_consensus_reads(
                 written_buffers += 1;
             }
             processed_reads += 1;
+            if processed_reads % 10000 == 0 {
+                println!("Processed {} reads", processed_reads);
+            }
             buffered_reads.push_back(x.clone());
             last_read = Some(x);
         });

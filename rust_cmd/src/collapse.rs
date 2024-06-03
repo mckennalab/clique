@@ -23,7 +23,7 @@ use std::path::PathBuf;
 
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
-use crate::umis::degenerate_ml::DegenerateBuffer;
+use crate::umis::degenerate_tags::DegenerateBuffer;
 
 pub fn collapse(
     final_output: &String,
@@ -323,7 +323,7 @@ pub fn sort_reads_from_bam_file(
                     extract_tag_sequences(reference_config, extracted_tags);
 
                 if !valid_tags_extracted {
-                    
+
                     let new_sorted_read_container = SortingReadSetContainer {
                         ordered_sorting_keys: vec![], // for future use during sorting
                         ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use rustc_hash::{FxHasher, FxHashMap};
 use shardio::{ShardSender, ShardWriter};
-use crate::alignment::fasta_bit_encoding::FastaBase;
+use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
 use crate::umis::sequence_clustering::{get_connected_components, InputList, vantage_point_string_graph};
@@ -48,6 +48,10 @@ impl DegenerateBuffer {
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
         item.ordered_unsorted_keys.push_front(key_value.clone()); // we want to keep the key in the list for now, we'll remove it later
         assert_eq!(key_value.0, self.tag.symbol);
+
+        //let x : usize = key_value.1.iter().map(|x| if *x == FASTA_UNSET {1} else {0}).sum();
+        //println!("Added {} and {} is valid ",FastaBase::string(&key_value.1), x);//, item);
+
         *self
             .hash_map
             .entry(FastaBase::vec_u8(&FastaBase::strip_gaps(&key_value.1)))
