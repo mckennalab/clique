@@ -681,6 +681,7 @@ pub struct AlignmentResult {
     pub read_name: String,
     pub reference_aligned: Vec<FastaBase>,
     pub read_aligned: Vec<FastaBase>,
+    pub read_quals: Option<Vec<u8>>,
     pub cigar_string: Vec<AlignmentTag>,
     pub path: Vec<AlignmentLocation>,
     pub score: f64,
@@ -701,6 +702,7 @@ impl AlignmentResult {
             read_name: read_name.clone(),
             reference_aligned: str1.to_vec(),
             read_aligned: str2.to_vec(),
+            read_quals: None,
             cigar_string,
             path,
             score,
@@ -739,7 +741,9 @@ impl AlignmentResult {
             .set_sequence(FastaBase::vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>()).into())
             .set_cigar(Cigar::from_iter(self.cigar_string.iter().map(|m| m.to_op()).into_iter()).clone())
             .set_alignment_start(noodles_core::Position::new(self.reference_start+1).unwrap())
-            .set_quality_scores(QualityScores::from(vec![b'H'; seq_len]))
+            .set_quality_scores(match &self.read_quals {
+                Some(x) => {QualityScores::from(x.clone())}, None => {QualityScores::from(vec![b'H'; seq_len])}
+            })
             .set_reference_sequence_id(*reference_id as usize)
             .set_data(data).build()
 
@@ -773,6 +777,7 @@ impl AlignmentResult {
                             read_name: self.read_name.clone(),
                             reference_aligned: alignment_string1,
                             read_aligned: alignment_string2,
+                            read_quals: None,
                             cigar_string,
                             path,
                             score,
@@ -796,6 +801,7 @@ impl AlignmentResult {
                 read_name: self.read_name.clone(),
                 reference_aligned: alignment_string1,
                 read_aligned: alignment_string2,
+                read_quals: None,
                 cigar_string,
                 path,
                 score,
@@ -826,6 +832,7 @@ impl AlignmentResult {
             read_name: self.read_name.clone(),
             reference_aligned: self.reference_aligned.clone(),
             read_aligned: self.read_aligned.clone(),
+            read_quals: None,
             cigar_string: self.cigar_string.clone(),
             path: new_path,
             score: self.score,
@@ -1042,6 +1049,7 @@ pub fn  perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         read_name: sequence2_name.clone(),
         reference_aligned: alignment1,
         read_aligned: alignment2,
+        read_quals: None,
         cigar_string: simplify_cigar_string(&cigars),
         path,
         score,

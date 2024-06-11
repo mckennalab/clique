@@ -20,6 +20,7 @@ use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use std::cmp::Ordering;
 use std::collections::{HashMap};
 use std::path::PathBuf;
+use noodles_sam::alignment::record::QualityScores;
 
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
@@ -301,7 +302,7 @@ pub fn sort_reads_from_bam_file(
                 let start_pos = record.alignment_start().unwrap().unwrap().get();
                 let cigar = record.cigar();
                 let read_name: bam::record::Name<'_> = record.name().unwrap();
-
+                let read_qual = record.quality_scores().iter().collect();
                 let ref_slice = reference_sequence.as_slice();
 
                 let aligned_read =
@@ -330,6 +331,7 @@ pub fn sort_reads_from_bam_file(
                         aligned_read: AlignmentResult {
                             reference_name: reference_name.clone(),
                             read_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_read),
+                            read_quals: Some(read_qual),
                             cigar_string: cigar
                                 .iter()
                                 .map(|op| AlignmentTag::from(op.unwrap()))
@@ -746,6 +748,7 @@ mod tests {
             read_name: "".to_string(),
             reference_aligned: read_seq.clone(),
             read_aligned: read_seq.clone(),
+            read_quals: None,
             cigar_string: vec![],
             path: vec![],
             score: 0.0,
@@ -767,6 +770,7 @@ mod tests {
                 pad: None,
                 max_distance: 2,
                 maximum_subsequences: None,
+                max_gaps: Some(1),
             },
         );
 

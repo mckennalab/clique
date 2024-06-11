@@ -67,6 +67,7 @@ mod tests {
             pad: None,
             max_distance: 2,
             maximum_subsequences: None,
+            max_gaps: Some(0),
         };
 
         println!("loading file...");
@@ -133,6 +134,7 @@ mod tests {
             pad: None,
             max_distance: 2,
             maximum_subsequences: None,
+            max_gaps: Some(0)
         };
 
         let kf = KnownLookup::from(&configuration);

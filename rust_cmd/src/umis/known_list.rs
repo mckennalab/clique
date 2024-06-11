@@ -158,6 +158,7 @@ mod tests {
             pad: None,
             max_distance: 0,
             maximum_subsequences: Some(25000),
+            max_gaps: Some(1),
         };
 
         println!("Creating vantage point tree");
