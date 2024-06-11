@@ -746,7 +746,6 @@ impl AlignmentResult {
             })
             .set_reference_sequence_id(*reference_id as usize)
             .set_data(data).build()
-
     }
 
     #[allow(dead_code)]

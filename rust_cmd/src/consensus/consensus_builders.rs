@@ -329,13 +329,6 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, consensus: &Vec<u8>,
             assert_eq!(ln, x.len());
 
             let base = x.get(index).unwrap();
-            let current_qual_pos = sequence_indexes.get(sequence_index).unwrap();
-            println!("x {} qual index {} from {}-{} quals {}", String::from_utf8(x.clone()).unwrap(),
-                     *current_qual_pos,
-                     sequence_index,
-                     sequence_indexes.len(),
-                     String::from_utf8(quality_scores.get(sequence_index).unwrap().clone()).unwrap());
-
             let qual = quality_scores.get(sequence_index).unwrap();
             let qual = qual.get(*sequence_indexes.get(sequence_index).unwrap());
             let qual = qual.unwrap();
@@ -348,12 +341,12 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, consensus: &Vec<u8>,
             quals.push(*qual);
         });
         let consensus_ref = *consensus.get(index).unwrap();
-        let qual_scores = combine_qual_scores(consensus_ref.clone(), &bases, &quals, &0.01);
+        let qual_scores = combine_qual_scores(consensus_ref.clone(), &bases, &quals, &0.75);
         match consensus_ref {
-            b'A' | b'a' => prob_to_phred(&qual_scores[0]),
-            b'C' | b'c' => prob_to_phred(&qual_scores[1]),
-            b'G' | b'g' => prob_to_phred(&qual_scores[2]),
-            b'T' | b't' => prob_to_phred(&qual_scores[3]),
+            b'A' | b'a' => prob_to_phred(&(1.0 - qual_scores[0])),
+            b'C' | b'c' => prob_to_phred(&(1.0 - qual_scores[1])),
+            b'G' | b'g' => prob_to_phred(&(1.0 - qual_scores[2])),
+            b'T' | b't' => prob_to_phred(&(1.0 - qual_scores[3])),
             _ => b'!'
         }
     }).collect()
@@ -369,7 +362,12 @@ pub fn prob_to_phred(prob: &f64) -> u8 {
     // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
     assert!(prob >= &0.0_f64 && prob <= &1.0_f64, "{}", format!("Unable to format prob {}", prob));
     // TODO: we dont deal with phred + 64 format data
-    ((-10.0) * prob.log10()).round().to_u8().unwrap()
+    let ret = 33 + ((-10.0) * prob.log10()).round().to_u8().unwrap();
+    if ret > 98 {
+        98
+    } else {
+        ret
+    }
 }
 
 fn combine_qual_scores(reference_base: u8, bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64) -> [f64; 4] {
@@ -397,7 +395,6 @@ fn combine_qual_scores(reference_base: u8, bases: &Vec<u8>, scores: &Vec<u8>, er
             [0.25, 0.25, 0.25, 0.25]
         }
     };
-    println!("props: {:?}", allele_props);
     bases.iter().zip(scores.iter()).for_each(|(base, qs)| {
         let base_id = match base {
             b'A' | b'a' => { 0 }
@@ -413,14 +410,11 @@ fn combine_qual_scores(reference_base: u8, bases: &Vec<u8>, scores: &Vec<u8>, er
             (0..4).for_each(|i| {
                 if i == base_id {
                     allele_props[i] = allele_props[i] + (1.0 - phred_to_prob(qs)).log2();
-                    println!("base id {} score {} {}", i, 1.0 - phred_to_prob(qs), (1.0 - phred_to_prob(qs)).log2());
                 } else {
                     allele_props[i] = allele_props[i] + (phred_to_prob(qs) / 3.0_f64).log2();
-                    println!("base id {} score {} {}", i, 1.0 - phred_to_prob(qs), (phred_to_prob(qs) / 3.0_f64).log2());
                 }
             });
         }
-        println!("props: {:?}", allele_props);
     });
     let total: f64 = allele_props.iter().map(|x| 2.0_f64.pow(x)).sum();
     [2.0_f64.pow(allele_props[0]) / total, 2.0_f64.pow(allele_props[1]) / total, 2.0_f64.pow(allele_props[2]) / total, 2.0_f64.pow(allele_props[3]) / total]
@@ -490,6 +484,12 @@ mod tests {
         let vec_of_reads = vec![read1, read2, read3];
         let result = poa_consensus(&vec_of_reads, &quals);
         assert_eq!(result.0, "AAAAAACGTAC-TTTT".as_bytes().to_vec());
+        assert_eq!(result.1, "IIIIIbbbbbb!bbbb".as_bytes().to_vec());
+
+        // "     ACGTACGTTTT\0".as_bytes().to_vec();
+        // "AAAAAACGTAC TTTT\0".as_bytes().to_vec();
+        // "     ACGTAC T\0".as_bytes().to_vec();
+
     }
 
     #[test]
