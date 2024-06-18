@@ -297,11 +297,11 @@ impl MergedReadSequence {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct UnifiedRead {
-    name: Option<Vec<u8>>,
-    seq: Option<Vec<FastaBase>>,
-    read_structure: SequenceLayout,
-    read_pattern: (bool, bool, bool, bool),
-    underlying_reads: ReadSetContainer,
+    pub name: Option<Vec<u8>>,
+    pub seq: Option<Vec<FastaBase>>,
+    pub read_structure: SequenceLayout,
+    pub read_pattern: (bool, bool, bool, bool),
+    pub underlying_reads: ReadSetContainer,
 }
 
 impl UnifiedRead {

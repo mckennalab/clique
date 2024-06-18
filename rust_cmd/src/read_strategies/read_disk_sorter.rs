@@ -20,6 +20,13 @@ impl SortingReadSetContainer {
             aligned_read: new_alignment,
         }
     }
+    pub fn empty_tags(new_alignment: AlignmentResult) -> SortingReadSetContainer {
+        SortingReadSetContainer{
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: VecDeque::new(),
+            aligned_read: new_alignment,
+        }
+    }
 
 }
 impl Eq for SortingReadSetContainer {}

@@ -692,7 +692,13 @@ pub struct AlignmentResult {
 
 #[allow(dead_code)]
 impl AlignmentResult {
-    pub fn from_match_segment(str1: &[FastaBase], str2: &[FastaBase], reference_name: &String, read_name: &String, start_x: usize, start_y: usize, af_score: &AffineScoring) -> AlignmentResult {
+    pub fn from_match_segment(str1: &[FastaBase],
+                              str2: &[FastaBase],
+                              reference_name: &String,
+                              read_name: &String,
+                              start_x: usize,
+                              start_y: usize,
+                              af_score: &AffineScoring) -> AlignmentResult {
         let cigar_string: Vec<AlignmentTag> = vec![AlignmentTag::MatchMismatch(str1.len())];
         let path = (start_x..(start_x + str1.len())).zip(start_y..(start_y + str1.len())).map(|(x, y)| AlignmentLocation { x, y }).collect();
         let score = str1.iter().zip(str2.iter()).map(|(xb, yb)| af_score.match_mismatch(xb, yb)).sum();

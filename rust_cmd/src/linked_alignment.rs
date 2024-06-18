@@ -4,9 +4,12 @@ use crate::fasta_comparisons::DEGENERATEBASES;
 
 use std::convert::TryFrom;
 use itertools::Itertools;
-use crate::alignment::alignment_matrix::{AlignmentCigar, AlignmentTag, MatchedPosition, SharedSegments};
+use ndarray::Ix3;
+use crate::alignment::alignment_matrix::{Alignment, AlignmentCigar, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, inversion_alignment, MatchedPosition, perform_3d_global_traceback, perform_affine_alignment, SharedSegments};
+use crate::alignment::alignment_matrix::AlignmentTag::Del;
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
-use crate::alignment::scoring_functions::AffineScoring;
+use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
+use crate::alignment_functions::simplify_cigar_string;
 use crate::reference::fasta_reference::SuffixTableLookup;
 
 #[allow(dead_code)]
@@ -22,10 +25,10 @@ pub fn orient_by_longest_segment(search_string: &Vec<FastaBase>, reference: &Vec
     let fwd_score_mp = find_greedy_non_overlapping_segments(&search_string, reference, seeds);
     let fwd_score: usize = fwd_score_mp.alignment_segments.clone().into_iter().map(|p| p.length).sum();
 
-    let rev_score_mp =  find_greedy_non_overlapping_segments(&bio::alphabets::dna::revcomp(search_string), reference, seeds);
+    let rev_score_mp = find_greedy_non_overlapping_segments(&bio::alphabets::dna::revcomp(search_string), reference, seeds);
     let rev_score: usize = rev_score_mp.alignment_segments.clone().into_iter().map(|p| p.length).sum();
 
-    (fwd_score > rev_score,fwd_score_mp,rev_score_mp)
+    (fwd_score > rev_score, fwd_score_mp, rev_score_mp)
 }
 
 
@@ -77,11 +80,10 @@ pub fn cigar_alignment_to_full_string(read: &Vec<u8>, reference: &Vec<u8>, align
             AlignmentTag::SoftClip(_) => {
                 panic!("unclear how to handle SoftClip");
             }
-            AlignmentTag::HardClip(_) => {}, // we do nothing, the read segment doesn't align and is gone from the read
+            AlignmentTag::HardClip(_) => {} // we do nothing, the read segment doesn't align and is gone from the read
         }
     }
-    (read_align,ref_align)
-
+    (read_align, ref_align)
 }
 
 #[allow(dead_code)]
@@ -108,8 +110,8 @@ pub fn find_greedy_non_overlapping_segments(search_string: &[u8], reference: &[u
                 if extended_hit_size > longest_hit {
                     return_hits.push(MatchedPosition { search_start: position, ref_start: *ref_position as usize, length: extended_hit_size });
                     position += extended_hit_size;
-                    least_ref_pos = cmp::min(usize::try_from(*ref_position).unwrap(),least_ref_pos);
-                    greatest_ref_pos = cmp::max(ref_position + &(extended_hit_size as u32),greatest_ref_pos);
+                    least_ref_pos = cmp::min(usize::try_from(*ref_position).unwrap(), least_ref_pos);
+                    greatest_ref_pos = cmp::max(ref_position + &(extended_hit_size as u32), greatest_ref_pos);
                     longest_hit = extended_hit_size;
                     //println!("taking position {} with greatest_ref_pos {} least {} longest {}", ref_position, greatest_ref_pos, least_ref_pos, longest_hit);
                 }
@@ -117,7 +119,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &[u8], reference: &[u
         }
         position += 1;
     }
-    SharedSegments { start_position: least_ref_pos as usize, alignment_segments: return_hits}
+    SharedSegments { start_position: least_ref_pos as usize, alignment_segments: return_hits }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -128,7 +130,6 @@ pub struct AlignmentResults {
 }
 
 
-/*
 /// find a series of exact matches between the search string and the reference, and then align the
 /// sequences between those exact matches using an inversion aware aligner
 ///
@@ -138,13 +139,14 @@ pub struct AlignmentResults {
 /// * `reference` - a u8 Vec representing the reference string
 /// * `seeds` - a suffix array lookup object
 #[allow(dead_code)]
-pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
+pub fn align_string_with_anchors(read_name: &String,
+                                 ref_name: &String,
+                                 search_string: &Vec<FastaBase>,
                                  reference: &Vec<FastaBase>,
                                  overlaps: &SharedSegments,
                                  my_inv_score: Option<&InversionScoring>,
                                  my_aff_score: &AffineScoring,
                                  alignment_mat: &mut Alignment<Ix3>) -> AlignmentResult {
-
     debug!("ref {} read {}",FastaBase::string(reference),FastaBase::string(search_string));
 
     let mut alignment_ref: Vec<FastaBase> = Vec::new();
@@ -154,24 +156,24 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
     let mut ref_alignment_last_position: usize = 0;
 
     for overlap in &overlaps.alignment_segments {
-        assert!(read_alignment_last_position <= overlap.search_start,"READ START FAILURE: {} and {}",read_alignment_last_position,overlap.search_start);
-        assert!(ref_alignment_last_position <= overlap.ref_start,"REF START FAILURE: {} and {} from {}",ref_alignment_last_position,overlap.ref_start,overlap.length);
+        assert!(read_alignment_last_position <= overlap.search_start, "READ START FAILURE: {} and {}", read_alignment_last_position, overlap.search_start);
+        assert!(ref_alignment_last_position <= overlap.ref_start, "REF START FAILURE: {} and {} from {}", ref_alignment_last_position, overlap.ref_start, overlap.length);
 
         // look back to see what segment we haven't aligned in the read
         let read_slice = slice_for_alignment(search_string, read_alignment_last_position, overlap.search_start);
-        let ref_slice  = slice_for_alignment(reference, ref_alignment_last_position, overlap.ref_start);
+        let ref_slice = slice_for_alignment(reference, ref_alignment_last_position, overlap.ref_start);
 
         let alignment =
-            match (read_slice.len(),ref_slice.len(), my_inv_score) {
-                (x ,y, None) if x < 5 && y < 5 && x == y => {
-                    AlignmentResult::from_match_segment(&ref_slice, &read_slice, ref_alignment_last_position,read_alignment_last_position,my_aff_score)
-                },
-                (_x, _y ,Some(inv_score)) => inversion_alignment(&ref_slice, &read_slice, inv_score, my_aff_score, false),
-                (_x, _y ,None) => {
+            match (read_slice.len(), ref_slice.len(), my_inv_score) {
+                (x, y, None) if x < 5 && y < 5 && x == y => {
+                    AlignmentResult::from_match_segment(&ref_slice, &read_slice, ref_name, read_name, ref_alignment_last_position, read_alignment_last_position, my_aff_score)
+                }
+                (_x, _y, Some(inv_score)) => inversion_alignment(&ref_slice, &read_slice, ref_name, read_name, inv_score, my_aff_score, false),
+                (_x, _y, None) => {
                     perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
-                    perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, None)
-                },
+                    perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, ref_name, read_name, None)
+                }
             };
         read_alignment_last_position += read_slice.len();
         ref_alignment_last_position += ref_slice.len();
@@ -181,8 +183,8 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
         alignment_read.extend(alignment.read_aligned);
         alignment_cigar.extend(alignment.cigar_string.into_iter().rev().collect::<Vec<AlignmentTag>>());
 
-        alignment_ref.extend_from_slice(&reference[overlap.ref_start..overlap.ref_start+overlap.length]);
-        alignment_read.extend_from_slice(&search_string[overlap.search_start..overlap.search_start+overlap.length]);
+        alignment_ref.extend_from_slice(&reference[overlap.ref_start..overlap.ref_start + overlap.length]);
+        alignment_read.extend_from_slice(&search_string[overlap.search_start..overlap.search_start + overlap.length]);
         // now add the matching segment
 
         debug!("Pushing {:?}",AlignmentTag::MatchMismatch(overlap.length));
@@ -199,22 +201,21 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
             // look back to see what segment we haven't aligned in the read
             let read_slice = slice_for_alignment(&search_string, read_alignment_last_position, search_string.len());
             let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, reference.len());
-            let alignment=
-            match my_inv_score {
-                Some(x) => inversion_alignment(&ref_slice, &read_slice, x, my_aff_score,false),
-                None => {
-                    let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::Affine, false);
-                    perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
+            let alignment =
+                match my_inv_score {
+                    Some(x) => inversion_alignment(&ref_slice, &read_slice, ref_name, read_name, x, my_aff_score, false),
+                    None => {
+                        let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::Affine, false);
+                        perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
-                    perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, None)
-                }
-            };
+                        perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, ref_name, read_name, None)
+                    }
+                };
             debug!("Pushing {:?}",alignment.cigar_string.clone());
 
             alignment_ref.extend(alignment.reference_aligned);
             alignment_read.extend(alignment.read_aligned);
             alignment_cigar.extend(alignment.cigar_string.into_iter().rev().collect::<Vec<AlignmentTag>>());
-
         } else if ref_alignment_last_position < reference.len() {
             let gap_len = reference.len() - ref_alignment_last_position;
             alignment_ref.extend(reference[ref_alignment_last_position..reference.len()].to_vec());
@@ -224,16 +225,16 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
             alignment_cigar.push(Del(gap_len));
         }
     } else {
-        let alignment=
+        let alignment =
             match my_inv_score {
                 Some(x) => {
-                    inversion_alignment(&reference, &search_string, x, my_aff_score,true)
+                    inversion_alignment(&reference, &search_string, ref_name, read_name, x, my_aff_score, true)
                 }
                 None => {
                     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, search_string.len() + 1, AlignmentType::Affine, false);
                     perform_affine_alignment(&mut alignment_mat, &reference, &search_string, my_aff_score);
 
-                    perform_3d_global_traceback(&mut alignment_mat, None, &reference, &search_string, None)
+                    perform_3d_global_traceback(&mut alignment_mat, None, &reference, &search_string, ref_name, read_name, None)
                 }
             };
         alignment_ref.extend(alignment.reference_aligned);
@@ -246,8 +247,11 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
     validate_cigar_string(&alignment_ref, &alignment_read, &alignment_cigar);
 
     AlignmentResult {
+        reference_name: ref_name.clone(),
+        read_name: read_name.clone(),
         reference_aligned: alignment_ref,
         read_aligned: alignment_read,
+        read_quals: None,
         cigar_string: simplify_cigar_string(&alignment_cigar),
         path: vec![],
         score,
@@ -256,70 +260,69 @@ pub fn align_string_with_anchors(search_string: &Vec<FastaBase>,
         bounding_box: None,
     }
 }
-*/
+
 #[allow(dead_code)]
 pub fn validate_cigar_string(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, cigars: &Vec<AlignmentTag>) {
-    assert_eq!(reference.len(),read.len());
+    assert_eq!(reference.len(), read.len());
     debug!("CIGARS: {:?}",cigars);
 
     let mut cigar_pos = 0;
     cigars.iter().for_each(|c| {
         debug!("CIGAR: {}",c.clone());
-       match c {
-           AlignmentTag::MatchMismatch(length) => {
-               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (M({})): {}",length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
-               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on read (M({})): {}",length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
-               cigar_pos += length;
-           },
-           AlignmentTag::Del(length) => {
-               debug!("bit {}",FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
-               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (D({})): {}",length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
-               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on read (D({})): {}",length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
-               cigar_pos += length;
-           },
-           AlignmentTag::Ins(length) => {
-               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on reference (I({})): {}",length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
-               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (I({})): {}",length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
-               cigar_pos += length;
-           },
-           AlignmentTag::SoftClip(length) => {
-               assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),&0,"CIGAR failure on reference (S({})): {}",length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
-               assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0),length,"CIGAR failure on reference (S({})): {}",length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
-               cigar_pos += length;
-           },
-           AlignmentTag::InversionOpen => {},
-           AlignmentTag::InversionClose => {},
-           AlignmentTag::HardClip(_) => {}, // we do nothing, the read segment doesn't align and is gone from the read
-
-       }
+        match c {
+            AlignmentTag::MatchMismatch(length) => {
+                assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0), &0, "CIGAR failure on reference (M({})): {}", length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
+                assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0), &0, "CIGAR failure on read (M({})): {}", length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
+                cigar_pos += length;
+            }
+            AlignmentTag::Del(length) => {
+                debug!("bit {}",FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
+                assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0), &0, "CIGAR failure on reference (D({})): {}", length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
+                assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0), length, "CIGAR failure on read (D({})): {}", length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
+                cigar_pos += length;
+            }
+            AlignmentTag::Ins(length) => {
+                assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0), length, "CIGAR failure on reference (I({})): {}", length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
+                assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0), &0, "CIGAR failure on reference (I({})): {}", length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
+                cigar_pos += length;
+            }
+            AlignmentTag::SoftClip(length) => {
+                assert_eq!(reference[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0), &0, "CIGAR failure on reference (S({})): {}", length, FastaBase::string(&reference[cigar_pos..cigar_pos + length].to_vec()));
+                assert_eq!(read[cigar_pos..cigar_pos + length].iter().counts().get(&FASTA_UNSET).unwrap_or(&0), length, "CIGAR failure on reference (S({})): {}", length, FastaBase::string(&read[cigar_pos..cigar_pos + length].to_vec()));
+                cigar_pos += length;
+            }
+            AlignmentTag::InversionOpen => {}
+            AlignmentTag::InversionClose => {}
+            AlignmentTag::HardClip(_) => {} // we do nothing, the read segment doesn't align and is gone from the read
+        }
     });
-    assert_eq!(cigar_pos,reference.len());
+    assert_eq!(cigar_pos, reference.len());
 }
 
 #[allow(dead_code)]
 pub fn calculate_score_from_strings(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, my_aff_score: &AffineScoring) -> f64 {
-    assert_eq!(reference.len(),read.len());
+    assert_eq!(reference.len(), read.len());
     let mut in_indel = false;
-    reference.iter().zip(read.iter()).map(|(a,b)| {
-        match (a,b, in_indel) {
+    reference.iter().zip(read.iter()).map(|(a, b)| {
+        match (a, b, in_indel) {
             (a, b, _) if !FASTA_UNSET.identity(a) && FASTA_UNSET.identity(b) => {
                 in_indel = false;
                 my_aff_score.match_mismatch(a, b)
-            },
+            }
             (_, _, true) => {
                 my_aff_score.gap_extend()
-            },
+            }
             (_, _, false) => {
                 in_indel = true;
                 my_aff_score.gap_open()
-            },
+            }
         }
     }).sum()
 }
 
 #[allow(dead_code)]
 pub fn slice_for_alignment(read: &Vec<FastaBase>, read_start: usize, read_stop: usize) -> Vec<FastaBase> {
-    assert!(read_stop <= read.len(),"Read position requested {} when our length is only {} for read {} ",read_stop,read.len(), FastaBase::string(read));
+    assert!(read_stop <= read.len(), "Read position requested {} when our length is only {} for read {} ", read_stop, read.len(), FastaBase::string(read));
     read[read_start..read_stop].to_vec()
 }
 
@@ -332,15 +335,15 @@ pub fn extend_hit(search_string: &[u8], search_location: usize, reference: &[u8]
         let ref_loc = current_length + reference_location;
 
         match (DEGENERATEBASES.get(&search_string[search_loc]),
-            DEGENERATEBASES.get(&reference[ref_loc])) {
-            (None, None) => {return current_length},
-            (None, _) => {return current_length},
-            (_, None) => {return current_length},
-            (x,y) => {
+               DEGENERATEBASES.get(&reference[ref_loc])) {
+            (None, None) => { return current_length; }
+            (None, _) => { return current_length; }
+            (_, None) => { return current_length; }
+            (x, y) => {
                 match (x.unwrap().contains_key(&reference[ref_loc]),
                        y.unwrap().contains_key(&search_string[search_loc])) {
-                    (true,true) => {current_length += 1;}
-                    (_, _) => { return current_length },
+                    (true, true) => { current_length += 1; }
+                    (_, _) => { return current_length; }
                 }
             }
         }
@@ -361,8 +364,8 @@ mod tests {
         let reference_lookup = ReferenceManager::find_seeds(&reference, 5);
 
         let aligned_string = orient_by_longest_segment(&FastaBase::from_vec_u8(&test_read), &reference, &reference_lookup);
-        assert_eq!(aligned_string.1.alignment_segments.len(),1);
-        assert_eq!(aligned_string.1.alignment_segments.get(0).unwrap().search_start,0);
+        assert_eq!(aligned_string.1.alignment_segments.len(), 1);
+        assert_eq!(aligned_string.1.alignment_segments.get(0).unwrap().search_start, 0);
 
         let reference = String::from("AAAAATATATATATATATCCACC").as_bytes().to_owned();
         let test_read = String::from("AAAAAGGGGGGGGGGGGGCCACC").as_bytes().to_owned();
@@ -370,11 +373,11 @@ mod tests {
 
         let aligned_string = orient_by_longest_segment(&FastaBase::from_vec_u8(&test_read), &reference, &reference_lookup);
 
-        println!("suffix {:?}\nshared\n {:?}",reference_lookup.suffix_table, aligned_string.1);
+        println!("suffix {:?}\nshared\n {:?}", reference_lookup.suffix_table, aligned_string.1);
 
-        assert_eq!(aligned_string.1.alignment_segments.len(),2);
-        assert_eq!(aligned_string.1.alignment_segments.get(0).unwrap().search_start,0);
-        assert_eq!(aligned_string.1.alignment_segments.get(1).unwrap().search_start,18);
+        assert_eq!(aligned_string.1.alignment_segments.len(), 2);
+        assert_eq!(aligned_string.1.alignment_segments.get(0).unwrap().search_start, 0);
+        assert_eq!(aligned_string.1.alignment_segments.get(1).unwrap().search_start, 18);
     }
 
     #[test]
@@ -406,6 +409,7 @@ mod tests {
         print!("BLAH {}", aligned_string);
         assert_eq!(aligned_string, 10);
     }
+
     fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
         FastaBase::from_vec_u8(&input.as_bytes().to_vec())
     }

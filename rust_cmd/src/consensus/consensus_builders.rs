@@ -114,8 +114,8 @@ pub fn write_consensus_reads(
 }
 
 pub struct SamReadyOutput {
-    read: SortingReadSetContainer,
-    added_tags: HashMap<(u8, u8), String>,
+    pub read: SortingReadSetContainer,
+    pub added_tags: HashMap<(u8, u8), String>,
 }
 
 fn create_sam_read(
@@ -354,7 +354,7 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, consensus: &Vec<u8>,
 
 pub fn phred_to_prob(phred: &u8) -> f64 {
     assert!(phred >= &33 && phred <= &98, "{}", format!("Unable to format phred {}", phred)); // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
-    // TODO: we dont deal with phred + 64 format data
+    // TODO: we dont deal with phred + 64 format data -- at some point there will be legacy data that comes through; we should at least document this
     (10.0_f64).pow((phred.to_f64().unwrap() - 33.0) / (-10.0))
 }
 

@@ -51,9 +51,11 @@ use clap::Subcommand;
 use nanoid::nanoid;
 
 use pretty_trace::*;
+use crate::alignment_functions::align_reads;
 use crate::calling::call_events::BamCallingParser;
 use crate::collapse::collapse;
 use crate::read_strategies::sequence_layout::SequenceLayout;
+use crate::reference::fasta_reference::ReferenceManager;
 
 mod linked_alignment;
 pub mod extractor;
@@ -100,6 +102,7 @@ mod sorter;
 pub mod merger;
 mod collapse;
 mod alignment_manager;
+mod alignment_functions;
 
 mod reference {
     pub mod fasta_reference;
@@ -138,7 +141,7 @@ enum Cmd {
 
         #[clap(long, default_value = "0")]
         max_deletion: usize,
-    }/*,
+    },
     Align {
         #[clap(long)]
         read_structure: String,
@@ -170,7 +173,7 @@ enum Cmd {
         #[clap(long)]
         find_inversions: bool,
 
-    }*/,
+    },
 
     Call {
         #[clap(long)]
@@ -225,7 +228,7 @@ fn main() {
                      &my_yaml,
                      inbam);
         },
-/*
+
         Cmd::Align {
             read_structure,
             output_bam_file: output,
@@ -238,7 +241,7 @@ fn main() {
             threads,
             find_inversions,
         } => {
-            let my_yaml = SequenceLayoutDesign::from_yaml(read_structure);
+            let my_yaml = SequenceLayout::from_yaml(read_structure);
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
 
             let output_path = Path::new(&output);
@@ -254,7 +257,7 @@ fn main() {
                         index2,
                         threads,
                         find_inversions);
-        },*/
+        },
         Cmd::Call {
             read_structure,
             bam,
