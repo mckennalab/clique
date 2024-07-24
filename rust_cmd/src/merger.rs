@@ -229,6 +229,9 @@ pub fn sequence_to_fasta_vec(
         AlignedReadOrientation::ReverseComplement => {
             reverse_complement(&FastaBase::from_u8_slice(sequence))
         }
+        AlignedReadOrientation::Unknown => {
+            panic!("We can't merge reads when the orientation is marked 'Unknown' in the yaml specification file");
+        }
     }
 }
 

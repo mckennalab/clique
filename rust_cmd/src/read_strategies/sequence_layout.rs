@@ -43,9 +43,9 @@ impl SequenceLayout {
         file.read_to_string(&mut yaml_contents)
             .unwrap_or_else(|_x | panic!("Unable to read contents of YAML configuration file: {}",&yaml_file));
 
-        let deserialized_map: SequenceLayout = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
+        let mut deserialized_map: SequenceLayout = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
-        for reference in deserialized_map.references.values() {
+        for mut reference in deserialized_map.references.values_mut() {
 
             let mut ordering = reference.umi_configurations.values().map(|umi_config| {
                 umi_config.order
@@ -58,6 +58,8 @@ impl SequenceLayout {
             }), "The UMIConfigurations must have sequential order numbers, starting at 0");
 
             assert_eq!(reference.target_types.len(), reference.targets.len(), "Target sequences and target type lists must be the same length");
+
+            reference.fill_and_validate_target_positions();
         }
 
         deserialized_map
@@ -83,6 +85,7 @@ pub enum AlignedReadOrientation {
     Forward,
     Reverse,
     ReverseComplement,
+    Unknown,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -129,7 +132,7 @@ pub struct UMIConfiguration {
 
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Hash, Serialize, Deserialize, Clone, Eq)]
 pub enum TargetType {
     Static,
     Cas9WT,
@@ -149,6 +152,23 @@ pub struct ReferenceRecord {
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
     pub targets: Vec<String>,
     pub target_types: Vec<TargetType>,
+    pub target_locations: Option<Vec<usize>>,
+}
+
+impl ReferenceRecord {
+
+    pub fn fill_and_validate_target_positions(&mut self) {
+        assert!(self.target_locations.is_none());
+        let mut positions = Vec::new();
+
+        self.targets.iter().for_each(|target|
+            positions.push(match self.sequence.find(target.as_str()) {
+                Some(x) => x,
+                None => {panic!("Unable to find target {} in reference {}, please check your target sequences", target, self.sequence)}
+            }));
+
+        self.target_locations = Some(positions);
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]

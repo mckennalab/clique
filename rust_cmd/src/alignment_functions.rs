@@ -2,25 +2,25 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
-use std::str;
+
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
 use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment, perform_affine_alignment_bandwidth};
 use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
-use crate::extractor::{extract_tagged_sequences, gap_proportion_per_tag, get_sorting_order, stretch_sequence_to_alignment};
+
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator};
 use crate::reference::fasta_reference::{ReferenceManager};
 use std::time::{Instant};
 use bio::alignment::AlignmentOperation;
 use ndarray::Ix3;
-use shardio::{ShardReader, ShardSender, ShardWriter};
+
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 use crate::merger::{MergedReadSequence, UnifiedRead};
-use crate::read_strategies::sequence_layout::{SequenceLayout, UMIConfiguration};
+use crate::read_strategies::sequence_layout::{SequenceLayout};
 use rust_htslib::bam;
-use rust_htslib::bam::{Record};
-use rust_htslib::bam::record::{Aux, CigarString};
+
+
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use bio::alignment::pairwise::{Aligner, Scoring};
 use itertools::Itertools;
@@ -94,6 +94,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
 
             let seq_len =  &xx.seq().len();
             if seq_len < &max_read_size {
+
                 let aligned = align_to_reference_choices(name,
                                                          xx.seq(),
                                                          rm,
@@ -114,8 +115,8 @@ pub fn align_reads(read_structure: &SequenceLayout,
                     }
                     Some(alignment_obj) => {
                         let results = alignment_obj.alignment;
-                        let orig_ref_seq = alignment_obj.ref_sequence;
-                        let ref_name = alignment_obj.ref_name;
+                        let _orig_ref_seq = alignment_obj.ref_sequence;
+                        let _ref_name = alignment_obj.ref_name;
 
                         match results {
                             None => {
@@ -133,7 +134,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
                                 }
                                 assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
 
-                                let mut read = SortingReadSetContainer::empty_tags(aln);
+                                let read = SortingReadSetContainer::empty_tags(aln);
                                 let new_read = SamReadyOutput{ read, added_tags: Default::default() };
 
                                 //let samrecord = aln.to_sam_record(&i32::try_from(*reference_record).ok().unwrap(), &empty_tags, None);
@@ -467,10 +468,10 @@ pub fn align_to_reference_choices(read_name: &String,
                                   read_structure: &SequenceLayout,
                                   alignment_mat: &mut Alignment<Ix3>,
                                   my_aff_score: &AffineScoring,
-                                  my_score: &InversionScoring,
-                                  use_inversions: &bool,
-                                  max_reference_multiplier: f64,
-                                  min_read_length: usize,
+                                  _my_score: &InversionScoring,
+                                  _use_inversions: &bool,
+                                  _max_reference_multiplier: f64,
+                                  _min_read_length: usize,
                                   max_indel: &usize,
 ) -> Option<AlignmentWithRef> {
     match rm.references.len() {
@@ -494,8 +495,8 @@ pub fn align_to_reference_choices(read_name: &String,
             };
 
             let aln = align_two_strings_passed_matrix(
-                read_name,
                 &ref_name,
+                read_name,
                 &ref_base.sequence,
                 &forward_oriented_seq,
                 my_aff_score,
@@ -692,7 +693,7 @@ pub fn perform_rust_bio_alignment(reference_name: &String, read_name: &String, r
 }
 
 
-pub fn bio_to_alignment_result(read_name: &String, ref_name: &String, alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
+pub fn bio_to_alignment_result(_read_name: &String, _ref_name: &String, alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     let mut aligned_ref = Vec::new();
     let mut aligned_read = Vec::new();
     let mut ref_pos = alignment.ystart;
@@ -838,7 +839,7 @@ mod tests {
     use crate::alignment::fasta_bit_encoding::FastaBase;
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
     use crate::alignment_functions::{exhaustive_alignment_search, simplify_cigar_string};
-    use crate::read_strategies::sequence_layout::{AlignedReadOrientation, ReadPosition, SequenceLayout, SequenceLayoutDesign};
+    use crate::read_strategies::sequence_layout::{AlignedReadOrientation, ReadPosition, SequenceLayout};
     use crate::reference::fasta_reference::{Reference, ReferenceManager};
 
     #[test]
@@ -877,12 +878,12 @@ mod tests {
 
         };
 
-        let best_ref = exhaustive_alignment_search(&read_one, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, &&rm, &mut read_mat, &my_aff_score);
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("1_AAACCCCGGG_GGTAGCAAACGTTTGGACGTG".to_string().into_bytes()).unwrap());
 
         let read_one = FastaBase::from_string(&"atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTGCCCTTACTCTCACCTGATTACTTAATCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAACGCCCTACgaattcgggcccattggtatggc".to_string().to_ascii_uppercase());
-        let best_ref = exhaustive_alignment_search(&read_one, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, &&rm, &mut read_mat, &my_aff_score);
 
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("2_AACGCCCTAC_GGTGCCCTTACTCTCACCTGATTACTTAATCCGTG".to_string().into_bytes()).unwrap());
@@ -924,7 +925,7 @@ mod tests {
 
         };
 
-        let best_ref = exhaustive_alignment_search(&read_one, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, &&rm, &mut read_mat, &my_aff_score);
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("ref_48_GGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTG".to_string().into_bytes()).unwrap());
     }
@@ -951,31 +952,4 @@ mod tests {
         assert_eq!(resulting_cigar, merged_cigar);
     }
 
-    #[test]
-    fn writing_sam_file() {
-        let mut header_record = bam::header::HeaderRecord::new(b"SQ");
-        header_record.push_tag(b"SN", &"chr1");
-        header_record.push_tag(b"LN", &"150");
-        let mut header = bam::Header::new();
-        header.push_record(&header_record);
-
-        let mut out = bam::Writer::from_path(&"test_data/out.bam", &header, bam::Format::Bam).unwrap();
-        let alignment_record = AlignmentResult {
-            reference_aligned: FastaBase::from_string(&"CCAATCTACTACTGCTTGCA".to_string()),
-            read_aligned: FastaBase::from_string(&"CCAATCTACTACTGCTTGCA".to_string()),
-            cigar_string: vec![AlignmentTag::MatchMismatch(20)],
-            path: vec![],
-            score: 0.0,
-            reference_start: 0,
-            read_start: 0,
-            bounding_box: None,
-        };
-
-        for _i in 0..1000 {
-            out.write(&alignment_record.to_sam_record("test",
-                                                      &"CCAATCTACTACTGCTTGCA".to_string().into_bytes(),
-                                                      &0,
-                                                      &false)).unwrap();
-        }
-    }
 }

@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use rustc_hash::{FxHasher, FxHashMap};
 use shardio::{ShardSender, ShardWriter};
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
+use crate::alignment::fasta_bit_encoding::{FastaBase};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
-use crate::umis::sequence_clustering::{get_connected_components, InputList, vantage_point_string_graph};
+
 use rust_starcode::StarcodeAlignment;
 
 pub struct DegenerateBuffer {
@@ -49,12 +49,12 @@ impl DegenerateBuffer {
         item.ordered_unsorted_keys.push_front(key_value.clone()); // we want to keep the key in the list for now, we'll remove it later
         assert_eq!(key_value.0, self.tag.symbol);
 
-        //let x : usize = key_value.1.iter().map(|x| if *x == FASTA_UNSET {1} else {0}).sum();
-        //println!("Added {} and {} is valid ",FastaBase::string(&key_value.1), x);//, item);
+
+        let gaplengthgapless = FastaBase::strip_gaps(&key_value.1);
 
         *self
             .hash_map
-            .entry(FastaBase::vec_u8(&FastaBase::strip_gaps(&key_value.1)))
+            .entry(FastaBase::vec_u8(&gaplengthgapless))
             .or_insert(0) += 1;
 
         match (
@@ -87,6 +87,19 @@ impl DegenerateBuffer {
 
     /// This function 'corrects' a list of barcodes using starcode
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
+        println!("Correcting list of length {}",self.hash_map.len());
+        self.hash_map.iter().for_each(|(k,v)| {
+            for x in k {
+                match x {
+                    &b'a' | &b'A' | &b'c' | &b'C' | &b'g' | &b'G' | &b't' | &b'T' => {
+
+                    },
+                    _  => {
+                        println!("Invalid character {} in {}",x,String::from_utf8(k.clone()).unwrap());
+                    }
+                }
+            }
+        });
         let correction = StarcodeAlignment::align_sequences(&self.hash_map, &(i32::try_from(self.tag.max_distance).unwrap()), &3.0);
         let mut knowns: FxHashMap<Vec<u8>,Vec<u8>> = FxHashMap::default();
         for i in 0..correction.cluster_centers.len() {

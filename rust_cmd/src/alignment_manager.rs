@@ -25,6 +25,7 @@ use crate::alignment::alignment_matrix::{
 };
 use crate::alignment::fasta_bit_encoding::FastaBase;
 use noodles_sam;
+use crate::consensus::consensus_builders::SamReadyOutput;
 
 /// something that writes aligned reads. The output may or may not respect all the fields
 /// of the SortingReadSetContainer
@@ -32,8 +33,9 @@ pub trait OutputAlignmentWriter: Sync + Send {
     fn write_read(
         &mut self,
         read_set_container: &SortingReadSetContainer,
-        additional_tags: &HashMap<(u8, u8), String>,
+        additional_tags: &HashMap<[u8; 2], String>,
     ) -> Result<()>;
+
 }
 
 /// implement a OutputAlignmentWriter for BAM files
@@ -42,6 +44,7 @@ pub struct BamFileAlignmentWriter<'a> {
     header: noodles_sam::Header,
     reference_manager: ReferenceManager<'a, 'a, 'a>,
 }
+
 unsafe impl<'a> Send for BamFileAlignmentWriter<'a> {}
 unsafe impl<'a> Sync for BamFileAlignmentWriter<'a> {}
 
@@ -83,10 +86,10 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
     fn write_read(
         &mut self,
         read_set_container: &SortingReadSetContainer,
-        _additional_tags: &HashMap<(u8, u8), String>,
+        additional_tags: &HashMap<[u8; 2], String>,
     ) -> Result<()> {
         let writer = Arc::clone(&self.underlying_bam_file);
-        
+
         let reference_record = self
             .reference_manager
             .reference_name_to_ref
@@ -99,7 +102,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
             )
             .unwrap();
 
-        let mut extra_annotations = HashMap::new();
+        let mut extra_annotations = additional_tags.clone();
         read_set_container.ordered_sorting_keys.iter().for_each(|(key, value)| {
             extra_annotations.insert(
                 [b'e', *key as u8],
@@ -125,6 +128,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
             
         Ok(())
     }
+
 }
 
 pub fn align_two_strings(

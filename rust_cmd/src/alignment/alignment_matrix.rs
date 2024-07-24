@@ -26,6 +26,7 @@ use noodles_sam::alignment::record::cigar::op::Kind;
 
 use crate::alignment_manager::simplify_cigar_string;
 use noodles_sam::alignment::record::cigar::Op as Op;
+use noodles_sam::alignment::record::Flags;
 use noodles_sam::alignment::record_buf::Cigar as CigarBuf;
 
 pub const MAX_NEG_SCORE: f64 = -100000.0;
@@ -751,6 +752,7 @@ impl AlignmentResult {
                 Some(x) => {QualityScores::from(x.clone())}, None => {QualityScores::from(vec![b'H'; seq_len])}
             })
             .set_reference_sequence_id(*reference_id as usize)
+            .set_flags(Flags::PROPERLY_ALIGNED)
             .set_data(data).build()
     }
 

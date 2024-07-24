@@ -3,67 +3,96 @@ use std::fs::File;
 use bio::bio_types::genome::AbstractInterval;
 use bio::bio_types::sequence::{SequenceRead};
 use itertools::Itertools;
-use phf::phf_map;
 use rust_htslib::bam;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{Read, Record};
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView};
 use std::io::Write;
 use crate::alignment::fasta_bit_encoding::FastaBase;
-use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout};
+use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout, TargetType};
 use crate::reference::fasta_reference::ReferenceManager;
 
-#[derive(Copy, Clone, Eq, Hash, PartialEq)]
-pub enum ExtractorTag {
-    E0,
-    E1,
-    E2,
-    E3,
-    E4,
-    E5,
-    E6,
-    E7,
-    E8,
-    E9,
+
+// Derive the Clone and PartialEq traits for the ExtractorTags enum
+#[derive(Clone, PartialEq)]
+pub enum ExtractorTags {
+    // AC represents the read count with a value of type u64, coded as 'a', 'c'
+    // Old value: [b'r', b'c']
+    AC { value: u64 },
+
+    // AD represents the downsampled read count with a value of type u64, coded as 'a', 'd'
+    // Old value: [b'd', b'c']
+    AD { value: u64 },
+
+    // AN represents the read names with a value of type String, coded as 'a', 'n'
+    // Old value: [b'a', b'r']
+    AN { value: String },
+
+    // AR represents the alignment rate with a value of type f64, coded as 'a', 'r'
+    // Old value: [b'r', b'm']
+    AR { value: f64 },
+
+    // AS represents the alignment score with a value of type f64, coded as 'a', 's'
+    // Old value: [b'a', b's']
+    AS { value: f64 },
+
+    // BARCODE represents a barcode with a reference name and value, both of type String
+    // Reference name starts with 'b' and ends in 0-9
+    BARCODE { reference_name: String, value: String },
+
+    // TARGET represents a target with a reference name, wild-type sequence, and editor type
+    // Reference name starts with 'e-z' and ends in 0-9
+    // 'a-z' are extracted tags
+    TARGET { reference_name: String, target_offset_in_reference: usize},
 }
 
-impl ExtractorTag {
-
-    #[allow(dead_code)]
-    pub fn to_id_value(&self) -> usize {
-        match self {
-            ExtractorTag::E0 => {0}
-            ExtractorTag::E1 => {1}
-            ExtractorTag::E2 => {2}
-            ExtractorTag::E3 => {3}
-            ExtractorTag::E4 => {4}
-            ExtractorTag::E5 => {5}
-            ExtractorTag::E6 => {6}
-            ExtractorTag::E7 => {7}
-            ExtractorTag::E8 => {8}
-            ExtractorTag::E9 => {9}
-        }
-    }
-}
-
-#[derive(Clone, Eq, Hash, PartialEq)]
+#[derive(Clone, PartialEq)]
 struct ExtractorPair {
-    extractor: ExtractorTag,
+    extractor: ExtractorTags,
     value: String,
 }
+pub struct TargetExtractorState {
+    current_target_id: usize,
+}
 
-static EXTRACTORTYPE: phf::Map<&'static str, ExtractorTag> = phf_map! {
-        "e0" => ExtractorTag::E0,
-        "e1" => ExtractorTag::E1,
-        "e2" => ExtractorTag::E2,
-        "e3" => ExtractorTag::E3,
-        "e4" => ExtractorTag::E4,
-        "e5" => ExtractorTag::E5,
-        "e6" => ExtractorTag::E6,
-        "e7" => ExtractorTag::E7,
-        "e8" => ExtractorTag::E8,
-        "e9" => ExtractorTag::E9,
-};
+impl ExtractorTags {
+    pub fn extract_matching_tag(tag: &[u8; 2], value: &String, reference_name: &String, sequence_layout: &SequenceLayout) -> Option<ExtractorTags> {
+        match tag {
+            &[b'a', b'c'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
+            &[b'a', b'd'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
+            &[b'a', b'n'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
+            &[b'a', b'r'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
+            &[b'a', b's'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
+            &[x, y] if x == b'b' => {
+                // make sure the reference is in the lookup table
+                assert!(sequence_layout.references.contains_key(reference_name));
+                Some(ExtractorTags::BARCODE{
+                    reference_name: reference_name.clone(),
+                    value: value.clone(),
+                })
+            },
+            &[x, y] if x >= b'e' && x <= b'z' => {
+                assert!(y >= b'0' && y <= b'9');
+                let second_offset : usize = (y as usize) - 48; // 48 = '0' in ASCII
+                let target_offset = second_offset * ((x as usize) - 101); // 101 = 'e' in ASCII
+
+                // make sure the reference is in the lookup table
+                assert!(sequence_layout.references.contains_key(reference_name));
+                let ref_obj = sequence_layout.references.get(reference_name).unwrap();
+
+                Some(ExtractorTags::TARGET{
+                    reference_name: reference_name.clone(),
+                    target_offset_in_reference: target_offset,
+                })
+            },
+            _ => {
+                // we don't know what this is
+                None
+            },
+        }
+    }
+
+}
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
 enum BaseModifications {
@@ -456,28 +485,79 @@ impl BamCallingParser<'_, '_, '_> {
         }
     }
 
-    fn extraction_tags(&mut self, bam_entry: &Record) -> Vec<ExtractorPair> {
+    fn extraction_tags(&self, bam_entry: &Record, reference: &String) -> Vec<ExtractorTags> {
         let mut extractors = Vec::new();
 
         bam_entry.aux_iter().for_each(|c| {
             match c {
                 Ok((aux_tag, aux_enum)) => {
-                    if aux_tag[0] == b'e' && aux_tag[1] >= b'0' && aux_tag[1] <= b'9' {
-                        let extractor = EXTRACTORTYPE.get(String::from_utf8(aux_tag.to_vec()).unwrap().as_str()).unwrap().clone();
-                        match aux_enum {
-                            Aux::String(x) => {
-                                extractors.push(ExtractorPair { extractor, value: x.to_string() })//;
+                    // match the aux tag against our known list of tags
+                    match aux_enum {
+                        Aux::String(x) => {
+                            match ExtractorTags::extract_matching_tag(&[aux_tag[0],aux_tag[1]],&x.to_string(),reference, &self.sequence_layout) {
+                                None => {}
+                                Some(x) => {
+                                    extractors.push(x);
+                                }
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
+
                 }
-                Err(_) => { panic!("Unable to read auxillary tags") }
+                Err(_) => { panic!("Unable to read auxillary tags from BAM file") }
             }
         });
         extractors
     }
 
+    /// Computes overlaps between reference target ranges and full alignment tokens.
+    ///
+    /// This function checks each `TargetRange` from `reference_targets` against
+    /// each token in `full_alignment_tokens` to determine overlaps. Overlaps are
+    /// determined based on the position intersection of the `TargetRange` with the
+    /// range derived from each token. It then encodes these overlaps into strings.
+    ///
+    /// # Parameters
+    /// - `reference_targets`: A reference to a vector of tuples, each containing a `TargetRange`
+    ///   and an associated string identifier. The `TargetRange` typically specifies a range
+    ///   within a sequence or dataset.
+    /// - `full_alignment_tokens`: A reference to a vector of `FullAlignment` tokens, which are
+    ///   used to check for positional overlaps with the `TargetRange`. Each token can be converted
+    ///   to a range and optionally holds alignment information.
+    ///
+    /// # Returns
+    /// A `Vec<String>` where each element corresponds to a comma-separated string of encoded
+    /// overlaps for each `TargetRange`. If there are no overlaps for a particular range, the
+    /// corresponding string will be "NONE".
+    ///
+    /// # Examples
+    /// Suppose we have the following `TargetRange` and `FullAlignment` data structures:
+    /// ```
+    /// struct TargetRange {
+    ///     start: usize,
+    ///     end: usize,
+    /// }
+    ///
+    /// enum FullAlignment {
+    ///     Match(usize, usize),
+    ///     Mismatch(usize, usize),
+    /// }
+    /// ```
+    ///
+    /// Example usage might look like this:
+    /// ```
+    /// let reference_targets = vec![(TargetRange{start: 1, end: 5}, "target1")];
+    /// let tokens = vec![FullAlignment::Mismatch(2, 4)];
+    /// let overlaps = target_overlaps(&reference_targets, &tokens);
+    /// assert_eq!(overlaps, vec!["encoded_value"]);
+    /// ```
+    ///
+    /// This function utilizes `target_pos.intersect_position` to determine if a `TargetRange`
+    /// intersects with a range derived from each `FullAlignment` token. It filters out tokens
+    /// based on the intersection results, then converts the intersecting tokens to a string
+    /// encoding using `to_encoding`. If no valid encoding is found, an uppercase empty string
+    /// is used, which is converted to "NONE" if the entire string for a target is empty.
     fn target_overlaps(reference_targets: &Vec<(TargetRange, String)>, full_alignment_tokens: &Vec<FullAlignment>) -> Vec<String> {
         let target_overlap = reference_targets.iter().map(|(target_pos, _name)| {
             full_alignment_tokens.iter().filter(|tk| {
@@ -494,7 +574,7 @@ impl BamCallingParser<'_, '_, '_> {
 
 
     //fn process_alignment(reference: &str, query: &str, cigar: &str) -> Vec<String> {}
-    pub fn output_bam_file_entries(&mut self, bam_file: &str, output_file: &str) -> std::io::Result<()> {
+    pub fn output_bam_file_entries(&self, bam_file: &str, output_file: &str) -> std::io::Result<()> {
         let mut bam = bam::Reader::from_path(bam_file).unwrap();
         let header = bam::Header::from_template(bam.header());
 
@@ -522,12 +602,13 @@ impl BamCallingParser<'_, '_, '_> {
                     let extractor_id_to_name : BTreeMap<usize,String> = layout_record.umi_configurations.iter().map(|(k,v)| (v.order.clone(),k.clone())).collect();
 
                     let reference = self.reference_manager.reference_name_to_ref.get(ref_name).expect("Unable to find reference");
+                    let ref_name = String::from_utf8(self.reference_manager.references.get(reference).unwrap().name.clone()).unwrap();
                     let reference_sequence = FastaBase::vec_u8(&self.reference_manager.references.get(reference).unwrap().sequence);
                     let alignment_start = record.reference_start();
 
                     // TODO output extractor tags
-                    let extractor_tokens = self.extraction_tags(&record);
-                    let _token_output : Vec<(String,ExtractorPair)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id).unwrap().clone())).into_iter().collect::<Vec<(String,ExtractorPair)>>();
+                    let extractor_tokens = self.extraction_tags(&record, &ref_name);
+                    let token_output : Vec<(String,Option<&ExtractorTags>)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id))).into_iter().collect::<Vec<(String,Option<&ExtractorTags>)>>();
 
                     let cigar_tokens = extract_read_cigar_elements(&(alignment_start as u32), &reference_sequence, &record.seq().as_bytes(), &record.cigar());
 
@@ -536,7 +617,7 @@ impl BamCallingParser<'_, '_, '_> {
 
                     let target_output = BamCallingParser::target_overlaps(&reference_targets, &cigar_tokens);
 
-                    write!(file, "{}\t{}\t{}\t{}\n", String::from_utf8(record.name().to_vec()).unwrap(), String::from_utf8(ref_name.to_vec()).unwrap(), alignment_start, target_output.join(",")).expect("Unable to write to output file");
+                    write!(file, "{}\t{}\t{}\t{}\n", String::from_utf8(record.name().to_vec()).unwrap(), ref_name, alignment_start, target_output.join(",")).expect("Unable to write to output file");
                 }
                 Err(_x) => {
                     panic!("Underlying BAM file error!")
