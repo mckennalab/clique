@@ -10,7 +10,7 @@ use noodles_sam::header::record::value::Map;
 use noodles_sam::Header;
 use noodles_util::alignment;
 use std::collections::HashMap;
-
+use std::error::Error;
 
 
 use std::io::Result;
@@ -25,6 +25,8 @@ use crate::alignment::alignment_matrix::{
 };
 use crate::alignment::fasta_bit_encoding::FastaBase;
 use noodles_sam;
+use noodles_sam::alignment::record::Name;
+
 use crate::consensus::consensus_builders::SamReadyOutput;
 
 /// something that writes aligned reads. The output may or may not respect all the fields
@@ -119,9 +121,12 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
         
         match output
             .write_record(&self.header, &samrecord) {
-                Ok(_x) => {},
+                Ok(_x) => {
+                    //println!("Added read!")
+                },
                 Err(e) => {
-                    println!("Sequence: {:?}", samrecord);
+                    println!("Sequence: {} {:?}", String::from_utf8(samrecord.name().unwrap().as_bytes().clone().to_vec()).unwrap(),samrecord);
+                    println!("error kind {} {}", e.kind().to_string(),e.description());
                     panic!("Unable to write record to bam file; error {}", e);
                 },
             }

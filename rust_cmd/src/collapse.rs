@@ -63,6 +63,8 @@ pub fn collapse(
     // for each reference, we fetch aligned reads, pull the sorting tags, and output the collapsed reads to a BAM file
     rm.references.iter().for_each(|(_id, reference)| {
         let ref_name = String::from_utf8(reference.name.clone()).unwrap();
+        info!("processing reads from input BAM file: {}", bam_file);
+
         let sorted_reads_option: Option<ShardReader<SortingReadSetContainer>> =
             sort_reads_from_bam_file(bam_file, &ref_name, &rm, read_structure, temp_directory);
 
@@ -487,7 +489,7 @@ pub fn sort_degenerate_level(
     let maximum_reads_per_bin = if tag.maximum_subsequences.is_some() {
         tag.maximum_subsequences.clone().unwrap()
     } else {
-        usize::MAX
+        10000 // TODO make this a constant somewhere
     };
 
     let mut current_sorting_bin: Option<DegenerateBuffer> = None;
@@ -513,29 +515,19 @@ pub fn sort_degenerate_level(
             Some(mut bin) => {
                 let reads_equal = last_read.as_ref().unwrap().cmp(&mut current_read) == Ordering::Equal;
 
-                // TODO: I do not like this logic being here... this should be handled by the bin, we should just dump into them
-                match (reads_equal, bin.bin_size_exceeded()) {
-                    (true, true) => {
-                        // do nothing, we've overflowed the bin
-                    }
-                    (false, true) => {
-                        // don't write the previous bin, but add the current read to the next bin
-                        bin.clean();
-                        bin.push(current_read);
-                        warn!("dropping bin due to overflow, please check that this is intentional!!!")
-                    }
-                    (true, false) => {
+                match (reads_equal) {
+                    true => {
                         // add the current read to the bin
                         bin.push(current_read);
                     }
-                    (false, false) => {
+                    false => {
                         // write the previous bin, and add the current read to the next bin
-                        output_reads += close_and_write_bin(&mut sender, &mut bin);
+                        output_reads += bin.close_and_write_to_shard_writer(&mut sender);
                         bin.push(current_read);
                     }
                 }
             }
-        }
+        };
 
         last_read = Some(next_last_read);
     });
@@ -543,7 +535,8 @@ pub fn sort_degenerate_level(
     match current_sorting_bin {
         None => {}
         Some(mut bin) => {
-            output_reads += close_and_write_bin(&mut sender, &mut bin);
+            output_reads += bin.close_and_write_to_shard_writer(&mut sender);
+
         }
     }
 
@@ -555,29 +548,6 @@ pub fn sort_degenerate_level(
     sharded_output.finish().unwrap();
 
     (output_reads, ShardReader::open(aligned_temp).unwrap())
-}
-
-fn close_and_write_bin(
-    sender: &mut ShardSender<SortingReadSetContainer>,
-    current_sorting_bin: &mut DegenerateBuffer,
-) -> usize {
-    let (buffer, correction) = current_sorting_bin.close();
-    let ret = buffer.len();
-    for mut y in buffer {
-        let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
-        let corrected = match correction.get(&FastaBase::vec_u8_strip_gaps(&key_value.1)) {
-            None => {
-                panic!("Unable to find match for key {} in corrected values", FastaBase::string(&key_value.1));
-            },
-            Some(x) => {
-                x
-            },
-        };
-        y.ordered_sorting_keys
-            .push((key_value.0, FastaBase::from_vec_u8(corrected)));
-        sender.send(y).unwrap();
-    }
-    ret
 }
 
 pub fn sort_known_level(

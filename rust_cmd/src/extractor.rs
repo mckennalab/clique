@@ -274,7 +274,9 @@ pub fn extract_tag_sequences(
             .umi_configurations
             .iter()
             .map(|(_umi_name, umi_obj)| {
+
                 let ets_hit = ets.get(&umi_obj.symbol.to_string().as_bytes()[0]);
+
                 match ets_hit {
                     Some(e) => {
                         if e.len() != umi_obj.length {
@@ -293,7 +295,7 @@ pub fn extract_tag_sequences(
                             .collect::<Vec<FastaBase>>();
 
                         if gaps > umi_obj.max_gaps.unwrap_or(gaps) {
-                            //println!("tossing reads {} {}",gaps, e);
+                            println!("tossing reads {} {}",gaps, e);
                             invalid_read = true;
                         } //else {
                             //println!("keeping reads {} {} level {}",gaps, e, umi_obj.max_gaps.unwrap_or(gaps));
@@ -303,8 +305,11 @@ pub fn extract_tag_sequences(
                             umi_obj.symbol,
                             str
                         ))
-                    }
+                    },
+
                     None => {
+                        println!("None read");
+
                         invalid_read = true;
                         None
                     }

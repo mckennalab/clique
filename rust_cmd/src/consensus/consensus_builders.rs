@@ -341,7 +341,7 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
             quals.push(*qual);
         });
 
-        let qual_scores = combine_qual_scores(&bases, &quals, &0.75);
+        let qual_scores = combine_qual_scores(&bases, &quals, &0.75, &true);
         let index_of_max: usize = qual_scores
             .iter()
             .enumerate()
@@ -366,33 +366,42 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
     (conc, final_quals)
 }
 
-pub fn phred_to_prob(phred: &u8) -> f64 {
-    assert!(phred >= &33 && phred <= &98, "{}", format!("Unable to format phred {}", phred)); // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
+pub fn phred_to_prob(phred: &u8, floor_of_zero: &bool) -> f64 {
+    let phred =
+        match (phred < &33_u8) && *floor_of_zero {
+            true => 33_u8,
+            false => *phred,
+        };
+
+
+    assert!(phred >= 33 && phred <= 98, "{}", format!("Unable to format phred {}", phred)); // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
     // TODO: we dont deal with phred + 64 format data -- at some point there will be legacy data that comes through; we should at least document this
-    (10.0_f64).pow((phred.to_f64().unwrap() - 33.0) / (-10.0))
+    (10.0_f64).pow((phred.to_f64().unwrap() - 32.99999) / (-10.0)) // 32.9999 to avoid Inf powers
 }
 
 pub fn prob_to_phred(prob: &f64) -> u8 {
     // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
     assert!(prob >= &0.0_f64 && prob <= &1.0_f64, "{}", format!("Unable to format prob {}", prob));
     if prob < &0.00000001_f64 {
-        return 0;
+        return 33_u8;
     }
 
     // TODO: we dont deal with phred + 64 format data
-    let ret = 33.0 + ((-10.0) * (1.0 - prob).log10());
+    let ret = 33.0 + ((-10.0) * (1.00000000001 - prob).log10()); // again to prevent zero getting in, we subtract from 1 + epsilon
     //println!("prob {} ret {}",prob, ret);
     assert!(ret >= 0.0_f64 && ret <= 256.0_f64, "{}", format!("Unable to format phred {}", ret));
 
     let ret = ret.round().to_u8().unwrap();
-    if ret > 98 {
-        98
+    let ret = if ret > 40 { // cap PHRED at 40; Noodles doesn't like higher TODO: fix this
+        40_u8
     } else {
-        ret
-    }
+        ret as u8
+    };
+    assert!(ret >= 33_u8 && ret <= 40_u8);
+    ret
 }
 
-fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64) -> [f64; 5] {
+fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64, phred_floor_at_33: &bool) -> [f64; 5] {
     // p(G|D) = ( p(G) * p(G|D) ) / p(D)
     // p(G) = prior, we assume 1-error for reference base, error/3 for non-reference base
     // p(D) = we're looking at log likelihood, so this goes away
@@ -421,10 +430,10 @@ fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64) -> 
         if base_id < 5 {
             (0..5).for_each(|i| {
                 if i == base_id {
-                    allele_props[i] = allele_props[i] + (1.0 - phred_to_prob(qs)).log2();
+                    allele_props[i] = allele_props[i] + (1.0 - phred_to_prob(qs, phred_floor_at_33)).log2();
                     //println!("MT id {} new prop {}", i, allele_props[i]);
                 } else {
-                    allele_props[i] = allele_props[i] + (phred_to_prob(qs) / 3.0_f64).log2();
+                    allele_props[i] = allele_props[i] + (phred_to_prob(qs, phred_floor_at_33) / 3.0_f64).log2();
                     //println!("NM id {} new prop {}", i, allele_props[i]);
                 }
             });

@@ -36,11 +36,11 @@ pub enum ExtractorTags {
     // Old value: [b'a', b's']
     AS { value: f64 },
 
-    // BARCODE represents a barcode with a reference name and value, both of type String
+    // BARCODE represents a extracted barcode sequence with a reference name and nucleotide value, both of type String
     // Reference name starts with 'b' and ends in 0-9
     BARCODE { reference_name: String, value: String },
 
-    // TARGET represents a target with a reference name, wild-type sequence, and editor type
+    // TARGET represents a CRISPR / editing target with a reference name, wild-type sequence, and editor type
     // Reference name starts with 'e-z' and ends in 0-9
     // 'a-z' are extracted tags
     TARGET { reference_name: String, target_offset_in_reference: usize},
@@ -731,8 +731,6 @@ mod tests {
         assert_eq!(positions.get(&1).unwrap()[1].start, 35);
         assert_eq!(positions.get(&1).unwrap()[2].start, 89);
     }
-
-
 
     #[test]
     fn full_alignment_encoding() {

@@ -749,8 +749,8 @@ impl AlignmentResult {
             .set_cigar(Cigar::from_iter(self.cigar_string.iter().map(|m| m.to_op()).into_iter()).clone())
             .set_alignment_start(noodles_core::Position::new(self.reference_start+1).unwrap())
             .set_quality_scores(match &self.read_quals {
-                Some(x) => {QualityScores::from(x.clone())}, None => {QualityScores::from(vec![b'H'; seq_len])}
-            })
+                Some(x) => {QualityScores::from(x.clone())},
+                None => {QualityScores::from(vec![b'H'; seq_len])}})
             .set_reference_sequence_id(*reference_id as usize)
             .set_flags(Flags::PROPERLY_ALIGNED)
             .set_data(data).build()
