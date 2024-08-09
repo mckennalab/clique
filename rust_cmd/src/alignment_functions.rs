@@ -192,6 +192,7 @@ impl Eq for MemorizedAlignment {}
 type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 
 
+#[allow(dead_code)]
 fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {
     let mut invalid_read = false;
     let queue = VecDeque::from(sorted_tags.iter().
@@ -210,6 +211,7 @@ fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> 
     (invalid_read, queue)
 }
 
+#[allow(dead_code)]
 pub fn align_two_strings(read1_name: &String,
                          read1_seq: &Vec<FastaBase>,
                          rev_comp_read2: &Vec<FastaBase>,
@@ -393,7 +395,7 @@ pub fn align_two_strings_passed_matrix(
 
 
 #[derive(Clone)]
-struct AlignmentWithRef {
+pub struct AlignmentWithRef {
     alignment: Option<AlignmentResult>,
     ref_name: Vec<u8>,
     ref_sequence: Vec<u8>,
@@ -680,6 +682,7 @@ fn cigar_to_alignment(reference: &Vec<FastaBase>,
     (alignment_string1, alignment_string2)
 }
 
+#[allow(dead_code)]
 pub fn perform_rust_bio_alignment(reference_name: &String, read_name: &String, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     // TODO: do a better look at scoring here!
     let score = |a: u8, b: u8| if a == b || a == b'N' || b == b'N' { 2i32 } else { -2i32 };
@@ -693,6 +696,7 @@ pub fn perform_rust_bio_alignment(reference_name: &String, read_name: &String, r
 }
 
 
+#[allow(dead_code)]
 pub fn bio_to_alignment_result(_read_name: &String, _ref_name: &String, alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
     let mut aligned_ref = Vec::new();
     let mut aligned_read = Vec::new();

@@ -45,7 +45,7 @@ impl SequenceLayout {
 
         let mut deserialized_map: SequenceLayout = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
-        for mut reference in deserialized_map.references.values_mut() {
+        for reference in deserialized_map.references.values_mut() {
 
             let mut ordering = reference.umi_configurations.values().map(|umi_config| {
                 umi_config.order

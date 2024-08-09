@@ -9,7 +9,7 @@ use rust_htslib::bam::{Read, Record};
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView};
 use std::io::Write;
 use crate::alignment::fasta_bit_encoding::FastaBase;
-use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout, TargetType};
+use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout};
 use crate::reference::fasta_reference::ReferenceManager;
 
 
@@ -63,7 +63,7 @@ impl ExtractorTags {
             &[b'a', b'n'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
             &[b'a', b'r'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
             &[b'a', b's'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
-            &[x, y] if x == b'b' => {
+            &[x, _y] if x == b'b' => {
                 // make sure the reference is in the lookup table
                 assert!(sequence_layout.references.contains_key(reference_name));
                 Some(ExtractorTags::BARCODE{
@@ -78,7 +78,7 @@ impl ExtractorTags {
 
                 // make sure the reference is in the lookup table
                 assert!(sequence_layout.references.contains_key(reference_name));
-                let ref_obj = sequence_layout.references.get(reference_name).unwrap();
+                let _ref_obj = sequence_layout.references.get(reference_name).unwrap();
 
                 Some(ExtractorTags::TARGET{
                     reference_name: reference_name.clone(),
@@ -608,7 +608,7 @@ impl BamCallingParser<'_, '_, '_> {
 
                     // TODO output extractor tags
                     let extractor_tokens = self.extraction_tags(&record, &ref_name);
-                    let token_output : Vec<(String,Option<&ExtractorTags>)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id))).into_iter().collect::<Vec<(String,Option<&ExtractorTags>)>>();
+                    let _token_output : Vec<(String,Option<&ExtractorTags>)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id))).into_iter().collect::<Vec<(String,Option<&ExtractorTags>)>>();
 
                     let cigar_tokens = extract_read_cigar_elements(&(alignment_start as u32), &reference_sequence, &record.seq().as_bytes(), &record.cigar());
 

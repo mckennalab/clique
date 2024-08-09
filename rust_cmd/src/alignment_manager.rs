@@ -27,7 +27,7 @@ use crate::alignment::fasta_bit_encoding::FastaBase;
 use noodles_sam;
 use noodles_sam::alignment::record::Name;
 
-use crate::consensus::consensus_builders::SamReadyOutput;
+
 
 /// something that writes aligned reads. The output may or may not respect all the fields
 /// of the SortingReadSetContainer
@@ -125,8 +125,8 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
                     //println!("Added read!")
                 },
                 Err(e) => {
-                    println!("Sequence: {} {:?}", String::from_utf8(samrecord.name().unwrap().as_bytes().clone().to_vec()).unwrap(),samrecord);
-                    println!("error kind {} {}", e.kind().to_string(),e.description());
+                    println!("Sequence: {} {:?}", String::from_utf8(samrecord.name().unwrap().as_bytes().to_vec()).unwrap(),samrecord);
+                    println!("error kind {} {}", e.kind().to_string(),e.to_string());
                     panic!("Unable to write record to bam file; error {}", e);
                 },
             }

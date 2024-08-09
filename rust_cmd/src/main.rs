@@ -265,7 +265,7 @@ fn main() {
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
 
-            let mut parser = BamCallingParser::new(&my_yaml);
+            let parser = BamCallingParser::new(&my_yaml);
 
             parser.output_bam_file_entries(bam.as_str(), output.as_str() ).expect("Unable to process events");
 

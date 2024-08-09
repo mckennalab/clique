@@ -10,7 +10,6 @@ use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::reference::fasta_reference::ReferenceManager;
 use counter::Counter;
 use ndarray::Ix3;
-use rand::prelude::*;
 use rust_htslib::bam::record::CigarString;
 use shardio::{Range, ShardReader};
 use spoa::{AlignmentEngine, AlignmentType, Graph};
@@ -20,7 +19,7 @@ use std::collections::{HashMap, VecDeque};
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
-use petgraph::algo::is_bipartite_undirected;
+
 
 
 pub fn write_consensus_reads(
@@ -33,8 +32,7 @@ pub fn write_consensus_reads(
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
 
-    let mut written_buffers = 0;
-    let mut processed_reads = Arc::new(Mutex::new(0));
+    let processed_reads = Arc::new(Mutex::new(0));
 
     let score = AffineScoring::default_dna();
 
@@ -87,7 +85,6 @@ pub fn write_consensus_reads(
                     }
 
                 });
-                written_buffers += 1;
             }
 
             buffered_reads.push_back(x.clone());
@@ -112,7 +109,6 @@ pub fn write_consensus_reads(
         let arc_writer = arc_output.clone();
         let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
         arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC2)");
-        written_buffers += 1;
     }
 
 }

@@ -16,7 +16,7 @@ use noodles_bam as bam;
 use noodles_bam::bai;
 use noodles_sam::Header;
 
-use shardio::{Range, ShardReader, ShardSender, ShardWriter};
+use shardio::{Range, ShardReader, ShardWriter};
 use std::cmp::Ordering;
 use std::collections::{HashMap};
 use std::path::PathBuf;
@@ -75,6 +75,7 @@ pub fn collapse(
                 warn!("No valid reads found for reference {}", ref_name);
             }
             Some(mut sorted_reads) => {
+
                 read_structure
                     .get_sorted_umi_configurations(&ref_name)
                     .iter()
@@ -297,6 +298,10 @@ pub fn sort_reads_from_bam_file(
 
         for result in records {
             read_stats.total_reads += 1;
+            if read_stats.total_reads % 100000 == 0 {
+                read_stats.results();
+            }
+
             let record = result.unwrap();
 
             if !record.flags().is_secondary() && !record.flags().is_unmapped() {
@@ -397,47 +402,6 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, K
     ret
 }
 
-pub fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
-    let mut consensus = Vec::new();
-
-    // for each position
-    for i in 0..input[0].len() {
-        let mut counter = HashMap::new();
-
-        // for each input string
-        input.iter().for_each(|vector| {
-            assert_eq!(
-                vector.len(),
-                input[0].len(),
-                "string {} is not the same length as the first string {}",
-                String::from_utf8(vector.clone()).unwrap(),
-                String::from_utf8(input[0].clone()).unwrap()
-            );
-
-            *counter.entry(&vector[i]).or_insert(0) += 1;
-        });
-
-        let mut max = 0;
-        let mut consensus_byte = b'N';
-
-        //println!("consensus {:?}",counter);
-        for (byte, count) in counter {
-            // if we're the new maximum OR we're tied for the maximum and we're an N or a gap, then we'll take the new value
-            if count > max
-                || (count == max && consensus_byte == b'N')
-                || (count == max && consensus_byte == b'-')
-            {
-                max = count;
-                consensus_byte = *byte;
-            }
-        }
-
-        consensus.push(consensus_byte);
-    }
-
-    consensus
-}
-
 /// Sorts the reads by the degenerate tag
 ///
 /// we group reads into a container where previous tags all match. We then determine the clique of
@@ -512,10 +476,10 @@ pub fn sort_degenerate_level(
                 current_sorting_bin = Some(bin);
             }
 
-            Some(mut bin) => {
+            Some(bin) => {
                 let reads_equal = last_read.as_ref().unwrap().cmp(&mut current_read) == Ordering::Equal;
 
-                match (reads_equal) {
+                match reads_equal {
                     true => {
                         // add the current read to the bin
                         bin.push(current_read);
@@ -657,6 +621,47 @@ mod tests {
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::utils::read_utils::fake_reads;
+
+    pub fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
+        let mut consensus = Vec::new();
+
+        // for each position
+        for i in 0..input[0].len() {
+            let mut counter = HashMap::new();
+
+            // for each input string
+            input.iter().for_each(|vector| {
+                assert_eq!(
+                    vector.len(),
+                    input[0].len(),
+                    "string {} is not the same length as the first string {}",
+                    String::from_utf8(vector.clone()).unwrap(),
+                    String::from_utf8(input[0].clone()).unwrap()
+                );
+
+                *counter.entry(&vector[i]).or_insert(0) += 1;
+            });
+
+            let mut max = 0;
+            let mut consensus_byte = b'N';
+
+            //println!("consensus {:?}",counter);
+            for (byte, count) in counter {
+                // if we're the new maximum OR we're tied for the maximum and we're an N or a gap, then we'll take the new value
+                if count > max
+                    || (count == max && consensus_byte == b'N')
+                    || (count == max && consensus_byte == b'-')
+                {
+                    max = count;
+                    consensus_byte = *byte;
+                }
+            }
+
+            consensus.push(consensus_byte);
+        }
+
+        consensus
+    }
 
     #[test]
     fn test_consensus() {
