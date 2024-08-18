@@ -298,7 +298,7 @@ pub fn sort_reads_from_bam_file(
 
         for result in records {
             read_stats.total_reads += 1;
-            if read_stats.total_reads % 100000 == 0 {
+            if read_stats.total_reads % 1000000 == 0 {
                 read_stats.results();
             }
 
@@ -540,7 +540,8 @@ pub fn sort_known_level(
     let mut dropped_reads = 0;
     let mut collided_reads = 0;
     let mut sent_reads = 0;
-    info!("Sorting reads");
+
+    info!("Sorting {} reads", read_count);
     let mut bar: Option<ProgressBar> = match *read_count > 100000 {
         true => Some(ProgressBar::new(read_count.clone() as u64)),
         false => None,
