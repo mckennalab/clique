@@ -544,7 +544,7 @@ pub fn sort_known_level(
     info!("Sorting {} reads", read_count);
     let mut bar: Option<ProgressBar> = match *read_count > 100000 {
         true => Some(ProgressBar::new(read_count.clone() as u64)),
-        false => None,
+        false => Some(ProgressBar::new(read_count.clone() as u64)),
     };
 
     // create a new output
