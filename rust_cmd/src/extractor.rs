@@ -238,9 +238,13 @@ pub fn extract_tagged_sequences(aligned_read: &[u8], aligned_ref: &[u8]) -> BTre
         }
     }
 
+
     special_values
         .iter()
-        .map(|(key, value)| (key.clone(), String::from_utf8(value.clone()).unwrap()))
+        .map(|(key, value)| {
+            println!("key {} value {}",key.clone(), String::from_utf8(value.clone()).unwrap());
+            (key.clone(), String::from_utf8(value.clone()).unwrap())
+        })
         .collect()
 }
 
