@@ -65,12 +65,12 @@ pub fn recover_align_sequences(
         };
     };
         
-    println!("read length {} cigar: {:?}", unaligned_read.len(), cigar, );
-    println!("read {} ref: {}", String::from_utf8(unaligned_read.clone().to_vec()).unwrap(), String::from_utf8(reference.clone().to_vec()).unwrap(), );
+    //println!("read length {} cigar: {:?}", unaligned_read.len(), cigar, );
+    //println!("read {} ref: {}", String::from_utf8(unaligned_read.clone().to_vec()).unwrap(), String::from_utf8(reference.clone().to_vec()).unwrap(), );
     for (cigar_index, cigar_sub) in cigar.iter().enumerate() {
         let cigar_v = cigar_sub.unwrap();
         let len = cigar_v.len();
-        println!("read pos {} ref pos: {}", read_pos, ref_pos);
+        //println!("read pos {} ref pos: {}", read_pos, ref_pos);
 
 
         match cigar_v.kind() {
@@ -242,7 +242,7 @@ pub fn extract_tagged_sequences(aligned_read: &[u8], aligned_ref: &[u8]) -> BTre
     special_values
         .iter()
         .map(|(key, value)| {
-            println!("key {} value {}",key.clone(), String::from_utf8(value.clone()).unwrap());
+            //println!("key {} value {}",key.clone(), String::from_utf8(value.clone()).unwrap());
             (key.clone(), String::from_utf8(value.clone()).unwrap())
         })
         .collect()
