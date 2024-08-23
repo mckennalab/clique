@@ -573,7 +573,7 @@ mod tests {
         println!("Time elapsed in aligning fasta is: {:?}", duration2);*/
     }
 
-    /*
+/*
         #[test]
         fn basic_bitstring_conversion() {
             let base = "A";
@@ -612,7 +612,7 @@ mod tests {
 
             assert_eq!(str_version," 0b1000000000000000000000000000000000000000000000000000000000000");
         }
-
+*/
 
     #[test]
     fn base_compare_speeds() {
@@ -626,6 +626,7 @@ mod tests {
             fasta_a == fasta_C;
         }
         println!("equals {}", now.elapsed().as_millis());
+
         let fasta_A = FASTA_A;
         let fasta_C = FASTA_C;
         // do 100K comparisons
@@ -656,8 +657,32 @@ mod tests {
         println!("bytes {}", now.elapsed().as_millis());
 
 
+        let fasta_N = FASTA_A;
+        let fasta_C = FASTA_C;
+        // do 100K comparisons
+        let now = Instant::now();
+
+        for i in 0..comp_count {
+            fasta_N.identity(&fasta_C);
+        }
+        println!("ident degenerate {}", now.elapsed().as_millis());
+
+        let byte_N = b'N';
+        let byte_A = b'A';
+        let byte_C = b'C';
+        let byte_G = b'G';
+        let byte_T = b'T';
+        // do 100K comparisons
+        let now = Instant::now();
+
+        for i in 0..comp_count {
+            byte_A == byte_N || byte_C == byte_N || byte_G == byte_N || byte_T == byte_N;
+        }
+        println!("bytes {}", now.elapsed().as_millis());
+
+
         //self.0.bitor(other.0) == 0
     }
-    */
+
 
 }

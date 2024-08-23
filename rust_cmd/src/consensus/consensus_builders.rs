@@ -80,7 +80,7 @@ pub fn write_consensus_reads(
                     let mut processed_reads = processed_reads.lock().expect("Unable to lock processed read count");
                     let current_proc_read = *processed_reads;
                     *processed_reads += my_buffered_reads.len();
-                    if (*processed_reads as f64 / 1000.0).floor() - (current_proc_read as f64 / 1000.0).floor() >= 1.0 {
+                    if (*processed_reads as f64 / 100000.0).floor() - (current_proc_read as f64 / 1000.0).floor() >= 1.0 {
                         info!("Processed {} reads into their consensus", processed_reads);
                     }
 
@@ -362,9 +362,9 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
     (conc, final_quals)
 }
 
-pub fn phred_to_prob(phred: &u8, floor_of_zero: &bool) -> f64 {
+pub fn phred_to_error_prob(phred: &u8, floor_zero_at_33: &bool) -> f64 {
     let phred =
-        match (phred < &33_u8) && *floor_of_zero {
+        match (phred < &33_u8) && *floor_zero_at_33 {
             true => 33_u8,
             false => *phred,
         };
@@ -372,7 +372,7 @@ pub fn phred_to_prob(phred: &u8, floor_of_zero: &bool) -> f64 {
 
     assert!(phred >= 33 && phred <= 98, "{}", format!("Unable to format phred {}", phred)); // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
     // TODO: we dont deal with phred + 64 format data -- at some point there will be legacy data that comes through; we should at least document this
-    (10.0_f64).pow((phred.to_f64().unwrap() - 32.99999) / (-10.0)) // 32.9999 to avoid Inf powers
+    (10.0_f64).pow((phred.to_f64().unwrap() - 32.99999999999999999) / (-10.0)) // 32.9999 to avoid Inf powers
 }
 
 pub fn prob_to_phred(prob: &f64) -> u8 {
@@ -426,10 +426,10 @@ fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64, phr
         if base_id < 5 {
             (0..5).for_each(|i| {
                 if i == base_id {
-                    allele_props[i] = allele_props[i] + (1.0 - phred_to_prob(qs, phred_floor_at_33)).log2();
+                    allele_props[i] = allele_props[i] + (1.0 - phred_to_error_prob(qs, phred_floor_at_33)).log2();
                     //println!("MT id {} new prop {}", i, allele_props[i]);
                 } else {
-                    allele_props[i] = allele_props[i] + (phred_to_prob(qs, phred_floor_at_33) / 3.0_f64).log2();
+                    allele_props[i] = allele_props[i] + (phred_to_error_prob(qs, phred_floor_at_33) / 3.0_f64).log2();
                     //println!("NM id {} new prop {}", i, allele_props[i]);
                 }
             });
@@ -499,7 +499,7 @@ mod tests {
         let result = poa_consensus(&vec_of_reads, &quals);
         assert_eq!(result.0, "ACGTACT".as_bytes().to_vec());
 
-        let quals = vec![vec![b'I'; 11], vec![b'I'; 15], vec![b'I'; 7]];
+        let quals = vec![vec![b'5'; 11], vec![b'5'; 15], vec![b'5'; 7]];
 
         let read1 = "ACGTACGTTTT\0".as_bytes().to_vec();      //      ACGTACGTTTT
         let read2 = "AAAAAACGTACTTTT\0".as_bytes().to_vec();  // AAAAAACGTAC-TTTT
@@ -507,7 +507,7 @@ mod tests {
         let vec_of_reads = vec![read1, read2, read3];
         let result = poa_consensus(&vec_of_reads, &quals);
         assert_eq!(result.0, "ACGTACTTTT".as_bytes().to_vec());
-        assert_eq!(result.1,  [98, 98, 98, 98, 98, 98, 78, 78, 78, 98]);
+        assert_eq!(result.1,  [40, 40, 40, 40, 40, 40, 40, 40, 40, 40]); // we max out at Q40
 
         // "     ACGTACGTTTT\0".as_bytes().to_vec();
         // "AAAAAACGTAC TTTT\0".as_bytes().to_vec();
@@ -516,9 +516,9 @@ mod tests {
 
     #[test]
     fn test_phred_to_prob() {
-        assert_eq!(0.0001, phred_to_prob(&b'I'));
-        assert_eq!(1.0, phred_to_prob(&b'!'));
-        assert_eq!(0.1, phred_to_prob(&b'+'));
+        assert_eq!(0.0001, phred_to_error_prob(&b'I', &true));
+        assert_eq!(1.0, phred_to_error_prob(&b'!', &true));
+        assert_eq!(0.1, phred_to_error_prob(&b'+', &true));
     }
 
     //fn within_delta(x: &f64,y: &f64, delta: f64) -> bool {
@@ -530,12 +530,12 @@ mod tests {
         let quals = Vec::from(&[b'I', b'I', b'I', b'I']);
 
         // rounding to 1
-        assert_eq!(1.0, combine_qual_scores(&bases, &quals, &0.1_f64)[0]); // we're ~ 1.0, fully confident it's an 'A'
+        assert_eq!(1.0, combine_qual_scores(&bases, &quals, &0.1_f64, &true)[0]); // we're ~ 1.0, fully confident it's an 'A'
 
         let bases = Vec::from(&[b'A', b'C', b'G', b'T']);
 
         // recover the priors
-        let qual_combined = combine_qual_scores(&bases, &quals, &0.1_f64);
+        let qual_combined = combine_qual_scores(&bases, &quals, &0.1_f64, &true);
         println!("qual combined {} {} {} {} {}",qual_combined[0],qual_combined[1],qual_combined[2],qual_combined[3],qual_combined[4]);
 
         assert!((0.25 - qual_combined[1]).abs() < 0.0001);

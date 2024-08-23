@@ -1,9 +1,12 @@
+use std::cmp::{max, min};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use nohash_hasher::NoHashHasher;
 use noodles_bam::record::Cigar;
 use noodles_sam::alignment::record::cigar::op::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::BuildHasherDefault;
+use crate::alignment::scoring_functions::AffineScoring;
+use crate::alignment_functions::align_two_strings;
 
 use crate::fasta_comparisons::DEGENERATEBASES;
 use crate::fasta_comparisons::KNOWNBASES;
@@ -43,38 +46,42 @@ pub struct RecoveredAlignedSeq {
     pub aligned_ref: Vec<u8>,
 }
 
+pub enum SoftClipResolution {
+    Clip,
+    MatchMismatch,
+    Realign,
+}
+
 pub fn recover_align_sequences(
     unaligned_read: &[u8],
-    start_pos: usize,
-    cigar: &Cigar,
-    soft_clip_as_match: &bool,
+    one_based_start_pos: usize,
+    cigar: &Vec<Op>,
+    soft_clip_as_match: &SoftClipResolution,
     reference: &[u8],
 ) -> RecoveredAlignedSeq {
-    
     let mut aligned_read = Vec::new();
     let mut aligned_ref = Vec::new();
     let mut read_pos = 0;
-    let mut ref_pos = start_pos - 1;
+    let mut ref_pos = one_based_start_pos - 1;
 
-    if start_pos > 1 {
-        // usually we fill in with dashes -- unless it's a clipped read, we deal with that down below
-        let first_cigar = cigar.iter().next().unwrap().unwrap();
-        if first_cigar.kind() != Kind::SoftClip  {
-            aligned_ref.extend(reference[0..start_pos - 1 ].to_vec());
-            aligned_read.extend(b"-".repeat(start_pos - 1));
-        };
+    if ref_pos > 0 && cigar.len() > 0 && cigar[0].kind() != Kind::SoftClip {
+        aligned_read.extend(b"-".repeat(ref_pos));
+        aligned_ref.extend(reference[ref_pos..ref_pos].to_vec());
+        println!("ADDING");
+        ref_pos += ref_pos;
     };
-        
-    //println!("read length {} cigar: {:?}", unaligned_read.len(), cigar, );
-    //println!("read {} ref: {}", String::from_utf8(unaligned_read.clone().to_vec()).unwrap(), String::from_utf8(reference.clone().to_vec()).unwrap(), );
-    for (cigar_index, cigar_sub) in cigar.iter().enumerate() {
-        let cigar_v = cigar_sub.unwrap();
-        let len = cigar_v.len();
-        //println!("read pos {} ref pos: {}", read_pos, ref_pos);
 
+
+    println!("\n\nread length {} cigar {:?} ref length {:?}", unaligned_read.len(), cigar, reference.len());
+    println!("read {} ref: {}", String::from_utf8(unaligned_read.clone().to_vec()).unwrap(), String::from_utf8(reference.clone().to_vec()).unwrap(), );
+    for (cigar_index, cigar_sub) in cigar.iter().enumerate() {
+        let cigar_v = cigar_sub;
+        let len = cigar_v.len();
+        println!("START read pos {} ref pos: {} kind {:?} length {}", read_pos, ref_pos, cigar_v.kind(), cigar_v.len());
 
         match cigar_v.kind() {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                println!("Ref length {}",(ref_pos + len) - ref_pos);
                 aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
                 aligned_ref.extend(reference[ref_pos..ref_pos + len].to_vec());
                 read_pos += len;
@@ -91,45 +98,78 @@ pub fn recover_align_sequences(
                 ref_pos += len;
             }
             Kind::SoftClip => {
-                if *soft_clip_as_match {
-                    if cigar_index == 0 {
-                        if ref_pos >= len {
-                            let dashes = ref_pos - len;
-                            aligned_ref.extend(reference[0..ref_pos].to_vec());
-                            aligned_read.extend(b"-".repeat(dashes));
-                            aligned_read.extend(unaligned_read[0..len].to_vec());
-
-                        } else {
-                            let ref_dashes = len - ref_pos;
-                            aligned_ref.extend(b"-".repeat(ref_dashes));
-                            aligned_ref.extend(reference[0..ref_pos].to_vec());
-                            aligned_read.extend(unaligned_read[0..len].to_vec());
-                        }
-
+                match soft_clip_as_match {
+                    SoftClipResolution::Clip => {
+                        // just add dashes to the
+                        aligned_ref.extend(unaligned_read[ref_pos..ref_pos + len].to_vec());
+                        aligned_read.extend(b"-".repeat(len));
                         read_pos += len;
-
-                    } else if ref_pos + len >= reference.len() {
-                        let dashes = ref_pos + len - reference.len();
-                        aligned_ref.extend(reference[ref_pos..].to_vec());
-                        aligned_ref.extend(b"-".repeat(dashes));
-                        aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
-                        read_pos += len;
-                        
-                    } else {
-                        aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
-                        aligned_ref.extend(reference[ref_pos..ref_pos + len].to_vec());
-                        read_pos += len;
+                        ref_pos += len;
                     }
-                } else {
-                    aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
-                    aligned_ref.extend(b"-".repeat(len));
-                    read_pos += len;
+                    SoftClipResolution::MatchMismatch => {
+                        if cigar_index == 0 {
+                            if ref_pos >= len {
+                                let dashes = ref_pos - len;
+                                aligned_ref.extend(reference[0..ref_pos].to_vec());
+                                aligned_read.extend(b"-".repeat(dashes));
+                                aligned_read.extend(unaligned_read[0..len].to_vec());
+                            } else {
+                                let ref_dashes = len - ref_pos;
+                                aligned_ref.extend(b"-".repeat(ref_dashes));
+                                aligned_ref.extend(reference[0..ref_pos].to_vec());
+                                aligned_read.extend(unaligned_read[0..len].to_vec());
+                            }
+
+                            read_pos += len;
+                        } else if ref_pos + len >= reference.len() {
+                            let dashes = ref_pos + len - reference.len();
+                            aligned_ref.extend(reference[ref_pos..].to_vec());
+                            aligned_ref.extend(b"-".repeat(dashes));
+                            aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
+                            read_pos += len;
+                        } else {
+                            aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
+                            aligned_ref.extend(reference[ref_pos..ref_pos + len].to_vec());
+                            read_pos += len;
+                        }
+                    }
+                    SoftClipResolution::Realign => {
+                        if cigar_index == 0 {
+                            // grab the reference up to this point plus the trimmed read sequence and realign
+                            let clipped_read = FastaBase::from_u8_slice(&unaligned_read[0..len]);
+                            let clipped_ref = FastaBase::from_u8_slice(&reference[0..ref_pos]);
+                            println!("Ref length {}",ref_pos);
+                            let aligned_sequence = align_two_strings(&"read".to_string(), &clipped_ref, &clipped_read, &AffineScoring::default_dna(), false, &"ref".to_string(), None);
+                            aligned_ref.extend(FastaBase::string(&aligned_sequence.reference_aligned).as_bytes());
+                            aligned_read.extend(FastaBase::string(&aligned_sequence.read_aligned).as_bytes());
+                            read_pos += len;
+                            println!("Go1 {}",FastaBase::string(&aligned_sequence.read_aligned));
+                            println!("Go1 {}",FastaBase::string(&aligned_sequence.reference_aligned));
+
+                        } else if cigar_index == cigar.len() - 1 {
+
+                            // take the rest of the reference and the trimmed read segment and realign
+                            let max_right = min(read_pos + len,unaligned_read.len());
+                            let clipped_read = FastaBase::from_u8_slice(&unaligned_read[read_pos..max_right]);
+                            let clipped_ref = FastaBase::from_u8_slice(&reference[ref_pos..]);
+                            let aligned_sequence = align_two_strings(&"read".to_string(), &clipped_ref, &clipped_read, &AffineScoring::default_dna(), false, &"ref".to_string(), None);
+                            aligned_ref.extend(FastaBase::string(&aligned_sequence.reference_aligned).as_bytes());
+                            aligned_read.extend(FastaBase::string(&aligned_sequence.read_aligned).as_bytes());
+                            read_pos += len;
+                            ref_pos += reference[ref_pos..].len();
+                            println!("Go2 {}",FastaBase::string(&aligned_sequence.read_aligned));
+                            println!("Go2 {}",FastaBase::string(&aligned_sequence.reference_aligned));
+
+                        }
+                    }
                 }
             }
             Kind::HardClip | Kind::Pad => {
                 // do nothing
             }
         }
+        println!("END read pos {} ref pos: {} kind {:?} length {}", read_pos, ref_pos, cigar_v.kind(), cigar_v.len());
+        println!("read {} {} \nref  {} {}\n", String::from_utf8(aligned_read.clone()).unwrap(),aligned_read.len(), String::from_utf8(aligned_ref.clone()).unwrap(), aligned_ref.len());
     }
     if ref_pos < reference.len() {
         aligned_ref.extend(reference[ref_pos..].to_vec());
@@ -279,7 +319,6 @@ pub fn extract_tag_sequences(
             .umi_configurations
             .iter()
             .map(|(_umi_name, umi_obj)| {
-
                 let ets_hit = ets.get(&umi_obj.symbol.to_string().as_bytes()[0]);
 
                 match ets_hit {
@@ -300,17 +339,17 @@ pub fn extract_tag_sequences(
                             .collect::<Vec<FastaBase>>();
 
                         if gaps > umi_obj.max_gaps.unwrap_or(gaps) {
-                            println!("tossing reads {} {}",gaps, e);
+                            println!("tossing reads {} {}", gaps, e);
                             invalid_read = true;
                         } //else {
-                            //println!("keeping reads {} {} level {}",gaps, e, umi_obj.max_gaps.unwrap_or(gaps));
+                        //println!("keeping reads {} {} level {}",gaps, e, umi_obj.max_gaps.unwrap_or(gaps));
                         //}
 
                         Some((
                             umi_obj.symbol,
                             str
                         ))
-                    },
+                    }
 
                     None => {
                         println!("None read");
@@ -332,28 +371,28 @@ pub fn extract_tag_sequences(
 pub fn custom_umi_score(a: u8, b: u8) -> i32 {
     match (a, b) {
         (a, b)
-            if KNOWNBASES.contains_key(&a)
-                && KNOWNBASES.contains_key(&b)
-                && KNOWNBASES[&a] == KNOWNBASES[&b] =>
-        {
-            10
-        }
+        if KNOWNBASES.contains_key(&a)
+            && KNOWNBASES.contains_key(&b)
+            && KNOWNBASES[&a] == KNOWNBASES[&b] =>
+            {
+                10
+            }
         (a, b)
-            if KNOWNBASES.contains_key(&a)
-                && KNOWNBASES.contains_key(&b)
-                && DEGENERATEBASES.contains_key(&a)
-                && DEGENERATEBASES[&a].contains_key(&b) =>
-        {
-            10
-        }
+        if KNOWNBASES.contains_key(&a)
+            && KNOWNBASES.contains_key(&b)
+            && DEGENERATEBASES.contains_key(&a)
+            && DEGENERATEBASES[&a].contains_key(&b) =>
+            {
+                10
+            }
         (a, b)
-            if KNOWNBASES.contains_key(&a)
-                && KNOWNBASES.contains_key(&b)
-                && DEGENERATEBASES.contains_key(&b)
-                && DEGENERATEBASES[&b].contains_key(&a) =>
-        {
-            10
-        }
+        if KNOWNBASES.contains_key(&a)
+            && KNOWNBASES.contains_key(&b)
+            && DEGENERATEBASES.contains_key(&b)
+            && DEGENERATEBASES[&b].contains_key(&a) =>
+            {
+                10
+            }
         (a, b) if KNOWNBASES.contains_key(&a) && KNOWNBASES.contains_key(&b) => -8,
         _ => 7, // special characters here
     }
@@ -394,6 +433,7 @@ mod tests {
             &1.0
         );
     }
+
     #[test]
     fn tagged_sequence_test() {
         let reference = String::from("AATGATACGGCGACCACCGAGATCTACAC0000000000ACACTCTTTCCCTACACGACGCTCTTCCGATCTNNNNNNNN1111111111CTGTAGGTAGTTTGTC").as_bytes().to_owned();
@@ -410,13 +450,13 @@ mod tests {
         let reference = String::from(
             "AAATACTTGTACTTCGTTCAGTTACGTATTGCTAAGCAGTGGTAT111111111GAGTACC------TTA--CAGTTCGATCTA",
         )
-        .as_bytes()
-        .to_owned();
+            .as_bytes()
+            .to_owned();
         let test_read = String::from(
             "-------------------------------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC-----------",
         )
-        .as_bytes()
-        .to_owned();
+            .as_bytes()
+            .to_owned();
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);
 
@@ -439,13 +479,13 @@ mod tests {
         let reference = String::from(
             "aaatacttgtacttcgttcaGTTACGTATTGCTAAGCAGTGGTAT111111111GAGTACC------TTA--caaaaaaaaaaa",
         )
-        .as_bytes()
-        .to_owned();
+            .as_bytes()
+            .to_owned();
         let test_read = String::from(
             "AAATACTTGTACTTCGTTCA-----------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGCC-----------",
         )
-        .as_bytes()
-        .to_owned();
+            .as_bytes()
+            .to_owned();
 
         let keyvalues = extract_tagged_sequences(&test_read, &reference);
 
@@ -461,5 +501,124 @@ mod tests {
             keyvalues.get(&b'a').unwrap(),
             "-----------CT-AGCAG----ATCACCGTAAGGACTACCAGACGTTTAGC"
         );
+    }
+
+    pub fn strip_gaps(str: &Vec<u8>) -> Vec<u8> {
+        str.iter().filter(|x| **x != b'-').map(|x|*x).collect()
+    }
+
+    #[test]
+    fn test_recover_align_sequences() {
+        let read = "TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT".as_bytes();
+        let reference = "CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes();
+        let start_pos: usize = 52;
+        let mut cigar = Vec::new();
+        cigar.push(Op::new(Kind::SoftClip, 42));
+        cigar.push(Op::new(Kind::Match, 24));
+
+
+        let recovered = recover_align_sequences(
+            read,
+            start_pos,
+            &cigar,
+            &SoftClipResolution::Realign,
+            reference,
+        );
+        println!("Ref\n{}\nread\n{} ",String::from_utf8(recovered.aligned_ref.clone()).unwrap(),String::from_utf8(recovered.aligned_read.clone()).unwrap());
+        assert_eq!("-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT----------------------------------".as_bytes().to_vec(),recovered.aligned_read);
+        assert_eq!(read,strip_gaps(&recovered.aligned_read));
+        assert_eq!("CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNT----TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec(),recovered.aligned_ref);
+
+
+        let read = "TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA".as_bytes();
+        let reference = "CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes();
+        let start_pos: usize = 52;
+        let mut cigar = Vec::new();
+        cigar.push(Op::new(Kind::SoftClip, 42));
+        cigar.push(Op::new(Kind::Match, 24));
+        cigar.push(Op::new(Kind::SoftClip, "TTTTTTATTAGGAAAGGACAGTGGGAGTGGCA".len()));
+
+        let recovered = recover_align_sequences(
+            read,
+            start_pos,
+            &cigar,
+            &SoftClipResolution::Realign,
+            reference,
+        );
+        println!("Ref\n{}\nread\n{} ",String::from_utf8(recovered.aligned_ref.clone()).unwrap(),String::from_utf8(recovered.aligned_read.clone()).unwrap());
+        assert_eq!("-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA--".as_bytes().to_vec(),recovered.aligned_read);
+        assert_eq!("CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNT----TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec(),recovered.aligned_ref);
+        assert_eq!(read,strip_gaps(&recovered.aligned_read));
+        assert_eq!(reference,strip_gaps(&recovered.aligned_ref));
+
+        /*
+        //                      TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGCGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATGTGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCCACCGCTCCGAAAGATCCCGAGGTCGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTACAACCCCGGACGAAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATCACGCAGGGGACTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCAGAGCGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCCGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGCACCAGATGAAAGGCACACCCACGCCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTCCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCACCTCGTCTACGCGAAACGCTCGTACGCGTACGGGCTGAAAGCGATACACCGCTCGCCCCTGAAACCCTCTAGTTACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCCGTGCCGGGAAAATAAGAGCGCCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTCACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCCATCTGGTACACCCCCTGCTCGGGGCAAGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACGTCTGTCGAAGCAGCTACAA
+        let read =      "TTTGTCCTGTACTTCGTTCAGCGTATTGCTAAGGTTAACACAAAGACACCGACAACTTTCTTCAGCACCTCTACACGACGCTCTTCCGATCTAGCACCACACATACCCCCGTGCGAGCGCTTTTTTTTTTTTTTTTTTTTTTTTTTGGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGCACAACACGCGTCTCCGAAATTAACCCGGCGCGTTTAAACGAAAAGGACCGACCACCACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGCCCGACATCGAAAGACACGCGGGCGCATATGGCGAAAGCAGCAACCTGACCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACCGTTTTGCGAGAAAAGGATTAGAGCTAGAATCGCGAAACGCTCGCGTCCCACCGCTCCGAAAGATCCCGAGGCCGTTTTACCGAAAGCGACGACTTCCGTCATAGTGAAACGATTGGACGCCTCTGGTGCGAAATCGCGGGTCGCACAACATACGAAAACCGAGGCTACAACCCCGGACGAAAGGTATAGGCAGCCAACACGCGAAACCCTAGGGATCGCGCTAGCCGAAAGCCCTATCACGGAGGGGGCTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGCCCGGCCTCGCGAAAGAATGAGCTGAGCGTGAGGCGAAAAGCTTAAGCTGCGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGCACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCACATCCCGCCGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCTGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGTACCAGATGAAAGGCACACCCACGTCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTTCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCATCCCGTCTACGCGAAACGCTCGTATGCGTACGGGCTGAAAGTTGATATACTGTTCGCCCCTGAAACCCTCTAGTCACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCTGTGCCGGGAAAATAAGAGCGTCTGCGGTTATGAAATCGTGGGCTACCCCTGGGTGGAAAGCTATCCCGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTTACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCGATTTGGTACGCAAACGCCCTGCCTTCGGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACG".as_bytes();
+        let reference = "CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGTGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGTGTTGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATATGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGATGTCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCTACCGCTCCGAAAGATCCCGAGGTTGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTATAATCCCGGACGAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATTATGTAGGGGACTGAAAAACATGGGTACGTCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCTGAGTGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCTATTAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTATGTTACTTCGAAAATGAAGGGATAGTGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGTACGCACAGAAAAGATTGACCTCTGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGTACCAGATGAAAGGCACACCCATGTCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTTCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTTATCTTGTCTACGCGAAACGCTCGTATGCGTACGGGCTGAAAGCGATATACTGTTCGCCCCTGAAACCCTCTAGTTATGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTTACTGTGCGAAAGTACTCGATGGTGTGGCTTAGAAAGCGTACAGTCTCTGTGCCGGGAAAATAAGAGCGTCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGTATATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATTACTCGTAGGAAACTACGCCGGTTACGACGGGCGAAACGACATGAACTTATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCGATTTGGTACNNNNNNNNNNNNNNNNNNGTACCTGATGCGGCACAATGTCTAGC".as_bytes();
+        let start_pos: usize = 1;
+        let mut cigar = Vec::new();
+        // 42S 24M 10I 3M 5I 591M 1I 970M 68S
+        // 42S 24M 10I 3M 5I 591M 1I 970M 68S
+        // 42S 24M 10I 3M 5I 591M 1I 970M 68S
+        // 70S 74M 12I 3M 5I 567M 1I 556M 1I 438M 49S
+        cigar.push(Op::new(Kind::SoftClip, 70));
+        cigar.push(Op::new(Kind::Match, 74));
+        cigar.push(Op::new(Kind::Insertion, 12));
+        cigar.push(Op::new(Kind::Match, 3));
+        cigar.push(Op::new(Kind::Insertion, 5));
+        cigar.push(Op::new(Kind::Match, 567));
+        cigar.push(Op::new(Kind::Insertion, 1));
+        cigar.push(Op::new(Kind::Match, 556));
+        cigar.push(Op::new(Kind::Insertion, 1));
+        cigar.push(Op::new(Kind::Match, 438));
+        cigar.push(Op::new(Kind::SoftClip, 49));
+
+        let recovered = recover_align_sequences(
+            read,
+            start_pos,
+            &cigar,
+            &SoftClipResolution::Realign,
+            reference,
+        );
+        println!("*\n*\n*\n*\n*\n*\nRef\n{}\nread\n{} ",String::from_utf8(recovered.aligned_ref.clone()).unwrap(),String::from_utf8(recovered.aligned_read.clone()).unwrap());
+        assert_eq!("-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA--".as_bytes().to_vec(),recovered.aligned_read);
+        assert_eq!("CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTT---TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec(),recovered.aligned_ref);
+
+        println!("Ref\n{}\nread\n{} ",String::from_utf8(recovered.aligned_ref.clone()).unwrap(),String::from_utf8(recovered.aligned_read.clone()).unwrap());
+        assert_eq!("-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA--".as_bytes().to_vec(),recovered.aligned_read);
+        assert_eq!("CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNT----TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec(),recovered.aligned_ref);
+        assert_eq!(read,strip_gaps(&recovered.aligned_read));
+        assert_eq!(reference,strip_gaps(&recovered.aligned_ref));
+
+        //                      TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGCGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATGTGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCCACCGCTCCGAAAGATCCCGAGGTCGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTACAACCCCGGACGAAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATCACGCAGGGGACTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCAGAGCGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCCGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGCACCAGATGAAAGGCACACCCACGCCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTCCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCACCTCGTCTACGCGAAACGCTCGTACGCGTACGGGCTGAAAGCGATACACCGCTCGCCCCTGAAACCCTCTAGTTACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCCGTGCCGGGAAAATAAGAGCGCCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTCACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCCATCTGGTACACCCCCTGCTCGGGGCAAGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACGTCTGTCGAAGCAGCTACAA
+        let read =      "TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGCGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATGTGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCCACCGCTCCGAAAGATCCCGAGGTCGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTACAACCCCGGACGAAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATCACGCAGGGGACTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCAGAGCGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCCGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGCACCAGATGAAAGGCACACCCACGCCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTCCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCACCTCGTCTACGCGAAACGCTCGTACGCGTACGGGCTGAAAGCGATACACCGCTCGCCCCTGAAACCCTCTAGTTACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCCGTGCCGGGAAAATAAGAGCGCCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTCACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCCATCTGGTACACCCCCTGCTCGGGGCAAGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACGTCTGTCGAAGCAGCTACAA".as_bytes();
+        let reference = "CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGTGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGTGTTGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATATGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGATGTCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCTACCGCTCCGAAAGATCCCGAGGTTGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTATAATCCCGGACGAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATTATGTAGGGGACTGAAAAACATGGGTACGTCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCTGAGTGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCTATTAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTATGTTACTTCGAAAATGAAGGGATAGTGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGTACGCACAGAAAAGATTGACCTCTGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGTACCAGATGAAAGGCACACCCATGTCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTTCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTTATCTTGTCTACGCGAAACGCTCGTATGCGTACGGGCTGAAAGCGATATACTGTTCGCCCCTGAAACCCTCTAGTTATGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTTACTGTGCGAAAGTACTCGATGGTGTGGCTTAGAAAGCGTACAGTCTCTGTGCCGGGAAAATAAGAGCGTCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGTATATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATTACTCGTAGGAAACTACGCCGGTTACGACGGGCGAAACGACATGAACTTATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCGATTTGGTACNNNNNNNNNNNNNNNNNNGTACCTGATGCGGCACAATGTCTAGC".as_bytes();
+        let start_pos: usize = 51;
+        let mut cigar = Vec::new();
+        // 42S 24M 10I 3M 5I 591M 1I 970M 68S
+        // 42S 24M 10I 3M 5I 591M 1I 970M 68S
+        // 42S 24M 10I 3M 5I 591M 1I 970M 68S
+        cigar.push(Op::new(Kind::SoftClip, 42));
+        cigar.push(Op::new(Kind::Match, 24));
+        cigar.push(Op::new(Kind::Insertion, 10));
+        cigar.push(Op::new(Kind::Match, 3));
+        cigar.push(Op::new(Kind::Insertion, 6));
+        cigar.push(Op::new(Kind::Match, 591));
+        cigar.push(Op::new(Kind::Insertion, 1));
+        cigar.push(Op::new(Kind::Match, 970));
+        cigar.push(Op::new(Kind::SoftClip, 68));
+
+        let recovered = recover_align_sequences(
+            read,
+            start_pos,
+            &cigar,
+            &SoftClipResolution::Realign,
+            reference,
+        );
+        println!("Ref\n{}\nread\n{} ",String::from_utf8(recovered.aligned_ref.clone()).unwrap(),String::from_utf8(recovered.aligned_read.clone()).unwrap());
+        assert_eq!("-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA--".as_bytes().to_vec(),recovered.aligned_read);
+        assert_eq!("CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTT---TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec(),recovered.aligned_ref);
+*/
+
     }
 }

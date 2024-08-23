@@ -1,3 +1,4 @@
+use std::cmp::{max, min};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use bio::bio_types::genome::AbstractInterval;
@@ -33,7 +34,7 @@ pub enum ExtractorTags {
     AR { value: f64 },
 
     // AS represents the alignment score with a value of type f64, coded as 'a', 's'
-    // Old value: [b'a', b's']
+    // Old value: [b'r', b's']
     AS { value: f64 },
 
     // BARCODE represents a extracted barcode sequence with a reference name and nucleotide value, both of type String
@@ -57,12 +58,17 @@ pub struct TargetExtractorState {
 
 impl ExtractorTags {
     pub fn extract_matching_tag(tag: &[u8; 2], value: &String, reference_name: &String, sequence_layout: &SequenceLayout) -> Option<ExtractorTags> {
+        println!("tag {} {} value {}",char::from(tag[0]).as_ascii().unwrap(),char::from(tag[1]).as_ascii().unwrap(),value);
         match tag {
+            &[b'r', b'c'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})}, // TODO fix this,
+            &[b'r', b'm'] => { Some(ExtractorTags::AR{value: value.parse::<f64>().expect("Unable to parse integer from rc tag")})}, // TODO fix this,
+            &[b'r', b's'] => { Some(ExtractorTags::AS{value: value.parse::<f64>().expect("Unable to parse integer from rc tag")})}, // TODO fix this
+
             &[b'a', b'c'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
             &[b'a', b'd'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
             &[b'a', b'n'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
-            &[b'a', b'r'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
-            &[b'a', b's'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
+            &[b'a', b'r'] => { None}, // TODO process read names
+            &[b'a', b's'] => { Some(ExtractorTags::AS{value: value.parse::<f64>().expect("Unable to parse integer from rc tag")})},
             &[x, _y] if x == b'b' => {
                 // make sure the reference is in the lookup table
                 assert!(sequence_layout.references.contains_key(reference_name));
@@ -72,6 +78,7 @@ impl ExtractorTags {
                 })
             },
             &[x, y] if x >= b'e' && x <= b'z' => {
+
                 assert!(y >= b'0' && y <= b'9');
                 let second_offset : usize = (y as usize) - 48; // 48 = '0' in ASCII
                 let target_offset = second_offset * ((x as usize) - 101); // 101 = 'e' in ASCII
@@ -174,10 +181,10 @@ impl BaseModifications {
 
 #[derive(PartialEq, Debug, Eq, Hash, Clone)]
 enum FullAlignment {
-    Insertion(u32, Vec<u8>),
-    Deletion(u32, u32),
-    Match(u32, u32),
-    Mismatch(u32, Vec<BaseModifications>),
+    Insertion(usize, Vec<u8>),
+    Deletion(usize, u32),
+    Match(usize, u32),
+    Mismatch(usize, Vec<BaseModifications>),
 }
 
 impl FullAlignment {
@@ -257,16 +264,16 @@ struct Reference {
 /// }
 /// ```
 /// Note: Ensure the `FullAlignment` enum is defined in your code as it is used in the function's return type.
-fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_offset: &u32) -> Vec<FullAlignment> {
+fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_offset: &usize) -> Vec<FullAlignment> {
     let mut return_sections = Vec::new();
     let mut current_section = Vec::new();
     let mut in_match = false;
     let mut segment_length = 0;
 
-    //println!("{} {} ", String::from_utf8(reference.to_vec()).unwrap(), String::from_utf8(sequence.to_vec()).unwrap());
+    println!("{} {} ", String::from_utf8(reference.to_vec()).unwrap(), String::from_utf8(sequence.to_vec()).unwrap());
 
     for (position, (reference_base, read_base)) in reference.iter().zip(sequence.iter()).enumerate() {
-        let section_start = reference_offset + (position as u32) - (current_section.len() as u32);
+        let section_start = reference_offset + (position as usize) - (current_section.len() as usize);
 
         if reference_base.to_ascii_uppercase() == read_base.to_ascii_uppercase() {
             if in_match {
@@ -294,7 +301,7 @@ fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_off
     }
 
     // Add the last section
-    let section_start = reference_offset + reference.len() as u32 - (current_section.len() as u32);
+    let section_start = reference_offset + reference.len()- (current_section.len());
     if in_match {
         return_sections.push(FullAlignment::Match(section_start, segment_length));
     } else {
@@ -334,31 +341,58 @@ fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_off
 ///
 /// # Notes
 /// - The function asserts that the entire reference sequence is aligned by the end of the process, which might not always be the case in real-world scenarios. This assertion should be adjusted according to the specific requirements of the alignment algorithm being implemented.
-fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>, read_seq: &Vec<u8>, cigar: &CigarStringView) -> Vec<FullAlignment> {
-    let mut ref_pos = *ref_start;
-    let mut read_pos = 0;
+fn extract_read_cigar_elements(ref_start: &usize, reference_sequence: &Vec<u8>, read_seq: &Vec<u8>, cigar: &CigarStringView, realign_soft_clipped_ends: &bool) -> Vec<FullAlignment> {
+    let mut ref_pos: usize = *ref_start;
+    let mut read_pos: usize = 0;
     let mut alignments = Vec::new();
 
-    cigar.iter().for_each(|x| {
+    println!("red read {} {} ref_pos {}", String::from_utf8(reference_sequence.to_vec()).unwrap(), String::from_utf8(read_seq.to_vec()).unwrap(),ref_pos);
+
+    cigar.iter().enumerate().for_each(|(index,x)| {
+        println!("x {} read pos {} ref pos {}",x.to_string(),read_pos, ref_pos);
         match x {
             Cigar::Match(ln) => {
-                alignments.extend(breakup_nucleotide_sequences(&reference_sequence[(ref_pos as usize)..((ref_pos + ln) as usize)], &read_seq[(read_pos as usize)..((read_pos + ln) as usize)], &ref_pos));
-                ref_pos += ln;
-                read_pos += ln;
+                let ref_seq = &reference_sequence[(ref_pos as usize)..((ref_pos + *ln as usize) as usize)];
+                let read_seq = &read_seq[(read_pos as usize)..((read_pos + *ln as usize) as usize)];
+                alignments.extend(breakup_nucleotide_sequences(ref_seq, read_seq, &ref_pos));
+                ref_pos += *ln as usize;
+                read_pos += *ln as usize;
             }
             Cigar::Ins(ln) => {
-                alignments.push(FullAlignment::Insertion(ref_pos, read_seq[(read_pos as usize)..((read_pos + ln) as usize)].to_vec()));
-                read_pos += ln;
+                alignments.push(FullAlignment::Insertion(ref_pos, read_seq[(read_pos as usize)..((read_pos + *ln as usize) as usize)].to_vec()));
+                read_pos += *ln as usize;
             }
             Cigar::Del(ln) => {
                 alignments.push(FullAlignment::Deletion(ref_pos, *ln));
-                ref_pos += ln;
+                ref_pos += *ln as usize;
+            }
+            Cigar::SoftClip(ln) if index == 0 => {
+                // we're looking backward -- we don't want walk off the end of the reference
+                let backward_length = min(ref_pos, *ln as usize);
+
+                let ref_seq = &reference_sequence[((ref_pos - backward_length) as usize)..((ref_pos) as usize)];
+                let read_seq = &read_seq[(((read_pos + *ln as usize) - backward_length))..((read_pos + (*ln as usize)) as usize)];
+
+                if !*realign_soft_clipped_ends {
+                    // TODO: this right?
+                    alignments.extend(breakup_nucleotide_sequences(ref_seq, read_seq, &ref_pos));
+                } else {
+
+                }
+                read_pos += *ln as usize;
+            }
+            Cigar::SoftClip(ln) if index == cigar.len() -1  => {
+                // we're looking forward
+                let ref_forward_len = min(*ln as usize,reference_sequence.len() - ref_pos);
+
+                let ref_seq = &reference_sequence[(ref_pos as usize)..((ref_pos + ref_forward_len) as usize)];
+                let read_seq = &read_seq[(read_pos as usize)..((read_pos + ref_forward_len) as usize)];
+                alignments.extend(breakup_nucleotide_sequences(ref_seq, read_seq, &ref_pos));
+                read_pos += ref_forward_len;
+                ref_pos += ref_forward_len;
             }
             Cigar::RefSkip(_ln) => {
                 panic!("RefSkip Unsupported")
-            }
-            Cigar::SoftClip(_ln) => {
-                panic!("SoftClip Unsupported")
             }
             Cigar::HardClip(_ln) => {
                 panic!("HardClip Unsupported")
@@ -371,6 +405,9 @@ fn extract_read_cigar_elements(ref_start: &u32, reference_sequence: &Vec<u8>, re
             }
             Cigar::Diff(_ln) => {
                 panic!("Diff Unsupported")
+            }
+            _ => {
+                panic!("Unprocessed cigar element {}", x);
             }
         }
     });
@@ -580,7 +617,8 @@ impl BamCallingParser<'_, '_, '_> {
 
         for (key, records) in header.to_hashmap() {
             for record in records {
-                println!("@{}\tSN:{}\tLN:{}", key, record["SN"], record["LN"]);
+                //println!("@{}\tSN:{}\tLN:{}", key, record["SN"], record["LN"]);
+                println!("@{}\tSN:{:?}", key, record);
             }
         }
 
@@ -604,13 +642,17 @@ impl BamCallingParser<'_, '_, '_> {
                     let reference = self.reference_manager.reference_name_to_ref.get(ref_name).expect("Unable to find reference");
                     let ref_name = String::from_utf8(self.reference_manager.references.get(reference).unwrap().name.clone()).unwrap();
                     let reference_sequence = FastaBase::vec_u8(&self.reference_manager.references.get(reference).unwrap().sequence);
-                    let alignment_start = record.reference_start();
+                    let alignment_start = record.reference_start() as usize;
+
+                    println!("read name {} start {}",String::from_utf8(record.name().clone().to_vec()).unwrap(),alignment_start);
 
                     // TODO output extractor tags
                     let extractor_tokens = self.extraction_tags(&record, &ref_name);
                     let _token_output : Vec<(String,Option<&ExtractorTags>)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id))).into_iter().collect::<Vec<(String,Option<&ExtractorTags>)>>();
 
-                    let cigar_tokens = extract_read_cigar_elements(&(alignment_start as u32), &reference_sequence, &record.seq().as_bytes(), &record.cigar());
+                    println!("read name {} start {}",String::from_utf8(record.name().clone().to_vec()).unwrap(),alignment_start);
+
+                    let cigar_tokens = extract_read_cigar_elements(&alignment_start, &reference_sequence, &record.seq().as_bytes(), &record.cigar(), &true);
 
                     // now we need to intersect any events with the known target lists
                     let reference_targets = self.ordered_target_ranges.get(record.contig()).unwrap();

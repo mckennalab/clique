@@ -1,9 +1,6 @@
 use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::consensus::consensus_builders::write_consensus_reads;
-use crate::extractor::{
-    extract_tag_sequences, extract_tagged_sequences, recover_align_sequences,
-    stretch_sequence_to_alignment,
-};
+use crate::extractor::{extract_tag_sequences, extract_tagged_sequences, recover_align_sequences, SoftClipResolution, stretch_sequence_to_alignment};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::{SequenceLayout, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
@@ -20,6 +17,7 @@ use shardio::{Range, ShardReader, ShardWriter};
 use std::cmp::Ordering;
 use std::collections::{HashMap};
 use std::path::PathBuf;
+use itertools::Itertools;
 use noodles_sam::alignment::record::QualityScores;
 
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
@@ -313,7 +311,7 @@ pub fn sort_reads_from_bam_file(
                 let ref_slice = reference_sequence.as_slice();
 
                 let aligned_read =
-                    recover_align_sequences(&seq, start_pos, &cigar, &true, ref_slice);
+                    recover_align_sequences(&seq, start_pos, &cigar.iter().map(|x| x.unwrap()).collect(), &SoftClipResolution::Realign, ref_slice);
 
                 let stretched_alignment = stretch_sequence_to_alignment(
                     &aligned_read.aligned_ref,
@@ -737,14 +735,14 @@ mod tests {
             PathBuf::from("test_data/consensus_test.fastq"),
             &1000,
             UMIConfiguration {
-                symbol: 'a',
+                symbol: 'c',
                 file: None,
                 reverse_complement_sequences: None,
                 sort_type: UMISortType::DegenerateTag,
-                length: 0,
+                length: "TGGTATGCTGGG".len(),
                 order: 0,
                 pad: None,
-                max_distance: 2,
+                max_distance: 2, // TODO: the plus 1 here is confusing -- does STARCODE
                 maximum_subsequences: None,
                 max_gaps: Some(1),
             },
@@ -754,18 +752,18 @@ mod tests {
         let st1 = SortingReadSetContainer {
             ordered_sorting_keys: vec![
                 ('a', FastaBase::from_str("AAACCCATCAGCATTA")),
-                ('a', FastaBase::from_str("TATTGACAACCT")),
+                ('b', FastaBase::from_str("TATTGACAACCT")),
             ],
-            ordered_unsorted_keys: VecDeque::from(vec![('a', FastaBase::from_str("TGGTATGCTGG-"))]),
+            ordered_unsorted_keys: VecDeque::from(vec![('c', FastaBase::from_str("TGGTATGCTGG"))]),
             aligned_read: fake_read.clone(),
         };
 
         let st2 = SortingReadSetContainer {
             ordered_sorting_keys: vec![
                 ('a', FastaBase::from_str("AAACCCATCAGCATTA")),
-                ('a', FastaBase::from_str("TATTGACAACCT")),
+                ('b', FastaBase::from_str("TATTGACAACCT")),
             ],
-            ordered_unsorted_keys: VecDeque::from(vec![('a', FastaBase::from_str("TGGTATGCTGGG"))]),
+            ordered_unsorted_keys: VecDeque::from(vec![('c', FastaBase::from_str("TGGTATGCTGGG"))]),
             aligned_read: fake_read.clone(),
         };
 
@@ -775,9 +773,10 @@ mod tests {
         for _ in 0..10 {
             tbb.push(st2.clone());
         }
-        let (_buffer, correction) = tbb.close();
+        let correction = tbb.correct_list();
 
         correction.iter().for_each(|x| {
+            println!("{} -> {}",String::from_utf8(x.0.clone()).unwrap(),String::from_utf8(x.1.clone()).unwrap());
             assert_eq!(
                 String::from_utf8(x.1.clone()).unwrap(),
                 String::from("TGGTATGCTGGG")

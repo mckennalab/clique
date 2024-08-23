@@ -43,6 +43,8 @@ impl DegenerateBuffer {
     /// disk until we've finished.
     ///
     pub fn push(&mut self, mut item: SortingReadSetContainer) {
+        assert!(self.tag.length >= self.tag.max_distance);
+
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
         item.ordered_unsorted_keys.push_front(key_value.clone()); // we want to keep the key in the list for now, we'll remove it later
         assert_eq!(key_value.0, self.tag.symbol);
@@ -101,17 +103,22 @@ impl DegenerateBuffer {
                 }
             }
         });
-        let correction = StarcodeAlignment::align_sequences(&self.hash_map, &(i32::try_from(self.tag.max_distance).unwrap()), &3.0);
+
         let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
-        for i in 0..correction.cluster_centers.len() {
-            let center = correction.cluster_centers.get(i).unwrap();
-            correction.cluster_members.get(i).unwrap().iter().for_each(|v| {
-                assert!(!knowns.contains_key(v));
-                //println!("COrrection center {} for {}, count {}",String::from_utf8(center.clone()).unwrap(),String::from_utf8(v.clone()).unwrap(),correction.cluster_count.get(i).unwrap());
-                knowns.insert(v.clone(), center.clone());
-            });
-        };
+
+        if self.hash_map.len() > 0 {
+            let correction = StarcodeAlignment::align_sequences(&self.hash_map, &(i32::try_from(self.tag.max_distance + 1).unwrap()), &3.0); // TODO: the plus 1 here is a patch until it's clear why starcode distance metrics are weird
+            for i in 0..correction.cluster_centers.len() {
+                let center = correction.cluster_centers.get(i).unwrap();
+                correction.cluster_members.get(i).unwrap().iter().for_each(|v| {
+                    assert!(!knowns.contains_key(v));
+                    //println!("COrrection center {} for {}, count {}",String::from_utf8(center.clone()).unwrap(),String::from_utf8(v.clone()).unwrap(),correction.cluster_count.get(i).unwrap());
+                    knowns.insert(v.clone(), center.clone());
+                });
+            };
+        }
         knowns
+
     }
 
     pub fn close_and_write_to_shard_writer(
