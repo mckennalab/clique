@@ -166,6 +166,7 @@ fn create_sam_read(
         let mut new_alignment = align_two_strings(
             &reference_pointer.sequence,
             &FastaBase::from_vec_u8(&consensus_reads.0),
+            None, // TODO: fix with quality scores
             my_aff_score,
             false,
             &String::from_utf8(reference_pointer.name.clone()).unwrap(),

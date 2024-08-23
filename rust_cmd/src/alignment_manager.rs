@@ -88,7 +88,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
     fn write_read(
         &mut self,
         read_set_container: &SortingReadSetContainer,
-        additional_tags: &HashMap<[u8; 2], String>,
+        additional_tags: &HashMap<[u8; 2], String>
     ) -> Result<()> {
         let writer = Arc::clone(&self.underlying_bam_file);
 
@@ -139,6 +139,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
 pub fn align_two_strings(
     reference_sequence: &Vec<FastaBase>,
     read_sequence: &Vec<FastaBase>,
+    read_qual: Option<Vec<u8>>,
     scoring_function: &AffineScoring,
     local: bool,
     ref_name: &String,
@@ -172,6 +173,7 @@ pub fn align_two_strings(
                 read_sequence,
                 ref_name,
                 read_name,
+                read_qual,
                 None,
             )
        // }

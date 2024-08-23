@@ -93,10 +93,12 @@ pub fn align_reads(read_structure: &SequenceLayout,
             let name = &String::from_utf8(xx.name().clone()).unwrap();
 
             let seq_len =  &xx.seq().len();
+            let qual = Some(xx.quals.as_ref().unwrap().clone());
             if seq_len < &max_read_size {
 
                 let aligned = align_to_reference_choices(name,
                                                          xx.seq(),
+                                                         qual,
                                                          rm,
                                                          &false,
                                                          read_structure,
@@ -214,7 +216,7 @@ fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> 
 #[allow(dead_code)]
 pub fn align_two_strings(read1_name: &String,
                          read1_seq: &Vec<FastaBase>,
-                         rev_comp_read2: &Vec<FastaBase>,
+                         sequence_2_seq: &Vec<FastaBase>,
                          scoring_function: &AffineScoring,
                          local: bool,
                          ref_name: &String,
@@ -222,7 +224,7 @@ pub fn align_two_strings(read1_name: &String,
 
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
-        rev_comp_read2.len() + 1,
+        sequence_2_seq.len() + 1,
         AlignmentType::Affine,
         local);
 
@@ -234,7 +236,7 @@ pub fn align_two_strings(read1_name: &String,
             let ref_name = String::from_utf8(x.references.get(ref_id).unwrap().name.clone()).unwrap();
 
             let ref_seq = FastaBase::vec_u8(read1_seq);
-            let read_seq = FastaBase::vec_u8(rev_comp_read2);
+            let read_seq = FastaBase::vec_u8(sequence_2_seq);
 
             let shared_segs = find_greedy_non_overlapping_segments(
                 &ref_seq,
@@ -244,7 +246,7 @@ pub fn align_two_strings(read1_name: &String,
             align_string_with_anchors(read1_name,
                                       &ref_name,
                                       read1_seq,
-                                      rev_comp_read2,
+                                      sequence_2_seq,
                                       &shared_segs,
                                       None,
                                       scoring_function,
@@ -255,16 +257,17 @@ pub fn align_two_strings(read1_name: &String,
             perform_affine_alignment(
                 &mut alignment_mat,
                 read1_seq,
-                rev_comp_read2,
+                sequence_2_seq,
                 scoring_function);
 
             perform_3d_global_traceback(
                 &mut alignment_mat,
                 None,
                 read1_seq,
-                rev_comp_read2,
+                sequence_2_seq,
                 read1_name,
                 ref_name,
+                None,
                 None)
         }
     }
@@ -335,6 +338,7 @@ pub fn align_two_strings_passed_matrix(
     read2_name: &String,
     read1_seq: &[FastaBase],
     read2_seq: &[FastaBase],
+    qual_sequence: Option<Vec<u8>>,
     scoring_function: &AffineScoring,
     alignment_mat: &mut Alignment<Ix3>,
     max_indel: &usize) -> AlignmentResult {
@@ -388,6 +392,7 @@ pub fn align_two_strings_passed_matrix(
         read2_seq,
         read1_name,
         read2_name,
+        qual_sequence,
         None)
     //}
     //}
@@ -465,6 +470,7 @@ pub struct AlignmentWithRef {
 ///
 pub fn align_to_reference_choices(read_name: &String,
                                   read: &Vec<FastaBase>,
+                                  qual_sequence: Option<Vec<u8>>,
                                   rm: &ReferenceManager,
                                   fast_lookup: &bool,
                                   read_structure: &SequenceLayout,
@@ -501,6 +507,7 @@ pub fn align_to_reference_choices(read_name: &String,
                 read_name,
                 &ref_base.sequence,
                 &forward_oriented_seq,
+                qual_sequence,
                 my_aff_score,
                 alignment_mat,
                 max_indel);
@@ -513,9 +520,9 @@ pub fn align_to_reference_choices(read_name: &String,
         }
         x if x > 1 => {
             if *fast_lookup {
-                quick_alignment_search(read_name, read, &rm, alignment_mat, my_aff_score)
+                quick_alignment_search(read_name, read, qual_sequence, &rm, alignment_mat, my_aff_score)
             } else {
-                exhaustive_alignment_search(read_name, read, &rm, alignment_mat, my_aff_score)
+                exhaustive_alignment_search(read_name, read, qual_sequence, &rm, alignment_mat, my_aff_score)
             }
         }
         x => { panic!("we dont know what to do with a reference count of {}", x) }
@@ -584,6 +591,7 @@ pub fn align_to_reference_choices(read_name: &String,
 /// ```
 fn quick_alignment_search(read_name: &String,
                           read: &Vec<FastaBase>,
+                          qual_sequence: Option<Vec<u8>>,
                           rm: &ReferenceManager,
                           alignment_mat: &mut Alignment<Ix3>,
                           my_aff_score: &AffineScoring) -> Option<AlignmentWithRef> {
@@ -607,6 +615,7 @@ fn quick_alignment_search(read_name: &String,
                     read_name,
                     &x.0.sequence,
                     read,
+                    qual_sequence,
                     my_aff_score,
                     alignment_mat,
                     &read.len())),
@@ -618,13 +627,15 @@ fn quick_alignment_search(read_name: &String,
 }
 
 fn exhaustive_alignment_search(read_name: &String, read: &Vec<FastaBase>,
+                               qual_sequence: Option<Vec<u8>>,
                                rm: &ReferenceManager,
                                alignment_mat: &mut Alignment<Ix3>,
                                my_aff_score: &AffineScoring) -> Option<AlignmentWithRef> {
     let references = &rm.references;
 
     let ranked_alignments = references.iter().map(|reference| {
-        let lt = align_two_strings_passed_matrix(read_name, &String::from_utf8(reference.1.name.clone()).unwrap(), &reference.1.sequence, read, my_aff_score, alignment_mat, &read.len());
+        let qual = Some(qual_sequence.as_ref().unwrap().clone());
+        let lt = align_two_strings_passed_matrix(read_name, &String::from_utf8(reference.1.name.clone()).unwrap(), &reference.1.sequence, read, qual, my_aff_score, alignment_mat, &read.len());
 
         Some((lt, reference.1.sequence_u8.clone(), reference.1.name.clone()))
     }).filter(|x| x.is_some()).map(|c| c.unwrap());

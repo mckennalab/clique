@@ -2,6 +2,7 @@ use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Add;
+use bstr::ByteSlice;
 
 use ndarray::Array;
 use ndarray::prelude::*;
@@ -28,6 +29,7 @@ use crate::alignment_manager::simplify_cigar_string;
 use noodles_sam::alignment::record::cigar::Op as Op;
 use noodles_sam::alignment::record::Flags;
 use noodles_sam::alignment::record_buf::Cigar as CigarBuf;
+use petgraph::matrix_graph::Nullable;
 
 pub const MAX_NEG_SCORE: f64 = -100000.0;
 
@@ -73,15 +75,16 @@ impl From<u8> for AlignmentTag {
         }
     }
 }
+
 impl From<Op> for AlignmentTag {
     fn from(value: Op) -> Self {
         match value.kind() {
-            Kind::Match => {AlignmentTag::MatchMismatch(value.len())}
-            Kind::Deletion => {AlignmentTag::Del(value.len())}
-            Kind::Insertion => {AlignmentTag::Ins(value.len())}
-            Kind::SoftClip => {AlignmentTag::SoftClip(value.len())}
-            Kind::HardClip => {AlignmentTag::HardClip(value.len())}
-            _ => {panic!("Unmatched op tag")}
+            Kind::Match => { AlignmentTag::MatchMismatch(value.len()) }
+            Kind::Deletion => { AlignmentTag::Del(value.len()) }
+            Kind::Insertion => { AlignmentTag::Ins(value.len()) }
+            Kind::SoftClip => { AlignmentTag::SoftClip(value.len()) }
+            Kind::HardClip => { AlignmentTag::HardClip(value.len()) }
+            _ => { panic!("Unmatched op tag") }
         }
     }
 }
@@ -90,13 +93,13 @@ impl From<Op> for AlignmentTag {
 impl AlignmentTag {
     pub fn to_op(&self) -> Op {
         match self {
-            AlignmentTag::MatchMismatch(x) => {Op::new(Kind::Match, *x)}
-            AlignmentTag::Del(x) => {Op::new(Kind::Deletion, *x)}
-            AlignmentTag::Ins(x) => {Op::new(Kind::Insertion, *x)}
-            AlignmentTag::SoftClip(x) => {Op::new(Kind::SoftClip, *x)}
-            AlignmentTag::InversionOpen => {panic!("Not sure how to translate the inversion open tag")}
-            AlignmentTag::InversionClose => {panic!("Not sure how to translate the inversion close tag")}
-            AlignmentTag::HardClip(x) => {Op::new(Kind::HardClip, *x)}
+            AlignmentTag::MatchMismatch(x) => { Op::new(Kind::Match, *x) }
+            AlignmentTag::Del(x) => { Op::new(Kind::Deletion, *x) }
+            AlignmentTag::Ins(x) => { Op::new(Kind::Insertion, *x) }
+            AlignmentTag::SoftClip(x) => { Op::new(Kind::SoftClip, *x) }
+            AlignmentTag::InversionOpen => { panic!("Not sure how to translate the inversion open tag") }
+            AlignmentTag::InversionClose => { panic!("Not sure how to translate the inversion close tag") }
+            AlignmentTag::HardClip(x) => { Op::new(Kind::HardClip, *x) }
         }
     }
 }
@@ -133,6 +136,7 @@ pub enum InvMove {
     Left(usize),
     Diag(usize),
 }
+
 #[allow(dead_code)]
 #[derive(Eq, PartialEq, Debug, Copy, Clone, Hash)]
 pub enum AlignmentDirection {
@@ -225,6 +229,7 @@ pub fn create_scoring_record_3d(hint_seq_a_len: usize, hint_seq_b_len: usize, al
         is_local: local_alignment,
     }
 }
+
 /// For inversions we need a way to update the alignment matrix, removing 'used' alignment to find the next best alignment
 ///
 /// This function iterates over the alignment matrix starting from the specified `row` and `column`, updating
@@ -720,37 +725,39 @@ impl AlignmentResult {
     }
 
     pub fn to_cigar_string(&self) -> Box<dyn noodles_sam::alignment::record::Cigar> {
-        let cigar: CigarBuf = self.cigar_string.iter().map(|t|t.to_op()).collect();
+        let cigar: CigarBuf = self.cigar_string.iter().map(|t| t.to_op()).collect();
         Box::new(cigar)
     }
 
-    pub fn to_sam_record(&self, reference_id: &i32, extra_tags: &HashMap<[u8; 2],String>, read_names: Option<Vec<String>>) -> noodles_sam::alignment::RecordBuf {
+    pub fn to_sam_record(&self, reference_id: &i32, extra_tags: &HashMap<[u8; 2], String>, read_names: Option<Vec<String>>) -> noodles_sam::alignment::RecordBuf {
 
         // set the aux. data with alignments stats and the extracted tags
         let mut data = Data::default();
-        extra_tags.iter().for_each(|(k,v)| {data.insert(Tag::from(k.clone()), Value::from(v.clone()));});
+        extra_tags.iter().for_each(|(k, v)| { data.insert(Tag::from(k.clone()), Value::from(v.clone())); });
 
         data.insert(Tag::from([b'r', b'm']), Value::from(get_reference_alignment_rate(&self.reference_aligned, &self.read_aligned).to_string()));
         data.insert(Tag::from([b'r', b's']), Value::from(self.score.to_string()));
 
         match read_names {
             None => {}
-            Some(x) => {data.insert(Tag::from([b'a', b'r']), Value::from(x.join(",")));}
+            Some(x) => { data.insert(Tag::from([b'a', b'r']), Value::from(x.join(","))); }
         }
 
         data.insert(Tag::from([b'a', b's']), Value::from(self.score.to_string()));
 
         let seq_len = self.read_aligned.iter().filter(|b| **b != FASTA_UNSET).collect::<Vec<&FastaBase>>().len();
-        
+
         // set the read name
+        //println!("quals {}",self.read_quals.as_ref().unwrap().clone().to_str().unwrap());
         RecordBuf::builder()
             .set_name(Name::from(self.read_name.as_bytes()))
             .set_sequence(FastaBase::vec_u8(&self.read_aligned.clone().iter().cloned().filter(|b| *b != FASTA_UNSET).collect::<Vec<FastaBase>>()).into())
             .set_cigar(Cigar::from_iter(self.cigar_string.iter().map(|m| m.to_op()).into_iter()).clone())
-            .set_alignment_start(noodles_core::Position::new(self.reference_start).unwrap())
+            .set_alignment_start(noodles_core::Position::new(self.reference_start+1).unwrap())
             .set_quality_scores(match &self.read_quals {
-                Some(x) => {QualityScores::from(x.clone())},
-                None => {QualityScores::from(vec![b'H'; seq_len])}})
+                Some(x) => { QualityScores::from(x.clone().iter().map(|x| u8::from(max(0,*x-33))).collect::<Vec<u8>>()) }
+                None => { QualityScores::from(vec![b'H'; seq_len]) }
+            })
             .set_reference_sequence_id(*reference_id as usize)
             .set_flags(Flags::PROPERLY_ALIGNED)
             .set_data(data).build()
@@ -897,7 +904,7 @@ pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
     let rev_comp_read = &reverse_complement(read);
     perform_affine_alignment(&mut inversion_mat, reference, rev_comp_read, my_aff_score);
 
-    let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read, reference_name, read_name, None));
+    let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read, reference_name, read_name, None, None)); // TODO fix with quality scores
 
     while aligned_inv.is_some() {
         let aligned_inv_local = aligned_inv.unwrap();
@@ -910,7 +917,7 @@ pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
             aligned_inv = if length >= inversion_score.min_inversion_length {
                 clean_and_find_next_best_match_3d(&mut inversion_mat, reference, rev_comp_read, my_aff_score, &aligned_inv_local);
                 long_enough_hits.insert(true_position, b_alignment);
-                Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read, reference_name, read_name, None))
+                Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read, reference_name, read_name, None, None))// TODO fix with quality scores
             } else {
                 None
             }
@@ -919,16 +926,17 @@ pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
         }
     }
     perform_inversion_aware_alignment(&mut alignment_mat, &long_enough_hits, reference, read, inversion_score);
-    perform_3d_global_traceback(&mut alignment_mat, Some(&long_enough_hits), reference, read, reference_name, read_name,None)
+    perform_3d_global_traceback(&mut alignment_mat, Some(&long_enough_hits), reference, read, reference_name, read_name, None, None) // TODO fix with quality scores
 }
 
 #[allow(dead_code)]
-pub fn  perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
+pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                                    inversion_mapping: Option<&HashMap<AlignmentLocation, BoundedAlignment>>,
                                    sequence1: &[FastaBase],
                                    sequence2: &[FastaBase],
                                    sequence1_name: &String,
                                    sequence2_name: &String,
+                                   read_quality: Option<Vec<u8>>,
                                    starting_position: Option<(usize, usize)>,
 ) -> AlignmentResult {
     let mut alignment1: Vec<FastaBase> = Vec::with_capacity(sequence1.len() * 2);
@@ -1056,7 +1064,7 @@ pub fn  perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
         read_name: sequence2_name.clone(),
         reference_aligned: alignment1,
         read_aligned: alignment2,
-        read_quals: None,
+        read_quals: read_quality,
         cigar_string: simplify_cigar_string(&cigars),
         path,
         score,
@@ -1219,14 +1227,14 @@ mod tests {
         }
         let elapsed = now.elapsed();
         println!("Elapsed affine: {:.2?}", elapsed);
-/*
-        let now2 = Instant::now();
-        for _i in 0..iterations {
-            perform_rust_bio_alignment(&reference, &test_read);
-        }
-        let elapsed2 = now2.elapsed();
+        /*
+                let now2 = Instant::now();
+                for _i in 0..iterations {
+                    perform_rust_bio_alignment(&reference, &test_read);
+                }
+                let elapsed2 = now2.elapsed();
 
-        println!("Elapsed biorust: {:.2?}", elapsed2);*/
+                println!("Elapsed biorust: {:.2?}", elapsed2);*/
     }
 
 
@@ -1287,7 +1295,7 @@ mod tests {
 
         //pretty_print_3d_matrix(&alignment_mat, &FastaBase::vec_u8(&reference), &FastaBase::vec_u8(&test_read));
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
-        println!("{}\n{}\n{}", FastaBase::string(results.reference_aligned.as_slice()), FastaBase::string(results.read_aligned.as_slice()),results.score);
+        println!("{}\n{}\n{}", FastaBase::string(results.reference_aligned.as_slice()), FastaBase::string(results.read_aligned.as_slice()), results.score);
         assert_eq!(results.reference_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT"));
         //                                                            TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTG------T
         assert_eq!(results.read_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTGT------"));
@@ -1519,6 +1527,5 @@ mod tests {
 
         println!("CIGAR: {:?}", results.cigar_string);
     }
-
 }
 

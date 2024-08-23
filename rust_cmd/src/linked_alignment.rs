@@ -172,7 +172,7 @@ pub fn align_string_with_anchors(read_name: &String,
                 (_x, _y, None) => {
                     perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
-                    perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, ref_name, read_name, None)
+                    perform_3d_global_traceback(alignment_mat, None, &ref_slice, &read_slice, ref_name, read_name, None, None)
                 }
             };
         read_alignment_last_position += read_slice.len();
@@ -208,7 +208,7 @@ pub fn align_string_with_anchors(read_name: &String,
                         let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::Affine, false);
                         perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
-                        perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, ref_name, read_name, None)
+                        perform_3d_global_traceback(&mut alignment_mat, None, &ref_slice, &read_slice, ref_name, read_name, None, None)// TODO fix with quality scores
                     }
                 };
             debug!("Pushing {:?}",alignment.cigar_string.clone());
@@ -234,7 +234,7 @@ pub fn align_string_with_anchors(read_name: &String,
                     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, search_string.len() + 1, AlignmentType::Affine, false);
                     perform_affine_alignment(&mut alignment_mat, &reference, &search_string, my_aff_score);
 
-                    perform_3d_global_traceback(&mut alignment_mat, None, &reference, &search_string, ref_name, read_name, None)
+                    perform_3d_global_traceback(&mut alignment_mat, None, &reference, &search_string, ref_name, read_name, None, None) // TODO fix with quality scores
                 }
             };
         alignment_ref.extend(alignment.reference_aligned);

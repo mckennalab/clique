@@ -302,6 +302,7 @@ impl MergedReadSequence {
 pub struct UnifiedRead {
     pub name: Option<Vec<u8>>,
     pub seq: Option<Vec<FastaBase>>,
+    pub quals: Option<Vec<u8>>,
     pub read_structure: SequenceLayout,
     pub read_pattern: (bool, bool, bool, bool),
     pub underlying_reads: ReadSetContainer,
@@ -312,6 +313,7 @@ impl UnifiedRead {
         UnifiedRead {
             name: None,
             seq: None,
+            quals: None,
             underlying_reads,
             read_pattern: (
                 MergedReadSequence::contains_read1(&read_structure),
@@ -338,6 +340,7 @@ impl UnifiedRead {
     fn decision_tree(&mut self) {
         match (self.read_pattern, &self.read_structure.merge) {
             ((true, true, false, false), Some(MergeStrategy::Align)) => {
+                // TODO: quality scores
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(
                     merge_reads_by_alignment(
@@ -353,6 +356,7 @@ impl UnifiedRead {
                 if strat == &MergeStrategy::Concatenate
                     || strat == &MergeStrategy::ConcatenateBothForward =>
             {
+                // TODO: quality scores
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(
                     merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure)
@@ -363,6 +367,7 @@ impl UnifiedRead {
                 if strat == &MergeStrategy::Concatenate
                     || strat == &MergeStrategy::ConcatenateBothForward =>
             {
+                // TODO: quality scores
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(
                     merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure)
@@ -370,6 +375,7 @@ impl UnifiedRead {
                 );
             }
             ((true, false, false, false), _) => {
+
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(
                     self.underlying_reads
@@ -379,6 +385,9 @@ impl UnifiedRead {
                         .map(|x| FastaBase::from(*x))
                         .collect(),
                 );
+                self.quals = Some(
+                    self.underlying_reads.read_one.qual().to_vec()
+                )
             }
             _ => {
                 panic!(
@@ -467,6 +476,7 @@ pub fn merge_fasta_bases_by_alignment(
     let results = align_two_strings(
         &read1_seq,
         &read2_seq,
+        None, // TODO: fix with quality scores
         merge_initial_scoring,
         false,
         read1_name,
