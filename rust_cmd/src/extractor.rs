@@ -67,21 +67,21 @@ pub fn recover_align_sequences(
     if ref_pos > 0 && cigar.len() > 0 && cigar[0].kind() != Kind::SoftClip {
         aligned_read.extend(b"-".repeat(ref_pos));
         aligned_ref.extend(reference[ref_pos..ref_pos].to_vec());
-        println!("ADDING");
+        //println!("ADDING");
         ref_pos += ref_pos;
     };
 
 
-    println!("\n\nread length {} cigar {:?} ref length {:?}", unaligned_read.len(), cigar, reference.len());
-    println!("read {} ref: {}", String::from_utf8(unaligned_read.clone().to_vec()).unwrap(), String::from_utf8(reference.clone().to_vec()).unwrap(), );
+    //println!("\n\nread length {} cigar {:?} ref length {:?}", unaligned_read.len(), cigar, reference.len());
+    //println!("read {} ref: {}", String::from_utf8(unaligned_read.clone().to_vec()).unwrap(), String::from_utf8(reference.clone().to_vec()).unwrap(), );
     for (cigar_index, cigar_sub) in cigar.iter().enumerate() {
         let cigar_v = cigar_sub;
         let len = cigar_v.len();
-        println!("START read pos {} ref pos: {} kind {:?} length {}", read_pos, ref_pos, cigar_v.kind(), cigar_v.len());
+        //println!("START read pos {} ref pos: {} kind {:?} length {}", read_pos, ref_pos, cigar_v.kind(), cigar_v.len());
 
         match cigar_v.kind() {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
-                println!("Ref length {}",(ref_pos + len) - ref_pos);
+                //println!("Ref length {}",(ref_pos + len) - ref_pos);
                 aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
                 aligned_ref.extend(reference[ref_pos..ref_pos + len].to_vec());
                 read_pos += len;
@@ -168,8 +168,8 @@ pub fn recover_align_sequences(
                 // do nothing
             }
         }
-        println!("END read pos {} ref pos: {} kind {:?} length {}", read_pos, ref_pos, cigar_v.kind(), cigar_v.len());
-        println!("read {} {} \nref  {} {}\n", String::from_utf8(aligned_read.clone()).unwrap(),aligned_read.len(), String::from_utf8(aligned_ref.clone()).unwrap(), aligned_ref.len());
+        //println!("END read pos {} ref pos: {} kind {:?} length {}", read_pos, ref_pos, cigar_v.kind(), cigar_v.len());
+        //println!("read {} {} \nref  {} {}\n", String::from_utf8(aligned_read.clone()).unwrap(),aligned_read.len(), String::from_utf8(aligned_ref.clone()).unwrap(), aligned_ref.len());
     }
     if ref_pos < reference.len() {
         aligned_ref.extend(reference[ref_pos..].to_vec());
