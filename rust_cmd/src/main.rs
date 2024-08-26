@@ -27,7 +27,6 @@ extern crate suffix;
 extern crate tempfile;
 extern crate serde_yaml;
 extern crate symspell;
-extern crate derive_more;
 extern crate shardio;
 extern crate anyhow;
 extern crate sift4;

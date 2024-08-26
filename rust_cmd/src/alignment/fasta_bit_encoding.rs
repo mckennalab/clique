@@ -1,8 +1,6 @@
-extern crate derive_more;
 
 use std::cmp::Ordering;
 use std::fmt;
-use derive_more::{Add};
 use std::ops::{BitAnd, BitOr, BitXor, Shl, Shr};
 use serde::{Serialize, Deserialize};
 
@@ -10,7 +8,7 @@ use serde::{Serialize, Deserialize};
 /// our core Fasta base - representing a single fasta character in a u8 data store. We actually pack
 /// everything into a u4 (if that was a type) but FastaString below handles the more dense packing and
 /// unpacking into u64 structures
-#[derive(Clone, Copy, Add, Serialize, Deserialize, Hash)]
+#[derive(Clone, Copy, Serialize, Deserialize, Hash)]
 pub struct FastaBase(u8);
 //type FastaBase = u8;
 
