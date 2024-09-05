@@ -626,7 +626,8 @@ fn quick_alignment_search(read_name: &String,
     }
 }
 
-fn exhaustive_alignment_search(read_name: &String, read: &Vec<FastaBase>,
+fn exhaustive_alignment_search(read_name: &String,
+                               read: &Vec<FastaBase>,
                                qual_sequence: Option<Vec<u8>>,
                                rm: &ReferenceManager,
                                alignment_mat: &mut Alignment<Ix3>,
@@ -634,12 +635,11 @@ fn exhaustive_alignment_search(read_name: &String, read: &Vec<FastaBase>,
     let references = &rm.references;
 
     let ranked_alignments = references.iter().map(|reference| {
-        let qual = Some(qual_sequence.as_ref().unwrap().clone());
+        let qual = qual_sequence.clone();
         let lt = align_two_strings_passed_matrix(read_name, &String::from_utf8(reference.1.name.clone()).unwrap(), &reference.1.sequence, read, qual, my_aff_score, alignment_mat, &read.len());
 
         Some((lt, reference.1.sequence_u8.clone(), reference.1.name.clone()))
     }).filter(|x| x.is_some()).map(|c| c.unwrap());
-
 
     let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2| {
         let score1 = al.1.0.score;// / al.1.0.reference_aligned.len() as f64;
@@ -893,12 +893,12 @@ mod tests {
 
         };
 
-        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None,    &&rm, &mut read_mat, &my_aff_score);
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("1_AAACCCCGGG_GGTAGCAAACGTTTGGACGTG".to_string().into_bytes()).unwrap());
 
         let read_one = FastaBase::from_string(&"atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTGCCCTTACTCTCACCTGATTACTTAATCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAACGCCCTACgaattcgggcccattggtatggc".to_string().to_ascii_uppercase());
-        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
 
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("2_AACGCCCTAC_GGTGCCCTTACTCTCACCTGATTACTTAATCCGTG".to_string().into_bytes()).unwrap());
@@ -940,7 +940,7 @@ mod tests {
 
         };
 
-        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("ref_48_GGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTG".to_string().into_bytes()).unwrap());
     }

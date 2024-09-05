@@ -1,7 +1,6 @@
-use std::cmp::{max, min};
+use std::cmp::{min};
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use nohash_hasher::NoHashHasher;
-use noodles_bam::record::Cigar;
 use noodles_sam::alignment::record::cigar::op::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::BuildHasherDefault;

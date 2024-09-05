@@ -1145,7 +1145,7 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
 
         assert_eq!(results.reference_aligned, str_to_fasta_vec("CCAATCTACT"));
         assert_eq!(results.read_aligned, str_to_fasta_vec("CTACTCTACT"));
@@ -1153,7 +1153,7 @@ mod tests {
         clean_and_find_next_best_match_3d(&mut alignment_mat, &reference, &test_read, &my_score, &results);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         assert_eq!(results.reference_aligned, FastaBase::from_vec_u8(&"CTACTACTGCT".as_bytes().to_vec()));
         assert_eq!(results.read_aligned, str_to_fasta_vec("CTACT-CTACT"));
     }
@@ -1175,7 +1175,7 @@ mod tests {
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, true);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         assert_eq!(results.reference_aligned, str_to_fasta_vec("CCAATCTACT"));
         assert_eq!(results.read_aligned, str_to_fasta_vec("CTACTCTACT"));
     }
@@ -1197,7 +1197,7 @@ mod tests {
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         assert_eq!(results.reference_aligned, str_to_fasta_vec("AAAANAAAA"));
         assert_eq!(results.read_aligned, str_to_fasta_vec("AAAA-AAAA"));
     }
@@ -1223,7 +1223,7 @@ mod tests {
         let now = Instant::now();
         for _i in 0..iterations {
             perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
-            let _results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+            let _results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         }
         let elapsed = now.elapsed();
         println!("Elapsed affine: {:.2?}", elapsed);
@@ -1255,7 +1255,7 @@ mod tests {
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         assert_eq!(results.reference_aligned, str_to_fasta_vec("----------------AAAAAAAA############################AGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
         assert_eq!(results.read_aligned, str_to_fasta_vec("AAAAAAAAAAAAAAAAAAAAAAAAATATCTCGTTTAATTGACTCTGAAATCAAGATCGGAAGAGCGTCGTGTAGGGAAAGA"));
     }
@@ -1278,7 +1278,7 @@ mod tests {
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         assert_eq!(results.reference_aligned, str_to_fasta_vec("AA-AA"));
         assert_eq!(results.read_aligned, str_to_fasta_vec("AATAA"));
     }
@@ -1294,7 +1294,7 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
         //pretty_print_3d_matrix(&alignment_mat, &FastaBase::vec_u8(&reference), &FastaBase::vec_u8(&test_read));
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         println!("{}\n{}\n{}", FastaBase::string(results.reference_aligned.as_slice()), FastaBase::string(results.read_aligned.as_slice()), results.score);
         assert_eq!(results.reference_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT"));
         //                                                            TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTG------T
@@ -1318,7 +1318,7 @@ mod tests {
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         assert_eq!(results.reference_aligned, str_to_fasta_vec("AA-AA"));
         assert_eq!(results.read_aligned, str_to_fasta_vec("AATAA"));
 
@@ -1347,7 +1347,7 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         println!("Aligned {} and {}; from {} and {}",
                  fasta_vec_to_string(&results.reference_aligned),
                  fasta_vec_to_string(&results.read_aligned),
@@ -1380,7 +1380,7 @@ mod tests {
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         println!("Aligned {} and {}; from {} and {}",
                  fasta_vec_to_string(&results.reference_aligned),
                  fasta_vec_to_string(&results.read_aligned),
@@ -1409,7 +1409,7 @@ mod tests {
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, true);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
-        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
 
         assert_eq!(fasta_vec_to_string(&results.reference_aligned), "TACTGC");
         assert_eq!(fasta_vec_to_string(&results.read_aligned), "TACAGC");

@@ -1,8 +1,8 @@
-use crate::alignment::fasta_bit_encoding::FastaBase;
+use crate::alignment::fasta_bit_encoding::{FASTA_N, FASTA_UNSET, FastaBase};
 use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::extractor::{extract_tag_sequences, extract_tagged_sequences, recover_align_sequences, SoftClipResolution, stretch_sequence_to_alignment};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
-use crate::read_strategies::sequence_layout::{SequenceLayout, UMIConfiguration, UMISortType};
+use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
 use crate::umis::known_list::KnownList;
 
@@ -10,16 +10,15 @@ use crate::InstanceLivedTempDir;
 use indicatif::ProgressBar;
 
 use noodles_bam as bam;
-use noodles_bam::bai;
+use noodles_bam::{bai, Record};
 use noodles_sam::Header;
 
-use shardio::{Range, ShardReader, ShardWriter};
-use std::cmp::Ordering;
+use shardio::{Range, ShardReader, ShardSender, ShardWriter};
+use std::cmp::{min, Ordering};
 use std::collections::{HashMap};
 use std::path::PathBuf;
 use itertools::Itertools;
 use noodles_sam::alignment::record::QualityScores;
-
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::degenerate_tags::DegenerateBuffer;
@@ -219,6 +218,88 @@ impl ReferenceLookupTable {
     }
 }
 
+trait AlignmentFilter {
+    fn keep(&self, read: &SortingReadSetContainer) -> bool;
+}
+
+pub struct AlignmentCheck {
+    min_aligned_bases: usize,
+    min_aligned_identical_proportion: f64,
+}
+
+impl AlignmentFilter for AlignmentCheck {
+    fn keep(&self, read: &SortingReadSetContainer) -> bool {
+        let mut alignment_count =0;
+        let mut alignable_bases = 0;
+
+        read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(x,y)| {
+            if !x.identity(&FASTA_UNSET) && !x.identity(&FASTA_UNSET) {
+                alignable_bases += 1;
+                if x.identity(y) {
+                    alignment_count += 1;
+                }
+            }
+        });
+        println!("aligning {} {} ",alignment_count,alignable_bases);
+        (alignment_count as f64 / alignable_bases as f64 >= self.min_aligned_identical_proportion) && (alignable_bases >= self.min_aligned_bases)
+    }
+}
+
+
+
+/// We want to be extra confident in the alignments around our 'tags'.
+/// This filters out reads where we have mismatches and gaps around the
+/// degenerate sequences we recover
+pub struct FlankingDegenerateBaseFilter {
+    min_flanking_indentity: f64,
+    flanking_window_size: usize,
+}
+impl AlignmentFilter for FlankingDegenerateBaseFilter {
+    fn keep(&self, read: &SortingReadSetContainer) -> bool {
+        // create a sliding window set to the flanking window size. When we hit a degenerate sequence
+        // check that our window meets the criteria
+        let mut pushed_binary_comp = Vec::new();
+        let mut ret = true;
+        let mut count_down_check = usize::MAX;
+        read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(read_base, reference_base)| {
+            if count_down_check == 0 {
+                count_down_check = usize::MAX;
+                let lookback_length = min(pushed_binary_comp.len(),self.flanking_window_size);
+                let sum: u32 = pushed_binary_comp[pushed_binary_comp.len() - lookback_length..pushed_binary_comp.len()].iter().sum();
+                let matching_prop = sum as f64 / lookback_length as f64;
+                pushed_binary_comp.clear();
+                if matching_prop < self.min_flanking_indentity {
+                    ret = false;
+                }
+            }
+            else if !reference_base.identity(&FASTA_UNSET) && !reference_base.identity(&FASTA_N){
+                count_down_check -= 1;
+                if read_base.identity(reference_base) {
+                    pushed_binary_comp.push(1)
+                } else {
+                    pushed_binary_comp.push(0)
+                }
+            }
+                // lookback case for start of Ns
+            else if reference_base.identity(&FASTA_N) && pushed_binary_comp.len() > 0 {
+                let lookback_length = min(pushed_binary_comp.len(),self.flanking_window_size);
+                let sum: u32 = pushed_binary_comp[pushed_binary_comp.len() - lookback_length..pushed_binary_comp.len()].iter().sum();
+                let matching_prop = sum as f64 / lookback_length as f64;
+                pushed_binary_comp.clear();
+                if matching_prop < self.min_flanking_indentity {
+                    ret = false;
+                }
+            }
+            else if reference_base.identity(&FASTA_N) && pushed_binary_comp.len() == 0 {
+                count_down_check = self.flanking_window_size;
+            }
+        });
+        ret
+    }
+
+
+}
+
 #[derive(Default,Copy,Clone,Debug)]
 struct BamReadFiltering {
     total_reads: usize,
@@ -303,58 +384,14 @@ pub fn sort_reads_from_bam_file(
             let record = result.unwrap();
 
             if !record.flags().is_secondary() && !record.flags().is_unmapped() {
-                let seq: Vec<u8> = record.sequence().iter().collect();
-                let start_pos = record.alignment_start().unwrap().unwrap().get();
-                let cigar = record.cigar();
-                let read_name: bam::record::Name<'_> = record.name().unwrap();
-                let read_qual = record.quality_scores().iter().collect();
-                let ref_slice = reference_sequence.as_slice();
-
-                let aligned_read =
-                    recover_align_sequences(&seq, start_pos, &cigar.iter().map(|x| x.unwrap()).collect(), &SoftClipResolution::Realign, ref_slice);
-
-                let stretched_alignment = stretch_sequence_to_alignment(
-                    &aligned_read.aligned_ref,
-                    &reference_manager
-                        .references
-                        .get(reference_sequence_id)
-                        .unwrap()
-                        .sequence_u8,
-                );
-
-                let extracted_tags =
-                    extract_tagged_sequences(&aligned_read.aligned_read, &stretched_alignment);
-
-                let (valid_tags_extracted, read_tags_ordered) =
-                    extract_tag_sequences(reference_config, extracted_tags);
-
-                if !valid_tags_extracted {
-
-                    let new_sorted_read_container = SortingReadSetContainer {
-                        ordered_sorting_keys: vec![], // for future use during sorting
-                        ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
-                        aligned_read: AlignmentResult {
-                            reference_name: reference_name.clone(),
-                            read_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_read),
-                            read_quals: Some(read_qual),
-                            cigar_string: cigar
-                                .iter()
-                                .map(|op| AlignmentTag::from(op.unwrap()))
-                                .collect(),
-                            path: vec![],
-                            score: 0.0,
-                            reference_start: start_pos,
-                            read_start: 0,
-                            reference_aligned: FastaBase::from_vec_u8_default_ns(
-                                &aligned_read.aligned_ref,
-                            ),
-                            read_name: String::from_utf8(read_name.as_bytes().to_vec()).unwrap(),
-                            bounding_box: None,
-                        },
-                    };
-                    sender.send(new_sorted_read_container).unwrap();
-                } else {
-                    read_stats.invalid_tags += 1;
+                let read = create_sorted_read_container(reference_name, &reference_manager, &mut read_stats, &reference_sequence_id, &reference_sequence, reference_config, &record);
+                match read {
+                    Some(x) => {
+                        sender.send(x).unwrap();
+                    },
+                    None => {
+                        read_stats.failed_alignment_filters += 1;
+                    }
                 }
             } else {
                 if record.flags().is_secondary() {
@@ -367,11 +404,75 @@ pub fn sort_reads_from_bam_file(
         }
         sender.finished().unwrap();
         sharded_output.finish().unwrap();
-        
+
     }
     read_stats.results();
     if read_stats.passing_reads() > 0 {
         Some(ShardReader::open(aligned_temp).unwrap())
+    } else {
+        None
+    }
+}
+
+/// create a read container from the read and reference sequence,
+/// returning Some(read) if successful, or None if we couldn't
+/// extract the tag
+fn create_sorted_read_container(reference_name: &String,
+                                reference_manager: &&ReferenceManager,
+                                read_stats: &mut BamReadFiltering,
+                                reference_sequence_id: &&usize,
+                                reference_sequence: &Vec<u8>,
+                                reference_config: &ReferenceRecord, record: &Record) -> Option<SortingReadSetContainer> {
+
+    let seq: Vec<u8> = record.sequence().iter().collect();
+    let start_pos = record.alignment_start().unwrap().unwrap().get();
+    let cigar = record.cigar();
+    let read_name: bam::record::Name<'_> = record.name().unwrap();
+    let read_qual = record.quality_scores().iter().collect();
+    let ref_slice = reference_sequence.as_slice();
+
+    let aligned_read =
+        recover_align_sequences(&seq, start_pos, &cigar.iter().map(|x| x.unwrap()).collect(), &SoftClipResolution::Realign, ref_slice);
+
+    let stretched_alignment = stretch_sequence_to_alignment(
+        &aligned_read.aligned_ref,
+        &reference_manager
+            .references
+            .get(reference_sequence_id)
+            .unwrap()
+            .sequence_u8,
+    );
+
+    let extracted_tags =
+        extract_tagged_sequences(&aligned_read.aligned_read, &stretched_alignment);
+
+    let (valid_tags_extracted, read_tags_ordered) =
+        extract_tag_sequences(reference_config, extracted_tags);
+
+    if !valid_tags_extracted {
+        Some(SortingReadSetContainer {
+            ordered_sorting_keys: vec![], // for future use during sorting
+            ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
+            aligned_read: AlignmentResult {
+                reference_name: reference_name.clone(),
+                read_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_read),
+                read_quals: Some(read_qual),
+                cigar_string: cigar
+                    .iter()
+                    .map(|op| AlignmentTag::from(op.unwrap()))
+                    .collect(),
+                path: vec![],
+                score: 0.0,
+                reference_start: start_pos,
+                read_start: 0,
+                reference_aligned: FastaBase::from_vec_u8_default_ns(
+                    &aligned_read.aligned_ref,
+                ),
+                read_name: String::from_utf8(read_name.as_bytes().to_vec()).unwrap(),
+                bounding_box: None,
+            },
+        })
+
     } else {
         None
     }
@@ -619,6 +720,7 @@ mod tests {
     use std::collections::VecDeque;
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
+    use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_T};
     use crate::utils::read_utils::fake_reads;
 
     pub fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
@@ -662,6 +764,163 @@ mod tests {
         consensus
     }
 
+    #[test]
+    fn test_alignment_check() {
+        let alignment_check = AlignmentCheck{ min_aligned_bases: 10, min_aligned_identical_proportion: 0.8 };
+
+        let fake_read_alignment = SortingReadSetContainer{
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: AlignmentResult {
+                reference_name: "".to_string(),
+                read_name: "".to_string(),
+                reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
+                read_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                read_quals: None,
+                cigar_string: vec![],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        };
+
+        assert!(alignment_check.keep(&fake_read_alignment));
+    }
+
+    // FlankingDegenerateBaseFilter
+
+    #[test]
+    fn test_flanking_degenerate_base_filter() {
+        let alignment_check = FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.9, flanking_window_size: 3 };
+
+        let fake_read_alignment = SortingReadSetContainer{
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: AlignmentResult {
+                reference_name: "".to_string(),
+                read_name: "".to_string(),
+                reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_N,FASTA_N,FASTA_N,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
+                read_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                read_quals: None,
+                cigar_string: vec![],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        };
+
+        assert!(alignment_check.keep(&fake_read_alignment));
+
+        let fake_read_alignment = SortingReadSetContainer{
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: AlignmentResult {
+                reference_name: "".to_string(),
+                read_name: "".to_string(),
+                reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
+                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,FASTA_T,  FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                read_quals: None,
+                cigar_string: vec![],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        };
+
+        assert!(!alignment_check.keep(&fake_read_alignment));
+        let fake_read_alignment = SortingReadSetContainer{
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: AlignmentResult {
+                reference_name: "".to_string(),
+                read_name: "".to_string(),
+                reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
+                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,  FASTA_T,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                read_quals: None,
+                cigar_string: vec![],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        };
+
+        assert!(!alignment_check.keep(&fake_read_alignment));
+
+        assert!(!alignment_check.keep(&fake_read_alignment));
+        let fake_read_alignment = SortingReadSetContainer{
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: AlignmentResult {
+                reference_name: "".to_string(),
+                read_name: "".to_string(),
+                reference_aligned: vec![FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
+                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,  FASTA_T,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                read_quals: None,
+                cigar_string: vec![],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        };
+
+        assert!(!alignment_check.keep(&fake_read_alignment));
+
+
+        assert!(!alignment_check.keep(&fake_read_alignment));
+        let fake_read_alignment = SortingReadSetContainer{
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: AlignmentResult {
+                reference_name: "".to_string(),
+                read_name: "".to_string(),
+                reference_aligned: vec![FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N],
+                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_T,  FASTA_A,FASTA_A,FASTA_A],
+                read_quals: None,
+                cigar_string: vec![],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        };
+
+        assert!(!alignment_check.keep(&fake_read_alignment));
+
+
+        assert!(!alignment_check.keep(&fake_read_alignment));
+        let fake_read_alignment = SortingReadSetContainer{
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: Default::default(),
+            aligned_read: AlignmentResult {
+                reference_name: "".to_string(),
+                read_name: "".to_string(),
+                reference_aligned: vec![FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N],
+                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A],
+                read_quals: None,
+                cigar_string: vec![],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        };
+
+        assert!(alignment_check.keep(&fake_read_alignment));
+
+
+    }
     #[test]
     fn test_consensus() {
         let basic_seqs: Vec<Vec<u8>> = vec![
