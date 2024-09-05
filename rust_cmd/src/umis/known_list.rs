@@ -127,24 +127,15 @@ pub struct BestF32Hits {
 mod tests {
     use std::{
         fs::File,
-        io::{self, BufRead, BufReader},
-        path::Path,
+        io::{BufRead, BufReader},
     };
-    use std::collections::HashMap;
-    use vpsearch::MetricSpace;
+    
+    
     use crate::{
         alignment::fasta_bit_encoding::FastaBase,
         read_strategies::sequence_layout::{UMIConfiguration, UMISortType},
-        umis::known_list::{FastaString, KnownList},
+        umis::known_list::{KnownList},
     };
-
-    fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-        where
-            P: AsRef<Path>,
-    {
-        let file = File::open(filename)?;
-        Ok(io::BufReader::new(file).lines())
-    }
 
     #[test]
     fn test_real_known_set() {

@@ -410,10 +410,6 @@ mod tests {
         assert_eq!(aligned_string, 10);
     }
 
-    fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
-        FastaBase::from_vec_u8(&input.as_bytes().to_vec())
-    }
-
     #[test]
     fn simple_extend_short_test() {
         let reference = String::from("AAA").as_bytes().to_owned();

@@ -1,4 +1,4 @@
-use std::cmp::{max, min};
+use std::cmp::{min};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use bio::bio_types::genome::AbstractInterval;
@@ -16,6 +16,7 @@ use crate::reference::fasta_reference::ReferenceManager;
 
 // Derive the Clone and PartialEq traits for the ExtractorTags enum
 #[derive(Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum ExtractorTags {
     // AC represents the read count with a value of type u64, coded as 'a', 'c'
     // Old value: [b'r', b'c']
@@ -52,6 +53,8 @@ struct ExtractorPair {
     extractor: ExtractorTags,
     value: String,
 }
+
+#[allow(dead_code)]
 pub struct TargetExtractorState {
     current_target_id: usize,
 }
@@ -644,13 +647,13 @@ impl BamCallingParser<'_, '_, '_> {
                     let reference_sequence = FastaBase::vec_u8(&self.reference_manager.references.get(reference).unwrap().sequence);
                     let alignment_start = record.reference_start() as usize;
 
-                    println!("read name {} start {}",String::from_utf8(record.name().clone().to_vec()).unwrap(),alignment_start);
+                    println!("read name {} start {}",String::from_utf8(record.name().to_vec()).unwrap(),alignment_start);
 
                     // TODO output extractor tags
                     let extractor_tokens = self.extraction_tags(&record, &ref_name);
                     let _token_output : Vec<(String,Option<&ExtractorTags>)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id))).into_iter().collect::<Vec<(String,Option<&ExtractorTags>)>>();
 
-                    println!("read name {} start {}",String::from_utf8(record.name().clone().to_vec()).unwrap(),alignment_start);
+                    println!("read name {} start {}",String::from_utf8(record.name().to_vec()).unwrap(),alignment_start);
 
                     let cigar_tokens = extract_read_cigar_elements(&alignment_start, &reference_sequence, &record.seq().as_bytes(), &record.cigar(), &true);
 
@@ -720,7 +723,7 @@ mod tests {
     fn target_positions() {
         let reference = "TTTTACGTAACGTAACGTAACGTACGGTTTT".to_ascii_uppercase();
         let targets = vec!["ACGTAACGTAACGTAACGTACGG".to_ascii_uppercase()];
-        let reference_offset = 10;
+        let _reference_offset = 10;
 
         let positions = TargetPositions::validate_target_positions(&reference, &targets);
         assert!(positions.contains_key(&0));
@@ -729,7 +732,7 @@ mod tests {
 
         // two positions in serial
         let reference = "TTTTACGTAACGTAACGTAACGTACGGTTTTTTTTACGTAACGTAACGTAACGTACGGTTTT".to_ascii_uppercase();
-        let reference_offset = 10;
+        let _reference_offset = 10;
 
         let positions = TargetPositions::validate_target_positions(&reference, &targets);
         assert!(positions.contains_key(&0));
@@ -740,7 +743,7 @@ mod tests {
         // two targets with a reverse comp target
         let targets = vec!["AAAAATTTTTAAAAATTTTTCGG".to_ascii_uppercase(), "ACGTAACGTAACGTAACGTACGG".to_ascii_uppercase()];
         let reference = "TTTTACGTAACGTAACGTAACGTACGGTTTTTTTTACGTAACGTAACGTAACGTACGGTTTTAAAAATTTTTAAAAATTTTTCGGAAAACCGTACGTTACGTTACGTTACGT".to_ascii_uppercase();
-        let reference_offset = 10;
+        let _reference_offset = 10;
 
         let positions = TargetPositions::validate_target_positions(&reference, &targets);
 
@@ -758,7 +761,7 @@ mod tests {
         // two targets with a reverse comp target
         let targets = vec!["AAAAATTTTTAAAAATTTTTCGG".to_ascii_uppercase(), "ACGTAACGTAACGTAACGTACGG".to_ascii_uppercase()];
         let reference = "TTTTACGTAACGTAACGTAACGTACGGTTTTTTTTACGTAACGTAACGTAACGTACGGTTTTAAAAATTTTTAAAAATTTTTCGGAAAACCGTACGTTACGTTACGTTACGTCCGAAAAATTTTTAAAAATTTTTCAGAAAAATTTTTAAAAATTTTT".to_ascii_uppercase();
-        let reference_offset = 10;
+        let _reference_offset = 10;
 
         let positions = TargetPositions::validate_target_positions(&reference, &targets);
 

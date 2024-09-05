@@ -10,7 +10,7 @@ use noodles_sam::header::record::value::Map;
 use noodles_sam::Header;
 use noodles_util::alignment;
 use std::collections::HashMap;
-use std::error::Error;
+
 
 
 use std::io::Result;

@@ -1,5 +1,4 @@
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 
@@ -17,8 +16,8 @@ use ndarray::Ix3;
 
 use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 use crate::merger::{MergedReadSequence, UnifiedRead};
+
 use crate::read_strategies::sequence_layout::{SequenceLayout};
-use rust_htslib::bam;
 
 
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
@@ -155,44 +154,6 @@ pub fn align_reads(read_structure: &SequenceLayout,
         });
     });
 }
-
-#[derive(Clone)]
-struct MemorizedAlignment {
-    count: usize,
-    alignment_result: Option<AlignmentWithRef>,
-}
-
-impl MemorizedAlignment {
-    pub fn new() -> MemorizedAlignment {
-        MemorizedAlignment {
-            count: 0,
-            alignment_result: None,
-        }
-    }
-}
-
-impl PartialOrd for MemorizedAlignment {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.count.cmp(&other.count))
-    }
-}
-
-impl Ord for MemorizedAlignment {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.count.cmp(&other.count)
-    }
-}
-
-impl PartialEq for MemorizedAlignment {
-    fn eq(&self, other: &Self) -> bool {
-        self.count == other.count
-    }
-}
-
-impl Eq for MemorizedAlignment {}
-
-type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
-
 
 #[allow(dead_code)]
 fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {
@@ -773,42 +734,6 @@ pub fn bio_to_alignment_result(_read_name: &String, _ref_name: &String, alignmen
 }
 
 
-pub fn matching_read_bases_prop(read: &Vec<FastaBase>, reference: &Vec<FastaBase>) -> f32 {
-    assert_eq!(read.len(), reference.len());
-    let mut total_read_bases = 0;
-    let mut matched = 0;
-    read.iter().zip(reference.iter()).for_each(|(readb, refb)| {
-        if *readb != FASTA_UNSET {
-            total_read_bases += 1;
-        }
-        if *readb != FASTA_UNSET && readb == refb {
-            matched += 1;
-        }
-    });
-    if total_read_bases == 0 {
-        0.0
-    } else {
-        matched as f32 / total_read_bases as f32
-    }
-}
-
-pub fn setup_sam_writer(filename: &String, reference_manger: &ReferenceManager) -> (HashMap<Vec<u8>, u16>, Result<bam::Writer, rust_htslib::errors::Error>) {
-    let mut header = bam::Header::new();
-
-    let mut reference_to_bin = HashMap::new();
-
-    reference_manger.references.iter().enumerate().for_each(|(index, reference)| {
-        let mut header_record = bam::header::HeaderRecord::new(b"SQ");
-        header_record.push_tag(b"SN", String::from_utf8(reference.1.name.clone()).unwrap());
-        header_record.push_tag(b"LN", &reference.1.sequence.len());
-        header.push_record(&header_record);
-        reference_to_bin.insert(reference.1.name.clone(), index as u16);
-    });
-
-    (reference_to_bin, bam::Writer::from_path(&filename, &header, bam::Format::Bam))
-}
-
-
 pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentTag> {
     let mut new_cigar = Vec::new();
 
@@ -849,13 +774,13 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use rust_htslib::bam;
-    use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d};
+    
+    use crate::alignment::alignment_matrix::{AlignmentTag, AlignmentType, create_scoring_record_3d};
     use crate::alignment::fasta_bit_encoding::FastaBase;
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
     use crate::alignment_functions::{exhaustive_alignment_search, simplify_cigar_string};
     use crate::read_strategies::sequence_layout::{AlignedReadOrientation, ReadPosition, SequenceLayout};
-    use crate::reference::fasta_reference::{Reference, ReferenceManager};
+    use crate::reference::fasta_reference::{ReferenceManager};
 
     #[test]
     fn test_find_best_reference() {
@@ -864,7 +789,7 @@ mod tests {
 
         let read_one = FastaBase::from_string(&"atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTAGCAAACGTTTGGACGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAAACCCCGGGgaat".to_string().to_ascii_uppercase());
 
-        let read_structure = SequenceLayout {
+        let _read_structure = SequenceLayout {
             aligner: None,
             merge: None,
             reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
@@ -874,7 +799,7 @@ mod tests {
 
         let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::Affine, false);
 
-        let my_score = InversionScoring {
+        let _my_score = InversionScoring {
             match_score: 9.0,
             mismatch_score: -21.0,
             gap_open: -25.0,
@@ -911,7 +836,7 @@ mod tests {
 
         let read_one = FastaBase::from_string(&"ATGGACTATCATATGCTTACCGTAACTTGAAAGTATTTCGATTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACCGGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTG".to_string().to_ascii_uppercase());
 
-        let read_structure = SequenceLayout {
+        let _read_structure = SequenceLayout {
             aligner: None,
             merge: None,
             reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
@@ -921,7 +846,7 @@ mod tests {
 
         let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::Affine, false);
 
-        let my_score = InversionScoring {
+        let _my_score = InversionScoring {
             match_score: 9.0,
             mismatch_score: -21.0,
             gap_open: -25.0,
@@ -943,15 +868,6 @@ mod tests {
         let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("ref_48_GGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTG".to_string().into_bytes()).unwrap());
-    }
-
-    fn str_to_reference<'a>(st: &'a str, name: &'a str) -> Reference<'a, 'a> {
-        Reference {
-            sequence: FastaBase::from_str(st),
-            sequence_u8: st.as_bytes().to_vec(),
-            name: name.to_ascii_uppercase().into_bytes(),
-            suffix_table: ReferenceManager::find_seeds(&st.as_bytes().to_vec(), 8),
-        }
     }
 
     #[test]

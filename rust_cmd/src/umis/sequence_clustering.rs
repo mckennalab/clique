@@ -261,70 +261,14 @@ pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>>
 mod tests {
 
     use std::time::Instant;
-    use rand::distributions::{Slice, Uniform};
+    use rand::distributions::{Slice};
     use triple_accel::levenshtein_exp;
     use crate::utils::base_utils::edit_distance;
     use super::*;
-    use crate::rand::distributions::Distribution;
     use crate::rand::Rng;
 
     #[test]
     fn string_distance_test() {
-        let str1 = vec![b'A', b'A', b'A', b'A'];
-        let str2 = vec![b'A', b'A', b'A', b'T'];
-
-        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
-        assert_eq!(1, str_dist);
-
-        let str1 = vec![b'A', b'A', b'A', b'A'];
-        let str2 = vec![b'A', b'A', b'A', b'A'];
-
-        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
-        assert_eq!(0, str_dist);
-
-        let str1 = vec![b'T', b'T', b'T', b'T'];
-        let str2 = vec![b'A', b'A', b'A', b'A'];
-
-
-        let str_dist = string_distance_no_break(&str1, &str2, &str1.len());
-        assert_eq!(4, str_dist);
-    }
-
-
-    // Function to generate a random nucleotide sequence of a given length
-    fn generate_random_nucleotide_sequence(length: usize) -> Vec<u8> {
-        let mut rng = rand::thread_rng();
-        let nucleotides = b"ACGT"; // Byte string of nucleotides
-        let dist = Uniform::from(0..nucleotides.len());
-
-        (0..length)
-            .map(|_| nucleotides[dist.sample(&mut rng)])
-            .collect()
-    }
-
-    fn mutate_sequence(sequence: &Vec<u8>, error_rate: f64) -> Vec<u8> {
-        let mut rng = rand::thread_rng();
-        let nucleotides = b"ACGT";
-        let dist = Uniform::from(0..nucleotides.len());
-
-        let mut resulting_sequence = Vec::new();
-        for (position,nucleotide) in sequence.iter().enumerate() {
-            // Decide if this nucleotide should be mutated, based on the error rate
-            if rng.gen::<f64>() < error_rate {
-                let mut new_nucleotide = *nucleotide;
-                // Ensure the new nucleotide is different from the original
-                while new_nucleotide == *nucleotide {
-                    new_nucleotide = nucleotides[dist.sample(&mut rng)];
-                }
-                resulting_sequence.push(new_nucleotide);
-            } else {
-                resulting_sequence.push(*nucleotide);
-            }
-        }
-        resulting_sequence
-    }
-
-    fn generate_random_kmers_with_error_rate() {
         let str1 = vec![b'A', b'A', b'A', b'A'];
         let str2 = vec![b'A', b'A', b'A', b'T'];
 
@@ -394,7 +338,7 @@ mod tests {
 
 
 
-    fn aln_distance(st1: &Vec<FastaBase>, st2: &Vec<FastaBase>) -> f64 {
+    fn aln_distance(st1: &Vec<FastaBase>, _st2: &Vec<FastaBase>) -> f64 {
         levenshtein_exp(&&FastaBase::vec_u8(&st1), &FastaBase::vec_u8(&st1)) as f64
         
     }

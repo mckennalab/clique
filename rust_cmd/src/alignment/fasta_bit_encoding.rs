@@ -610,71 +610,72 @@ mod tests {
 
             assert_eq!(str_version," 0b1000000000000000000000000000000000000000000000000000000000000");
         }
-*/
+
+
 
     #[test]
     fn base_compare_speeds() {
         let comp_count = 100000000;
         let fasta_a = FASTA_A;
-        let fasta_C = FASTA_C;
+        let fasta_c = FASTA_C;
         // do 100K comparisons
         let now = Instant::now();
 
-        for i in 0..comp_count {
-            fasta_a == fasta_C;
+        for _i in 0..comp_count {
+            fasta_a == fasta_c;
         }
         println!("equals {}", now.elapsed().as_millis());
 
-        let fasta_A = FASTA_A;
-        let fasta_C = FASTA_C;
+        let fasta_a = FASTA_A;
+        let fasta_c = FASTA_C;
         // do 100K comparisons
         let now = Instant::now();
 
-        for i in 0..comp_count {
-            fasta_A.identity(&fasta_C);
+        for _i in 0..comp_count {
+            fasta_a.identity(&fasta_c);
         }
         println!("ident {}", now.elapsed().as_millis());
 
-        let fasta_A = FASTA_A.0;
-        let fasta_C = FASTA_C.0;
+        let fasta_a = FASTA_A.0;
+        let fasta_c = FASTA_C.0;
         // do 100K comparisons
         let now = Instant::now();
 
-        for i in 0..comp_count {
-            fasta_A | fasta_C == 0;
+        for _i in 0..comp_count {
+            fasta_a | fasta_c == 0;
         }
         println!("ident stripped  {}", now.elapsed().as_millis());
-        let byte_A = b'A';
-        let byte_C = b'C';
+        let byte_a = b'A';
+        let byte_c = b'C';
         // do 100K comparisons
         let now = Instant::now();
 
-        for i in 0..comp_count {
-            byte_A == byte_C;
+        for _i in 0..comp_count {
+            byte_a == byte_c;
         }
         println!("bytes {}", now.elapsed().as_millis());
 
 
-        let fasta_N = FASTA_A;
-        let fasta_C = FASTA_C;
+        let fasta_n = FASTA_A;
+        let fasta_c = FASTA_C;
         // do 100K comparisons
         let now = Instant::now();
 
-        for i in 0..comp_count {
-            fasta_N.identity(&fasta_C);
+        for _i in 0..comp_count {
+            fasta_n.identity(&fasta_c);
         }
         println!("ident degenerate {}", now.elapsed().as_millis());
 
-        let byte_N = b'N';
-        let byte_A = b'A';
-        let byte_C = b'C';
-        let byte_G = b'G';
-        let byte_T = b'T';
+        let byte_n = b'N';
+        let byte_a = b'A';
+        let byte_c = b'C';
+        let byte_g = b'G';
+        let byte_t = b'T';
         // do 100K comparisons
         let now = Instant::now();
 
-        for i in 0..comp_count {
-            byte_A == byte_N || byte_C == byte_N || byte_G == byte_N || byte_T == byte_N;
+        for _i in 0..comp_count {
+            let _trash = byte_a == byte_n || byte_c == byte_n || byte_g == byte_n || byte_t == byte_n;
         }
         println!("bytes {}", now.elapsed().as_millis());
 
@@ -682,5 +683,5 @@ mod tests {
         //self.0.bitor(other.0) == 0
     }
 
-
+*/
 }

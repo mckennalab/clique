@@ -13,11 +13,11 @@ use noodles_bam as bam;
 use noodles_bam::{bai, Record};
 use noodles_sam::Header;
 
-use shardio::{Range, ShardReader, ShardSender, ShardWriter};
+use shardio::{Range, ShardReader, ShardWriter};
 use std::cmp::{min, Ordering};
 use std::collections::{HashMap};
 use std::path::PathBuf;
-use itertools::Itertools;
+
 use noodles_sam::alignment::record::QualityScores;
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
@@ -419,7 +419,7 @@ pub fn sort_reads_from_bam_file(
 /// extract the tag
 fn create_sorted_read_container(reference_name: &String,
                                 reference_manager: &&ReferenceManager,
-                                read_stats: &mut BamReadFiltering,
+                                _read_stats: &mut BamReadFiltering,
                                 reference_sequence_id: &&usize,
                                 reference_sequence: &Vec<u8>,
                                 reference_config: &ReferenceRecord, record: &Record) -> Option<SortingReadSetContainer> {

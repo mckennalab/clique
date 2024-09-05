@@ -33,10 +33,6 @@ impl DegenerateBuffer {
         }
     }
 
-    fn bin_size_exceeded(&self) -> bool {
-        self.buffer.len() >= self.max_buffer_size
-    }
-
     /// Pushes a new item onto the buffer
     /// we buffer writing to prevent the costly disk writes when we have smaller sets of barcodes.
     /// When we overflow we write the whole buffer to disk and continue to write additional reads to
@@ -171,12 +167,6 @@ impl DegenerateBuffer {
 
         //println!("COUNTS {} {} {}",read_count,buffered_reads,unbuffered_reads);
         read_count
-    }
-
-
-    pub fn clear(&mut self) {
-        self.buffer.clear();
-        self.hash_map.clear();
     }
 }
 
