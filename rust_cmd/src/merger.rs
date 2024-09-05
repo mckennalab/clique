@@ -375,7 +375,7 @@ impl UnifiedRead {
                 }
 
                 self.quals = Some(qual);
-                println!("sequence {}",FastaBase::string(&self.seq.as_ref().unwrap()));
+                //println!("sequence {}",FastaBase::string(&self.seq.as_ref().unwrap()));
             }
             ((true, true, true, false), Some(strat))
                 if strat == &MergeStrategy::Concatenate
