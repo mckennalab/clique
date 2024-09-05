@@ -362,6 +362,7 @@ impl UnifiedRead {
                     merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure)
                         .read_bases,
                 );
+                println!("sequence {}",FastaBase::string(&self.seq.as_ref().unwrap()));
             }
             ((true, true, true, false), Some(strat))
                 if strat == &MergeStrategy::Concatenate

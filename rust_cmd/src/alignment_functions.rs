@@ -38,6 +38,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
+
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
                                           Some(PathBuf::from(&read2)),
                                           Some(PathBuf::from(&index1)),
