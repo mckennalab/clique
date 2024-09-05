@@ -118,8 +118,8 @@ pub fn align_reads(read_structure: &SequenceLayout,
                     Some(alignment_obj) => {
                         let results = alignment_obj.alignment;
                         let _orig_ref_seq = alignment_obj.ref_sequence;
-                        let _ref_name = alignment_obj.ref_name;
-
+                        let ref_name = alignment_obj.ref_name;
+                        println!("Ref name {}",String::from_utf8(ref_name).unwrap());
                         match results {
                             None => {
                                 // TODO: we should track this and provide a final summary
