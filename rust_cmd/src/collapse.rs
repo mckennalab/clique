@@ -350,7 +350,7 @@ pub fn sort_reads_from_bam_file(
 
     let mut read_stats = BamReadFiltering::default();
 
-    let filters : Vec<&dyn AlignmentFilter> = vec![&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10 }, &AlignmentCheck{ min_aligned_bases: 100, min_aligned_identical_proportion: 0.9 }];
+    let filters : Vec<&dyn AlignmentFilter> = vec![&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10 }, &AlignmentCheck{ min_aligned_bases: 100, min_aligned_identical_proportion: 0.8 }];
 
     let index = bai::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();
