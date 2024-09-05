@@ -598,7 +598,12 @@ pub fn sort_degenerate_level(
                     false => {
                         // write the previous bin, and add the current read to the next bin
                         output_reads += bin.close_and_write_to_shard_writer(&mut sender);
+                        let mut bin = DegenerateBuffer::new(
+                            temp_directory.temp_file(format!("{}.fasta", tag.order).as_str()),
+                            &maximum_reads_per_bin,
+                            tag.clone());
                         bin.push(current_read);
+                        current_sorting_bin = Some(bin);
                     }
                 }
             }
