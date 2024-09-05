@@ -19,6 +19,7 @@ use std::collections::{HashMap};
 use std::path::PathBuf;
 
 use noodles_sam::alignment::record::QualityScores;
+use petgraph::visit::Walker;
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::degenerate_tags::DegenerateBuffer;
@@ -306,6 +307,7 @@ struct BamReadFiltering {
     unmapped_flag_reads: usize,
     secondary_flag_reads: usize,
     failed_alignment_filters: usize,
+    failed_alignment_creation: usize,
     duplicate_reads: usize,
     invalid_tags: usize, 
 }
@@ -317,10 +319,11 @@ impl BamReadFiltering {
 
     pub fn results(&self) {
         info!(
-            "Bam file processed, Total reads: {}, Unmapped reads: {}, Secondary reads: {}, Failed alignment filters: {}, Duplicate reads: {}, Invalid_tags: {}, Passing reads: {}",
+            "Bam file processed, Total reads: {}, Unmapped reads: {}, Secondary reads: {},  Failed read construction: {}, Failed alignment filters: {}, Duplicate reads: {}, Invalid_tags: {}, Passing reads: {}",
             self.total_reads,
             self.unmapped_flag_reads,
             self.secondary_flag_reads,
+            self.failed_alignment_creation,
             self.failed_alignment_filters,
             self.duplicate_reads,
             self.invalid_tags,
@@ -346,6 +349,8 @@ pub fn sort_reads_from_bam_file(
     bai_file.push_str(".bai");
 
     let mut read_stats = BamReadFiltering::default();
+
+    let filters : Vec<&dyn AlignmentFilter> = vec![&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10 }, &AlignmentCheck{ min_aligned_bases: 100, min_aligned_identical_proportion: 0.9 }];
 
     let index = bai::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();
@@ -385,12 +390,19 @@ pub fn sort_reads_from_bam_file(
 
             if !record.flags().is_secondary() && !record.flags().is_unmapped() {
                 let read = create_sorted_read_container(reference_name, &reference_manager, &mut read_stats, &reference_sequence_id, &reference_sequence, reference_config, &record);
+
+
                 match read {
                     Some(x) => {
-                        sender.send(x).unwrap();
+                        let survives_filtering = filters.iter().map(|t| t.keep(&x)).filter(|b| !*b).count() == 0;
+                        if survives_filtering {
+                            sender.send(x).unwrap();
+                        } else {
+                            read_stats.failed_alignment_filters += 1;
+                        }
                     },
                     None => {
-                        read_stats.failed_alignment_filters += 1;
+                        read_stats.failed_alignment_creation += 1;
                     }
                 }
             } else {
