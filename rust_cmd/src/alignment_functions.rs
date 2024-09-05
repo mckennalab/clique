@@ -598,7 +598,7 @@ fn exhaustive_alignment_search(read_name: &String,
 
     let ranked_alignments = references.iter().map(|reference| {
         let qual = qual_sequence.clone();
-        let lt = align_two_strings_passed_matrix(&String::from_utf8(reference.1.name.clone()).unwrap(), read_name, read, &reference.1.sequence, qual, my_aff_score, alignment_mat, &read.len());
+        let lt = align_two_strings_passed_matrix(&String::from_utf8(reference.1.name.clone()).unwrap(), read_name, &reference.1.sequence, read,  qual, my_aff_score, alignment_mat, &read.len());
 
         Some((lt, reference.1.sequence_u8.clone(), reference.1.name.clone()))
     }).filter(|x| x.is_some()).map(|c| c.unwrap());
