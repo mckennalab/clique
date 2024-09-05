@@ -351,6 +351,7 @@ impl UnifiedRead {
                     )
                     .read_bases,
                 );
+
             }
             ((true, true, false, false), Some(strat))
                 if strat == &MergeStrategy::Concatenate
@@ -362,6 +363,18 @@ impl UnifiedRead {
                     merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure)
                         .read_bases,
                 );
+                let mut qual = self.underlying_reads.read_one.qual().to_vec();
+
+                if strat == &MergeStrategy::Concatenate {
+                    let mut rt = self.underlying_reads.read_two.as_ref().unwrap().qual().to_vec();
+                    rt.reverse();
+                    qual.extend(rt);
+
+                } else {
+                    qual.extend(self.underlying_reads.read_two.as_ref().unwrap().qual().to_vec());
+                }
+
+                self.quals = Some(qual);
                 println!("sequence {}",FastaBase::string(&self.seq.as_ref().unwrap()));
             }
             ((true, true, true, false), Some(strat))
