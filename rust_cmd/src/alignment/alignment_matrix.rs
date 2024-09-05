@@ -746,7 +746,7 @@ impl AlignmentResult {
         let seq = FastaBase::string(self.read_aligned.clone().into_iter().filter(|b| b != &FASTA_UNSET).collect::<Vec<FastaBase>>().as_slice());
 
         // set the read name
-        println!("quals\n{}seq{}\n",String::from_utf8(self.read_quals.as_ref().unwrap().clone()).unwrap(),seq);
+        //println!("quals\n{}seq{}\n",String::from_utf8(self.read_quals.as_ref().unwrap().clone()).unwrap(),seq);
         RecordBuf::builder()
             .set_name(Name::from(self.read_name.as_bytes()))
             .set_sequence(seq.as_bytes().into())

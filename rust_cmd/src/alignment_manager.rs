@@ -92,11 +92,6 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
     ) -> Result<()> {
         let writer = Arc::clone(&self.underlying_bam_file);
 
-        println!("Ref {}",String::from_utf8(read_set_container
-            .aligned_read
-            .reference_name
-            .as_bytes()
-            .to_vec()).unwrap());
 
         let reference_record = self
             .reference_manager
