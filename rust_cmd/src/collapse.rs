@@ -241,7 +241,7 @@ impl AlignmentFilter for AlignmentCheck {
                 }
             }
         });
-        println!("aligning {} {} ",alignment_count,alignable_bases);
+        //println!("aligning {} {} ",alignment_count,alignable_bases);
         (alignment_count as f64 / alignable_bases as f64 >= self.min_aligned_identical_proportion) && (alignable_bases >= self.min_aligned_bases)
     }
 }
