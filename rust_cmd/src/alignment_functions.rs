@@ -613,6 +613,7 @@ fn exhaustive_alignment_search(read_name: &String,
         None => { None }
         Some((_x, y)) => {
             //Some((Some(y.0.clone()), , y.2.clone()))
+            println!("---- {} {}",String::from_utf8(y.1.clone()).unwrap(),String::from_utf8(y.2.clone()).unwrap());
             Some(AlignmentWithRef {
                 alignment: Some(y.0.clone()),
                 ref_name: y.2.clone(),
