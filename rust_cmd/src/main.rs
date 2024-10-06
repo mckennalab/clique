@@ -87,6 +87,8 @@ mod calling {
 
 mod consensus {
     pub mod consensus_builders;
+
+    //pub mod stretcher;
 }
 
 pub mod fasta_comparisons;

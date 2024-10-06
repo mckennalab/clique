@@ -21,11 +21,15 @@ use crate::read_strategies::sequence_layout::{SequenceLayout};
 
 
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
-use bio::alignment::pairwise::{Aligner, Scoring};
 use itertools::Itertools;
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::consensus::consensus_builders::SamReadyOutput;
 use crate::alignment_manager::OutputAlignmentWriter;
+use sigalign::{
+    Aligner,
+    algorithms::Local,
+    ReferenceBuilder,
+};
 
 pub fn align_reads(read_structure: &SequenceLayout,
                    rm: &ReferenceManager,
@@ -38,7 +42,6 @@ pub fn align_reads(read_structure: &SequenceLayout,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
-
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
                                           Some(PathBuf::from(&read2)),
                                           Some(PathBuf::from(&index1)),
@@ -92,10 +95,9 @@ pub fn align_reads(read_structure: &SequenceLayout,
 
             let name = &String::from_utf8(xx.name().clone()).unwrap();
 
-            let seq_len =  &xx.seq().len();
+            let seq_len = &xx.seq().len();
             let qual = Some(xx.quals.as_ref().unwrap().clone());
             if seq_len < &max_read_size {
-
                 let aligned = align_to_reference_choices(name,
                                                          xx.seq(),
                                                          qual,
@@ -136,7 +138,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
                                 assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
 
                                 let read = SortingReadSetContainer::empty_tags(aln);
-                                let new_read = SamReadyOutput{ read, added_tags: Default::default() };
+                                let new_read = SamReadyOutput { read, added_tags: Default::default() };
 
                                 //let samrecord = aln.to_sam_record(&i32::try_from(*reference_record).ok().unwrap(), &empty_tags, None);
 
@@ -182,7 +184,6 @@ pub fn align_two_strings(read1_name: &String,
                          local: bool,
                          ref_name: &String,
                          reference_manager: Option<&ReferenceManager>) -> AlignmentResult {
-
     let mut alignment_mat = create_scoring_record_3d(
         read1_seq.len() + 1,
         sequence_2_seq.len() + 1,
@@ -191,7 +192,7 @@ pub fn align_two_strings(read1_name: &String,
 
 
     match (reference_manager, ref_name) {
-        (Some(x),y )=> {
+        (Some(x), y) => {
             let ref_id = x.reference_name_to_ref.get(y.as_bytes()).unwrap();
             let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
             let ref_name = String::from_utf8(x.references.get(ref_id).unwrap().name.clone()).unwrap();
@@ -597,14 +598,14 @@ fn exhaustive_alignment_search(read_name: &String,
 
     let ranked_alignments = references.iter().map(|reference| {
         let qual = qual_sequence.clone();
-        let lt = align_two_strings_passed_matrix(&String::from_utf8(reference.1.name.clone()).unwrap(), read_name, &reference.1.sequence, read,  qual, my_aff_score, alignment_mat, &read.len());
+        let lt = align_two_strings_passed_matrix(&String::from_utf8(reference.1.name.clone()).unwrap(), read_name, &reference.1.sequence, read, qual, my_aff_score, alignment_mat, &read.len());
 
         Some((lt, reference.1.sequence_u8.clone(), reference.1.name.clone()))
     }).filter(|x| x.is_some()).map(|c| c.unwrap());
 
     let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2| {
-        let score1 = al.1.0.score;// / al.1.0.reference_aligned.len() as f64;
-        let score2 = al2.1.0.score;// / al2.1.0.reference_aligned.len() as f64;
+        let score1 = al.1.0.score; // / al.1.0.reference_aligned.len() as f64;
+        let score2 = al2.1.0.score; // / al2.1.0.reference_aligned.len() as f64;
         score1.partial_cmp(&score2).unwrap()
     });
 
@@ -654,20 +655,6 @@ fn cigar_to_alignment(reference: &Vec<FastaBase>,
     };
     (alignment_string1, alignment_string2)
 }
-
-#[allow(dead_code)]
-pub fn perform_rust_bio_alignment(reference_name: &String, read_name: &String, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
-    // TODO: do a better look at scoring here!
-    let score = |a: u8, b: u8| if a == b || a == b'N' || b == b'N' { 2i32 } else { -2i32 };
-
-    let alignment_scoring = Scoring::new(-20, -2, &score).xclip_prefix(0).xclip_suffix(0).yclip_suffix(0).yclip_suffix(0);
-    let mut aligner = Aligner::with_capacity_and_scoring(reference.len(), read.len(), alignment_scoring);
-    let x = FastaBase::vec_u8(&reference);
-    let y = FastaBase::vec_u8(&read);
-    let alignment = aligner.global(y.as_slice(), x.as_slice());
-    bio_to_alignment_result(read_name, reference_name, alignment, reference, read)
-}
-
 
 #[allow(dead_code)]
 pub fn bio_to_alignment_result(_read_name: &String, _ref_name: &String, alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
@@ -774,8 +761,12 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    
+    use std::collections::{BTreeMap, HashMap};
+    use std::fs::File;
+    use std::io::BufReader;
+    use sigalign::algorithms::SemiGlobal;
+    use sigalign::{Aligner, ReferenceBuilder};
+
     use crate::alignment::alignment_matrix::{AlignmentTag, AlignmentType, create_scoring_record_3d};
     use crate::alignment::fasta_bit_encoding::FastaBase;
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
@@ -819,7 +810,7 @@ mod tests {
 
         };
 
-        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None,    &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("1_AAACCCCGGG_GGTAGCAAACGTTTGGACGTG".to_string().into_bytes()).unwrap());
 
@@ -884,4 +875,224 @@ mod tests {
         assert_eq!(resulting_cigar, merged_cigar);
     }
 
+    #[test]
+    fn test_alignment_speed() {
+        let test_read = b"TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGCGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATGTGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCCACCGCTCCGAAAGATCCCGAGGTCGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTACAACCCCGGACGAAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATCACGCAGGGGACTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCAGAGCGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCCGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGCACCAGATGAAAGGCACACCCACGCCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTCCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCACCTCGTCTACGCGAAACGCTCGTACGCGTACGGGCTGAAAGCGATACACCGCTCGCCCCTGAAACCCTCTAGTTACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCCGTGCCGGGAAAATAAGAGCGCCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTCACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCCATCTGGTACACCCCCTGCTCGGGGCAAGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACGTCTGTCGAAGCAGCTACAA";
+
+        // (1) Build `Reference`
+        let fasta =
+            br#">target_1
+CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGTGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGTGTTGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATATGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGATGTCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCTACCGCTCCGAAAGATCCCGAGGTTGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTATAATCCCGGACGAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATTATGTAGGGGACTGAAAAACATGGGTACGTCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCTGAGTGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCTATTAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTATGTTACTTCGAAAATGAAGGGATAGTGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGTACGCACAGAAAAGATTGACCTCTGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGTACCAGATGAAAGGCACACCCATGTCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTTCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTTATCTTGTCTACGCGAAACGCTCGTATGCGTACGGGCTGAAAGCGATATACTGTTCGCCCCTGAAACCCTCTAGTTATGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTTACTGTGCGAAAGTACTCGATGGTGTGGCTTAGAAAGCGTACAGTCTCTGTGCCGGGAAAATAAGAGCGTCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGTATATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATTACTCGTAGGAAACTACGCCGGTTACGACGGGCGAAACGACATGAACTTATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCGATTTGGTACNNNNNNNNNNNNNNNNNNGTACCTGATGCGGCACAATGTCTAGC
+>target_2
+CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGTGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGTGTTGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATATGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGATGTCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCTACCGCTCCGAAAGATCCCGAGGTTGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTATAATCCCGGACGAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATTATGTAGGGGACTGAAAAACATGGGTACGTCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCTGAGTGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCTATTAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTATGTTACTTCGAAAATGAAGGGATAGTGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGTACGCACAGAAAAGATTGACCTCTGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGTACCAGATGAAAGGCACACCCATGTCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTTCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTTATCTTGTCTACGCGAAACGCTCGTATGCGTACGGGCTGAAAGCGATATACTGTTCGCCCCTGAAACCCTCTAGTTATGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTTACTGTGCGAAAGTACTCGATGGTGTGGCTTAGAAAGCGTACAGTCTCTGTGCCGGGAAAATAAGAGCGTCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGTATATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATTACTCGTAGGAAACTACGCCGGTTACGACGGGCACGTACGTACGTTTTTGGGGGTGTGTGTGTTTGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCGATTTGGTACNNNNNNNNNNNNNNNNNNGTACCTGATGCGGCACAATGTCTAGC"#;
+        let reference = ReferenceBuilder::new()
+            .set_uppercase(true) // Ignore case
+            .ignore_base(b'N') // 'N' is never matched
+            .add_fasta(&fasta[..]).unwrap() // Add sequences from FASTA
+            .add_target(
+                "target_3",
+                b"AAAAAAAAAAA",
+            ) // Add sequence manually
+            .build().unwrap();
+
+        // (2) Initialize `Aligner`
+        let algorithm = SemiGlobal::new(
+            4,   // Mismatch penalty
+            6,   // Gap-open penalty
+            2,   // Gap-extend penalty
+            50,  // Minimum length
+            0.2, // Maximum penalty per length
+        ).unwrap();
+        let mut aligner = Aligner::new(algorithm);
+
+        // (3) Align query to reference
+        for i in 0..10 {
+            let result = aligner.align(test_read, &reference);
+        }
+        //println!("{:#?}", result);
+    }
+
+
+    #[test]
+    fn test_alignment_speed_seqam() {
+        let test_read = b"TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGCGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATGTGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCCACCGCTCCGAAAGATCCCGAGGTCGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTACAACCCCGGACGAAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATCACGCAGGGGACTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCAGAGCGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCCGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGCACCAGATGAAAGGCACACCCACGCCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTCCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCACCTCGTCTACGCGAAACGCTCGTACGCGTACGGGCTGAAAGCGATACACCGCTCGCCCCTGAAACCCTCTAGTTACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCCGTGCCGGGAAAATAAGAGCGCCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTCACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCCATCTGGTACACCCCCTGCTCGGGGCAAGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACGTCTGTCGAAGCAGCTACAA";
+
+        // (1) Build `Reference`
+        let fasta =
+            br#">target_1
+CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGTGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGTGTTGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATATGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGATGTCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCTACCGCTCCGAAAGATCCCGAGGTTGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTATAATCCCGGACGAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATTATGTAGGGGACTGAAAAACATGGGTACGTCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCTGAGTGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCTATTAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTATGTTACTTCGAAAATGAAGGGATAGTGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGTACGCACAGAAAAGATTGACCTCTGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGTACCAGATGAAAGGCACACCCATGTCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTTCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTTATCTTGTCTACGCGAAACGCTCGTATGCGTACGGGCTGAAAGCGATATACTGTTCGCCCCTGAAACCCTCTAGTTATGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTTACTGTGCGAAAGTACTCGATGGTGTGGCTTAGAAAGCGTACAGTCTCTGTGCCGGGAAAATAAGAGCGTCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGTATATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATTACTCGTAGGAAACTACGCCGGTTACGACGGGCGAAACGACATGAACTTATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCGATTTGGTACNNNNNNNNNNNNNNNNNNGTACCTGATGCGGCACAATGTCTAGC
+>target_2
+CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGTGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGTGTTGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATATGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGATGTCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCTACCGCTCCGAAAGATCCCGAGGTTGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTATAATCCCGGACGAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATTATGTAGGGGACTGAAAAACATGGGTACGTCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCTGAGTGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCTATTAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTATGTTACTTCGAAAATGAAGGGATAGTGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGTACGCACAGAAAAGATTGACCTCTGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGTACCAGATGAAAGGCACACCCATGTCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTTCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTTATCTTGTCTACGCGAAACGCTCGTATGCGTACGGGCTGAAAGCGATATACTGTTCGCCCCTGAAACCCTCTAGTTATGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTTACTGTGCGAAAGTACTCGATGGTGTGGCTTAGAAAGCGTACAGTCTCTGTGCCGGGAAAATAAGAGCGTCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGTATATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATTACTCGTAGGAAACTACGCCGGTTACGACGGGCACGTACGTACGTTTTTGGGGGTGTGTGTGTTTGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCGATTTGGTACNNNNNNNNNNNNNNNNNNGTACCTGATGCGGCACAATGTCTAGC"#;
+        let reference = ReferenceBuilder::new()
+            .set_uppercase(true) // Ignore case
+            .ignore_base(b'N') // 'N' is never matched
+            .add_fasta(&fasta[..]).unwrap() // Add sequences from FASTA
+            .add_target(
+                "target_3",
+                b"AAAAAAAAAAA",
+            ) // Add sequence manually
+            .build().unwrap();
+
+        // (2) Initialize `Aligner`
+        let algorithm = SemiGlobal::new(
+            4,   // Mismatch penalty
+            6,   // Gap-open penalty
+            2,   // Gap-extend penalty
+            50,  // Minimum length
+            0.2, // Maximum penalty per length
+        ).unwrap();
+        let mut aligner = Aligner::new(algorithm);
+
+        // (3) Align query to reference
+        for i in 0..10 {
+            let result = aligner.align(test_read, &reference);
+        }
+        //println!("{:#?}", result);
+    }
+
+
+    #[test]
+    fn test_how_fast_do_we_do_100_long_reads() {
+        let ref_location = &"test_data/larger_two_reference_example.fa".to_string();
+        let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
+
+        let read_one = FastaBase::from_string(&"TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGCGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATGTGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCCACCGCTCCGAAAGATCCCGAGGTCGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTACAACCCCGGACGAAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATCACGCAGGGGACTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCAGAGCGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCCGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGCACCAGATGAAAGGCACACCCACGCCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTCCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCACCTCGTCTACGCGAAACGCTCGTACGCGTACGGGCTGAAAGCGATACACCGCTCGCCCCTGAAACCCTCTAGTTACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCCGTGCCGGGAAAATAAGAGCGCCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTCACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCCATCTGGTACACCCCCTGCTCGGGGCAAGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACGTCTGTCGAAGCAGCTACAA".to_string().to_ascii_uppercase());
+
+        let _read_structure = SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            known_strand: true,
+            references: BTreeMap::new(),
+        };
+
+        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::Affine, false);
+
+        let _my_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        let my_aff_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -9.0,
+            special_character_score: 9.0,
+            gap_open: -20.0,
+            gap_extend: -1.0,
+            final_gap_multiplier: 1.0,
+
+        };
+
+        for i in 0..10 {
+            let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
+        }
+    }
+
+    use bio::io::{fasta, fastq};
+    use flate2::read::GzDecoder;
+    use sigalign::results::TargetAlignment;
+
+    #[test]
+    fn test_alignment_marc1_data() {
+
+        // Open the FASTA file
+        let file = File::open("test_data/all_MARC1_references.fa").unwrap();
+        let reader = BufReader::new(file);
+
+        // Create a FASTA reader
+        let fasta_reader = fasta::Reader::new(reader);
+
+        let mut indexes = HashMap::new();
+        // Iterate over the records in the FASTA file
+        for (index, result) in fasta_reader.records().enumerate() {
+            let record = result.unwrap();
+
+            // Extract the sequence ID and sequence
+            let id = record.id().clone().to_owned();
+            let seq = record.seq();
+            println!("id {} seq {}",id, String::from_utf8(seq.to_vec()).unwrap());
+            indexes.insert(index, id);
+        }
+
+
+        let reference = ReferenceBuilder::new()
+            .set_uppercase(true) // Ignore case
+            .ignore_base(b'N') // 'N' is never matched
+            .add_fasta_file("test_data/all_MARC1_references.fa").unwrap() // Add sequences from FASTA
+            .build().unwrap();
+
+        // (2) Initialize `Aligner`
+        let algorithm = SemiGlobal::new(
+            4,   // Mismatch penalty
+            6,   // Gap-open penalty
+            2,   // Gap-extend penalty
+            50,  // Minimum length
+            0.2, // Maximum penalty per length
+        ).unwrap();
+
+        let mut aligner = Aligner::new(algorithm);
+
+        let mut correct = 0;
+        let mut incorrect = 0;
+
+        let input_fasta = "test_data/mouse_24c_known_barcode_with_tags_r1.fq.gz";
+
+        // Create a GzDecoder to decompress the file
+        let gz = GzDecoder::new(File::open(input_fasta).unwrap());
+
+        // Use a BufReader to efficiently read the decompressed data
+        let reader = BufReader::new(gz);
+
+        // Create a FASTQ reader from the decompressed data
+        let fastq_reader = fastq::Reader::new(reader);
+
+        // Iterate over the records in the FASTQ file
+        let mut count = 0;
+        let mut correct_count = 0;
+        for result in fastq_reader.records() {
+            count += 1;
+            if count < 1000 {
+                let record = result.unwrap();
+
+                // Extract the sequence ID, sequence, and quality scores
+                let id = record.id();
+                let seq = record.seq();
+                let qual = record.qual();
+
+                let correct = id.split('_').next().unwrap_or("failed");
+
+                let result = aligner.align(seq, &reference);
+                //println!("{:#?}", result);
+
+                let best_alignment = result.0.iter().map(|aln| {
+                    let mut min_score = u32::MAX;
+                    let mut min_pos = 0;
+                    aln.alignments.iter().enumerate().map(|(index, ln)| {
+                        if ln.penalty < min_score {
+                            min_score = ln.penalty;
+                            min_pos = index;
+                        }
+                    });
+                    (min_score, min_pos, aln.index)
+                }).into_iter().min().unwrap_or((0,0,0));
+
+                let align_name = indexes.get(&(best_alignment.2 as usize)).unwrap();
+                let candidate_split = align_name.split('_').collect::<Vec<&str>>()[2];
+                //println!("count {} known {} candidate {} match {}", count, correct, candidate_split, correct == candidate_split);
+                //println!("{:#?}", result);
+                if correct == candidate_split {
+                    correct_count += 1;
+                }
+            } else {
+                println!("count {} correct {}",count,correct_count);
+                return
+            }
+        }
+
+        //println!("{:#?}", result);
+    }
 }

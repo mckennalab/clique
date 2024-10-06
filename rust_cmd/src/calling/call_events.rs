@@ -414,7 +414,7 @@ fn extract_read_cigar_elements(ref_start: &usize, reference_sequence: &Vec<u8>, 
             }
         }
     });
-    assert_eq!(reference_sequence.len(), ref_pos.try_into().unwrap());
+    assert_eq!(reference_sequence.len(), ref_pos);
 
     alignments
 }
