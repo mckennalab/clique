@@ -98,7 +98,7 @@ impl DegenerateBuffer {
 
         // Write each key-value pair in "key=value" format
         for (key, value) in &self.hash_map {
-            writeln!(writer, "{}={}", String::from_utf8(key.clone()).unwrap(), value)?;
+            writeln!(writer, "{}={}", String::from_utf8(key.clone()).unwrap(), value).unwrap();
         }
 
         println!("HashMap written to file.");
