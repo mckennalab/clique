@@ -59,8 +59,7 @@ indexmap = "2.0.0"
 triple_accel = "*"
 
 rust-htslib = "*"
-rust_starcode = { path = "/Users/aaronmck/Desktop/code/rust-starcode/" }
-
+rust_starcode = { git = "https://github.com/aaronmck/rust-starcode.git"}
 
 
 [profile.release]
