@@ -88,7 +88,7 @@ impl DegenerateBuffer {
 
     /// This function 'corrects' a list of barcodes using starcode
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
-        //println!("Correcting list of length {}",self.hash_map.len());
+        println!("Correcting list of length {}",self.hash_map.len());
         self.hash_map.iter().for_each(|(k, _v)| {
             for x in k {
                 match x {
@@ -124,6 +124,8 @@ impl DegenerateBuffer {
         let mut read_count: usize = 0;
         let mut buffered_reads = 0;
         let mut unbuffered_reads = 0;
+
+
         let final_correction = self.correct_list();
 
         self.buffer.iter().for_each(|y| {

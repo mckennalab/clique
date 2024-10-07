@@ -63,12 +63,13 @@ pub fn collapse(
         let ref_name = String::from_utf8(reference.name.clone()).unwrap();
         info!("processing reads from input BAM file: {}", bam_file);
 
-        let sorted_reads_option: Option<ShardReader<SortingReadSetContainer>> =
+        let sorted_reads_option=
             sort_reads_from_bam_file(bam_file, &ref_name, &rm, read_structure, temp_directory);
+        read_count = sorted_reads_option.read_stats.passing_reads();
 
         let mut levels = 0;
 
-        match sorted_reads_option {
+        match sorted_reads_option.bam {
             None => {
                 warn!("No valid reads found for reference {}", ref_name);
             }
@@ -172,6 +173,7 @@ impl ReferenceLookupTable {
                     bam_reference_name_to_id.insert(string_name.clone(), index);
                     fasta_reference_id_to_name.insert(*our_index, string_name.clone());
                     fasta_reference_name_to_id.insert(string_name.clone(), *our_index);
+
                     name_to_joint_index.insert(
                         string_name.clone(),
                         JointLookup {
@@ -332,13 +334,18 @@ impl BamReadFiltering {
     }
 }
 
+pub struct SortedReadsFromBam {
+    pub bam: Option<ShardReader<SortingReadSetContainer>>,
+    pub read_stats: BamReadFiltering,
+}
+
 pub fn sort_reads_from_bam_file(
     bam_file: &String,
     reference_name: &String,
     reference_manager: &ReferenceManager,
     read_structure: &SequenceLayout,
     temp_directory: &mut InstanceLivedTempDir,
-) -> Option<ShardReader<SortingReadSetContainer>> {
+) -> SortedReadsFromBam {
 
     let aligned_temp = temp_directory.temp_file("bam.reads.sorted.sharded");
 
@@ -420,9 +427,15 @@ pub fn sort_reads_from_bam_file(
     }
     read_stats.results();
     if read_stats.passing_reads() > 0 {
-        Some(ShardReader::open(aligned_temp).unwrap())
+        SortedReadsFromBam{
+            bam: Some(ShardReader::open(aligned_temp).unwrap()),
+            read_stats,
+        }
     } else {
-        None
+        SortedReadsFromBam{
+            bam: None,
+            read_stats,
+        }
     }
 }
 
@@ -566,14 +579,15 @@ pub fn sort_degenerate_level(
     } else {
         10000 // TODO make this a constant somewhere
     };
+    info!("Starting to sort degenerate level {}", tag.symbol);
 
     let mut current_sorting_bin: Option<DegenerateBuffer> = None;
 
     reader.iter_range(&Range::all()).unwrap().for_each(|current_read| {
         all_read_count += 1;
-        if all_read_count % 10000 == 0 {
+        //if all_read_count % 10000 == 0 { // TODO for now to figure out what's going on
             bar.as_mut().map(|b| b.set_position(all_read_count as u64));
-        }
+        //}
         let mut current_read = current_read.unwrap();
         let next_last_read = current_read.clone();
 
