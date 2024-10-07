@@ -93,14 +93,16 @@ impl DegenerateBuffer {
         println!("Correcting list of length {}",self.hash_map.len());
 
         // Open a file for writing
-        let file = File::create("hashmap_output.txt").unwrap();
-        let mut writer = BufWriter::new(file);
+        {
+            let file = File::create("hashmap_output.txt").unwrap();
+            let mut writer = BufWriter::new(file);
 
-        // Write each key-value pair in "key=value" format
-        for (key, value) in &self.hash_map {
-            writeln!(writer, "{}={}", String::from_utf8(key.clone()).unwrap(), value).unwrap();
+            // Write each key-value pair in "key=value" format
+            for (key, value) in &self.hash_map {
+                writeln!(writer, "{}={}", String::from_utf8(key.clone()).unwrap(), value).unwrap();
+            }
+            writer.flush();
         }
-
         println!("HashMap written to file.");
         self.hash_map.iter().for_each(|(k, _v)| {
             for x in k {
