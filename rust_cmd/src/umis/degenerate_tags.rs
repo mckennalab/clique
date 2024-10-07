@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
+use std::fs::File;
 use std::hash::BuildHasherDefault;
+use std::io::BufWriter;
 use std::path::PathBuf;
 
 use rustc_hash::{FxHasher, FxHashMap};
@@ -90,6 +92,16 @@ impl DegenerateBuffer {
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
         println!("Correcting list of length {}",self.hash_map.len());
 
+        // Open a file for writing
+        let file = File::create("hashmap_output.txt")?;
+        let mut writer = BufWriter::new(file);
+
+        // Write each key-value pair in "key=value" format
+        for (key, value) in &self.hash_map {
+            writeln!(writer, "{}={}", key, value)?;
+        }
+
+        println!("HashMap written to file.");
         self.hash_map.iter().for_each(|(k, _v)| {
             for x in k {
                 match x {
