@@ -11,7 +11,7 @@ use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
 
 use rust_starcode::StarcodeAlignment;
-
+use std::io::Write;
 pub struct DegenerateBuffer {
     buffer: VecDeque<SortingReadSetContainer>,
     max_buffer_size: usize,
