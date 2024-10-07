@@ -90,8 +90,6 @@ impl DegenerateBuffer {
 
     /// This function 'corrects' a list of barcodes using starcode
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
-        println!("Correcting list of length {}",self.hash_map.len());
-
         // Open a file for writing
         {
             let file = File::create("hashmap_output.txt").unwrap();
@@ -103,32 +101,32 @@ impl DegenerateBuffer {
             }
             writer.flush();
         }
-        println!("HashMap written to file.");
-        self.hash_map.iter().for_each(|(k, _v)| {
-            for x in k {
-                match x {
-                    &b'a' | &b'A' | &b'c' | &b'C' | &b'g' | &b'G' | &b't' | &b'T' => {}
-                    _ => {
-                        println!("Invalid character {} in {}", x, String::from_utf8(k.clone()).unwrap());
-                    }
-                }
-            }
-        });
+
 
         let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
-        if self.hash_map.len() > 0 {
-            let correction = StarcodeAlignment::align_sequences(&self.hash_map, &(i32::try_from(self.tag.max_distance + 1).unwrap()), &3.0); // TODO: the plus 1 here is a patch until it's clear why starcode distance metrics are weird
-            for i in 0..correction.cluster_centers.len() {
-                let center = correction.cluster_centers.get(i).unwrap();
-                correction.cluster_members.get(i).unwrap().iter().for_each(|v| {
-                    assert!(!knowns.contains_key(v));
-                    //println!("COrrection center {} for {}, count {}",String::from_utf8(center.clone()).unwrap(),String::from_utf8(v.clone()).unwrap(),correction.cluster_count.get(i).unwrap());
-                    knowns.insert(v.clone(), center.clone());
-                });
-            };
+        match self.hash_map.len() {
+            0 => {
+                knowns
+            }
+            1 => {
+                let kn = self.hash_map.iter().next().unwrap().0;
+                knowns.insert(kn.clone(),kn.clone());
+                knowns
+            }
+            _ => {
+                let correction = StarcodeAlignment::align_sequences(&self.hash_map, &(i32::try_from(self.tag.max_distance + 1).unwrap()), &3.0); // TODO: the plus 1 here is a patch until it's clear why starcode distance metrics are weird
+                for i in 0..correction.cluster_centers.len() {
+                    let center = correction.cluster_centers.get(i).unwrap();
+                    correction.cluster_members.get(i).unwrap().iter().for_each(|v| {
+                        assert!(!knowns.contains_key(v));
+                        //println!("COrrection center {} for {}, count {}",String::from_utf8(center.clone()).unwrap(),String::from_utf8(v.clone()).unwrap(),correction.cluster_count.get(i).unwrap());
+                        knowns.insert(v.clone(), center.clone());
+                    });
+                };
+                knowns
+            }
         }
-        knowns
 
     }
 
