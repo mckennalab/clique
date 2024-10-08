@@ -90,22 +90,7 @@ impl DegenerateBuffer {
 
     /// This function 'corrects' a list of barcodes using starcode
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
-        println!("Correcting list of length {}",self.hash_map.len());
-        println!("------------------------------------\n");
-        println!("------------------------------------\n");
-        println!("------------------------------------\n");
-        // Open a file for writing
-        {
-            let file = File::create("hashmap_output.txt").unwrap();
-            let mut writer = BufWriter::new(file);
-
-            // Write each key-value pair in "key=value" format
-            for (key, value) in &self.hash_map {
-                writeln!(writer, "{}={}", String::from_utf8(key.clone()).unwrap(), value).unwrap();
-            }
-            writer.flush();
-        }
-        println!("HashMap written to file.");
+        
         self.hash_map.iter().for_each(|(k, _v)| {
             for x in k {
                 match x {
