@@ -90,6 +90,10 @@ impl DegenerateBuffer {
 
     /// This function 'corrects' a list of barcodes using starcode
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
+        println!("Correcting list of length {}",self.hash_map.len());
+        println!("------------------------------------\n");
+        println!("------------------------------------\n");
+        println!("------------------------------------\n");
         // Open a file for writing
         {
             let file = File::create("hashmap_output.txt").unwrap();
@@ -101,7 +105,17 @@ impl DegenerateBuffer {
             }
             writer.flush();
         }
-
+        println!("HashMap written to file.");
+        self.hash_map.iter().for_each(|(k, _v)| {
+            for x in k {
+                match x {
+                    &b'a' | &b'A' | &b'c' | &b'C' | &b'g' | &b'G' | &b't' | &b'T' => {}
+                    _ => {
+                        println!("Invalid character {} in {}", x, String::from_utf8(k.clone()).unwrap());
+                    }
+                }
+            }
+        });
 
         let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
