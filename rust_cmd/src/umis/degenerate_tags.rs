@@ -90,7 +90,7 @@ impl DegenerateBuffer {
 
     /// This function 'corrects' a list of barcodes using starcode
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
-        
+
         self.hash_map.iter().for_each(|(k, _v)| {
             for x in k {
                 match x {

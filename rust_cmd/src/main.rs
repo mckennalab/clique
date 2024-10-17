@@ -88,7 +88,7 @@ mod calling {
 mod consensus {
     pub mod consensus_builders;
 
-    //pub mod stretcher;
+    pub mod stretcher;
 }
 
 pub mod fasta_comparisons;
@@ -107,13 +107,6 @@ mod alignment_functions;
 
 mod reference {
     pub mod fasta_reference;
-}
-
-mod starcode {
-    //pub mod trie;
-    //pub mod starcode;
-
-
 }
 
 #[derive(Subcommand, Debug)]

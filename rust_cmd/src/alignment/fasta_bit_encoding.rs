@@ -41,7 +41,8 @@ impl FastaBase {
     }
 
     pub fn from_u8_slice(st: &[u8]) -> Vec<FastaBase> {
-        st.iter().map(|c| u8_to_encoding(c).unwrap()).collect()
+        let rt = st.iter().map(|c| u8_to_encoding(c).unwrap()).collect::<Vec<FastaBase>>();
+        rt.to_vec()
     }
 
     pub fn from_vec_u8_default_ns(st: &[u8]) -> Vec<FastaBase> {
