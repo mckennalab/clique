@@ -21,7 +21,6 @@ use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
 
 
-
 pub fn write_consensus_reads(
     reader: &ShardReader<SortingReadSetContainer>,
     writer: &mut dyn OutputAlignmentWriter,
@@ -83,7 +82,6 @@ pub fn write_consensus_reads(
                     if (*processed_reads as f64 / 100000.0).floor() - (current_proc_read as f64 / 1000.0).floor() >= 1.0 {
                         info!("Processed {} reads into their consensus", processed_reads);
                     }
-
                 });
             }
 
@@ -110,7 +108,6 @@ pub fn write_consensus_reads(
         let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
         arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC2)");
     }
-
 }
 
 pub struct SamReadyOutput {
@@ -358,7 +355,6 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
                 _ => panic!("Unknown index"),
             };
         }
-
     });
     (conc, final_quals)
 }
@@ -398,12 +394,7 @@ pub fn prob_to_phred(prob: &f64) -> u8 {
     ret
 }
 
-fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64, phred_floor_at_33: &bool) -> [f64; 5] {
-    // p(G|D) = ( p(G) * p(G|D) ) / p(D)
-    // p(G) = prior, we assume 1-error for reference base, error/3 for non-reference base
-    // p(D) = we're looking at log likelihood, so this goes away
-    // p(G|D) = likelihood;
-
+pub(crate) fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64, phred_floor_at_33: &bool) -> [f64; 5] {
     // setup the priors
     let mut allele_props = [
         (error_prior / 3.0).log2(),
@@ -436,6 +427,10 @@ fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64, phr
             });
         }
     });
+    calculate_qual_scores(&mut allele_props)
+}
+
+pub fn calculate_qual_scores(allele_props: &mut [f64; 5]) -> [f64; 5] {
     let total: f64 = allele_props.iter().map(|x| 2.0_f64.pow(x)).sum();
     [2.0_f64.pow(allele_props[0]) / total,
         2.0_f64.pow(allele_props[1]) / total,
@@ -508,7 +503,7 @@ mod tests {
         let vec_of_reads = vec![read1, read2, read3];
         let result = poa_consensus(&vec_of_reads, &quals);
         assert_eq!(result.0, "ACGTACTTTT".as_bytes().to_vec());
-        assert_eq!(result.1,  [40, 40, 40, 40, 40, 40, 40, 40, 40, 40]); // we max out at Q40
+        assert_eq!(result.1, [40, 40, 40, 40, 40, 40, 40, 40, 40, 40]); // we max out at Q40
 
         // "     ACGTACGTTTT\0".as_bytes().to_vec();
         // "AAAAAACGTAC TTTT\0".as_bytes().to_vec();
@@ -537,7 +532,7 @@ mod tests {
 
         // recover the priors
         let qual_combined = combine_qual_scores(&bases, &quals, &0.1_f64, &true);
-        println!("qual combined {} {} {} {} {}",qual_combined[0],qual_combined[1],qual_combined[2],qual_combined[3],qual_combined[4]);
+        println!("qual combined {} {} {} {} {}", qual_combined[0], qual_combined[1], qual_combined[2], qual_combined[3], qual_combined[4]);
 
         assert!((0.25 - qual_combined[1]).abs() < 0.0001);
     }
