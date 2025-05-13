@@ -13,6 +13,10 @@ pub fn prob_to_phred(qual: f64) -> u8 {
     (((-10.0) * qual.log10()) + 33.0) as u8
 }
 
+pub fn u8s(u8s: &Vec<u8>) -> String {
+    String::from_utf8(u8s.clone()).unwrap()
+}
+
 #[allow(dead_code)]
 pub fn combine_phred_scores(phred_one: &u8, phred_two: &u8, agree: bool) -> u8 {
     let prob1 = phred_to_prob(phred_one);
@@ -28,6 +32,33 @@ pub fn combine_phred_scores(phred_one: &u8, phred_two: &u8, agree: bool) -> u8 {
     }
 }
 
+pub fn strip_gaps(bases: &Vec<u8>) -> Vec<u8> {
+    bases.iter().filter(|x| **x != b'-').map(|x|*x).collect()
+}
+
+pub fn reverse_complement(dna: &[u8]) -> Vec<u8> {
+    dna.iter()
+        .rev()
+        .map(|&b| match b.to_ascii_uppercase() {
+            b'A' => b'T',
+            b'T' => b'A',
+            b'G' => b'C',
+            b'C' => b'G',
+            b'R' => b'Y', // purine <-> pyrimidine
+            b'Y' => b'R',
+            b'S' => b'S',
+            b'W' => b'W',
+            b'K' => b'M',
+            b'M' => b'K',
+            b'B' => b'V',
+            b'D' => b'H',
+            b'H' => b'D',
+            b'V' => b'B',
+            b'N' => b'N',
+            other => other, // unrecognized base: leave unchanged
+        })
+        .collect()
+}
 pub fn random_sequence(length: usize) -> String {
     let bases = vec![b'A', b'C', b'G', b'T'];
     let mut rng = thread_rng();

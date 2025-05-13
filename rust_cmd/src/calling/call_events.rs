@@ -9,7 +9,6 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{Read, Record};
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView};
 use std::io::Write;
-use crate::alignment::fasta_bit_encoding::FastaBase;
 use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout};
 use crate::reference::fasta_reference::ReferenceManager;
 
@@ -644,7 +643,7 @@ impl BamCallingParser<'_, '_, '_> {
 
                     let reference = self.reference_manager.reference_name_to_ref.get(ref_name).expect("Unable to find reference");
                     let ref_name = String::from_utf8(self.reference_manager.references.get(reference).unwrap().name.clone()).unwrap();
-                    let reference_sequence = FastaBase::vec_u8(&self.reference_manager.references.get(reference).unwrap().sequence);
+                    let reference_sequence = self.reference_manager.references.get(reference).unwrap().sequence.clone();
                     let alignment_start = record.reference_start() as usize;
 
                     println!("read name {} start {}",String::from_utf8(record.name().to_vec()).unwrap(),alignment_start);

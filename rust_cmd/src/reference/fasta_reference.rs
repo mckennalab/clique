@@ -4,7 +4,6 @@ use bio::io::fasta::*;
 use itertools::Itertools;
 
 use suffix::SuffixTable;
-use crate::alignment::fasta_bit_encoding::{FastaBase};
 use crate::read_strategies::read_set::ReadSetContainer;
 use crate::read_strategies::sequence_layout::SequenceLayout;
 
@@ -17,8 +16,7 @@ pub fn reference_sequences_to_structs(reference_sequences: Vec<Record>, kmer_siz
         let seeds = ReferenceManager::find_seeds(&ref_entry.seq().to_vec(), kmer_size);
 
         references.push(Reference {
-            sequence: FastaBase::from_vec_u8_default_ns(&ref_entry.seq().to_vec()),
-            sequence_u8: ref_entry.seq().to_vec(),
+            sequence: ref_entry.seq().to_vec(),
             name: str::as_bytes(ref_entry.id()).to_vec(),
             suffix_table: seeds,
         });
@@ -41,15 +39,14 @@ pub struct SuffixTableLookup<'s, 't> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reference<'s, 't> {
-    pub sequence: Vec<FastaBase>,
-    pub sequence_u8: Vec<u8>,
+    pub sequence: Vec<u8>,
     pub name: Vec<u8>,
     pub suffix_table: SuffixTableLookup<'s, 't>,
 }
 
 impl Hash for Reference<'_, '_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.sequence_u8.hash(state);
+        self.sequence.hash(state);
         self.name.hash(state);
     }
 }
@@ -95,8 +92,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
         let references: Vec<Reference> = yaml_input.references.iter().map(|(ref_name, ref_obj)| {
            Reference{
-               sequence: FastaBase::from_vec_u8_default_ns(&ref_obj.sequence.clone().into_bytes()),
-               sequence_u8: ref_obj.sequence.clone().into_bytes().clone(),
+               sequence: ref_obj.sequence.clone().into_bytes(),
                name: ref_name.clone().into_bytes(),
                suffix_table: ReferenceManager::find_seeds(&ref_obj.sequence.clone().into_bytes().clone(), kmer_size),
            }
@@ -152,7 +148,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         let mut kmer_counts = HashMap::new();
 
         for reference in references {
-            let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence_u8, kmer_size, kmer_spacing);
+            let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence, kmer_size, kmer_spacing);
             for kmer in kmers {
                 kmer_counts.insert(kmer.0.clone(),if kmer_counts.contains_key(&kmer.0) {kmer_counts.get(&kmer.0).unwrap()} else {&0} + kmer.1);
             }
@@ -164,7 +160,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         let mut all_unique = true;
 
         for reference in references {
-            let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence_u8, kmer_size, kmer_spacing);
+            let kmers = ReferenceManager::sequence_to_kmers(&reference.sequence, kmer_size, kmer_spacing);
             let unique_kmers = kmers.iter().filter(|(k,_c)| kmer_counts.contains_key(k) && *kmer_counts.get(k).unwrap() == 1).collect_vec();
 
             if unique_kmers.is_empty() {

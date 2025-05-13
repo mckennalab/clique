@@ -3,7 +3,6 @@ extern crate spoa;
 use crate::alignment::alignment_matrix::{
     create_scoring_record_3d, Alignment, AlignmentTag, AlignmentType as LocalAlignmentType,
 };
-use crate::alignment::fasta_bit_encoding::{FastaBase, FASTA_N, FASTA_UNSET};
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::{align_two_strings, simplify_cigar_string, OutputAlignmentWriter};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
@@ -16,9 +15,11 @@ use spoa::{AlignmentEngine, AlignmentType, Graph};
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
+use std::convert::TryFrom;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
+use ::{FASTA_N, FASTA_UNSET};
 
 
 pub fn write_consensus_reads(
@@ -162,7 +163,7 @@ fn create_sam_read(
 
         let mut new_alignment = align_two_strings(
             &reference_pointer.sequence,
-            &FastaBase::from_vec_u8(&consensus_reads.0),
+            &consensus_reads.0,
             None, // TODO: fix with quality scores
             my_aff_score,
             false,
@@ -211,14 +212,14 @@ fn create_sam_read(
     }
 }
 
-pub fn get_reference_alignment_rate(reference: &[FastaBase], read: &[FastaBase]) -> f64 {
+pub fn get_reference_alignment_rate(reference: &[u8], read: &[u8]) -> f64 {
     let mut matches = 0;
     let mut mismatches = 0;
 
     //println!("reference: {} read: {}", FastaBase::string(&reference),FastaBase::string(&read));
     for index in 0..reference.len() {
         if reference.get(index).unwrap() != &FASTA_UNSET
-            && !reference.get(index).unwrap().strict_identity(&FASTA_N)
+            && reference.get(index).unwrap() != &FASTA_N
             && read.get(index).unwrap() != &FASTA_UNSET
         {
             if reference.get(index).unwrap() == read.get(index).unwrap() {
@@ -234,8 +235,8 @@ pub fn get_reference_alignment_rate(reference: &[FastaBase], read: &[FastaBase])
 
 #[allow(dead_code)]
 pub fn reference_read_to_cigar_string(
-    reference_seq: &Vec<FastaBase>,
-    read_seq: &[FastaBase],
+    reference_seq: &Vec<u8>,
+    read_seq: &[u8],
 ) -> CigarString {
     let mut result: Vec<AlignmentTag> = Vec::new();
 
@@ -271,10 +272,12 @@ pub fn create_poa_consensus(
     sequences
         .iter().take(*downsample_to)
         .for_each(|n| {
-            let mut y = FastaBase::vec_u8(&FastaBase::strip_gaps(&n.aligned_read.read_aligned));
+
+            let mut y = n.aligned_read.read_aligned.clone(); // TODO: fix me, we need to strip out gaps!
             y.push(b'\0');
             base_sequences.push(y);
             quals_sequences.push(n.aligned_read.read_quals.as_ref().unwrap().clone());
+            panic!("Panic for now");
         });
 
     poa_consensus(&base_sequences, &quals_sequences)
@@ -446,12 +449,9 @@ mod tests {
 
     #[test]
     fn test_cigar_string() {
-        let reference = FastaBase::from_string(
-            &"CGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAA-------TATACAAG".to_string(),
-        );
-        let read = FastaBase::from_string(
-            &"CGT-----AGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG".to_string(),
-        );
+        let reference =
+            &"CGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAA-------TATACAAG".as_bytes().to_vec();
+        let read = &"CGT-----AGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG".as_bytes().to_vec();
         let cigar = reference_read_to_cigar_string(&reference, &read);
         let true_cigar = CigarString(vec![
             Cigar::Match(3),

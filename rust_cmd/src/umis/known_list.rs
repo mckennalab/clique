@@ -9,22 +9,21 @@ use serde::{Deserialize, Serialize};
 use triple_accel::{levenshtein_exp};
 use vpsearch::{Tree};
 use vpsearch::{MetricSpace};
-use crate::alignment::fasta_bit_encoding::{reverse_complement, FastaBase};
+use utils::read_utils::reverse_complement;
 use crate::read_strategies::sequence_layout::{UMIConfiguration};
 
 use super::sequence_clustering::{RadiusBasedNeighborhood};
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct FastaString {
-    pub fa: Vec<FastaBase>,
-    pub fa_u8: Vec<u8>,
+    pub fa: Vec<u8>,
     pub distance: u32,
     pub count: usize,
 }
 
 impl FastaString {
-    pub fn new(fa: Vec<FastaBase>) -> FastaString {
-        FastaString { fa: fa.clone(), fa_u8: FastaBase::vec_u8(&fa), distance: u32::MAX, count: 0 }
+    pub fn new(fa: Vec<u8>) -> FastaString {
+        FastaString { fa: fa.clone(), distance: u32::MAX, count: 0 }
     }
 }
 
@@ -34,7 +33,7 @@ impl MetricSpace for FastaString {
     type Distance = u32;
 
     fn distance(&self, other: &Self, _consider: &()) -> Self::Distance {
-        levenshtein_exp(&self.fa_u8, &other.fa_u8)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
+        levenshtein_exp(&self.fa, &other.fa)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
     }
 }
 
@@ -77,18 +76,18 @@ impl KnownList {
         let raw_reader = BufReader::new(File::open(filename).expect(&format!("Unable to open input file {}",filename)));
         let mut input_set = Vec::new();
         for line in raw_reader.lines() {
-            let mut bytes = line.unwrap();
+            let mut bytes = line.unwrap().into_bytes();
             if *reverse_comp {
-                bytes = FastaBase::string(&reverse_complement(&FastaBase::from_string(&bytes)));
+                bytes = reverse_complement(&bytes);
             }
-            input_set.push(FastaString::new(FastaBase::from_string(&bytes)));
+            input_set.push(FastaString::new(bytes));
         }
         input_set
     }
 
     pub fn correct_to_known_list(
         &mut self,
-        barcode: &Vec<FastaBase>,
+        barcode: &Vec<u8>,
         max_distance: &u32,
     ) -> BestF32Hits {
         let string_rep = FastaString::new(barcode.clone());
@@ -118,7 +117,7 @@ impl KnownList {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BestF32Hits {
-    pub hits: Vec<Vec<FastaBase>>,
+    pub hits: Vec<Vec<u8>>,
     pub distance: u32,
 }
 
@@ -132,7 +131,6 @@ mod tests {
     
     
     use crate::{
-        alignment::fasta_bit_encoding::FastaBase,
         read_strategies::sequence_layout::{UMIConfiguration, UMISortType},
         umis::known_list::{KnownList},
     };
@@ -162,7 +160,7 @@ mod tests {
             //println!("{}", line?);
             assert_eq!(
                 known_lookup.correct_to_known_list(
-                    &FastaBase::from_string(&line.unwrap()),
+                    &line.unwrap().into_bytes(),
                     &1,
                 )
                     .hits
@@ -172,7 +170,7 @@ mod tests {
         }
         assert_eq!(
             known_lookup.correct_to_known_list(
-                &FastaBase::from_string(&"AAACCCAAGCAGATAA".to_string()),
+                &"AAACCCAAGCAGATAA".as_bytes().to_vec(),
                 &1,
             )
                 .hits
@@ -182,7 +180,7 @@ mod tests {
 
         assert_eq!(
             known_lookup.correct_to_known_list(
-                &FastaBase::from_string(&"TAACCCAAGCAGATAT".to_string()),
+                &"TAACCCAAGCAGATAT".as_bytes().to_vec(),
                 &1,
             )
                 .hits

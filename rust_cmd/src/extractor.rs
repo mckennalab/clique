@@ -1,9 +1,11 @@
 use std::cmp::{min};
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase};
 use nohash_hasher::NoHashHasher;
 use noodles_sam::alignment::record::cigar::op::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::BuildHasherDefault;
+use FASTA_UNSET;
+use utils::base_utils::is_valid_fasta_base;
+use utils::read_utils::u8s;
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_functions::align_two_strings;
 
@@ -135,29 +137,29 @@ pub fn recover_align_sequences(
                     SoftClipResolution::Realign => {
                         if cigar_index == 0 {
                             // grab the reference up to this point plus the trimmed read sequence and realign
-                            let clipped_read = FastaBase::from_u8_slice(&unaligned_read[0..len]);
-                            let clipped_ref = FastaBase::from_u8_slice(&reference[0..ref_pos]);
+                            let clipped_read = &unaligned_read[0..len];
+                            let clipped_ref = &reference[0..ref_pos];
                             println!("Ref length {}",ref_pos);
-                            let aligned_sequence = align_two_strings(&"read".to_string(), &clipped_ref, &clipped_read, &AffineScoring::default_dna(), false, &"ref".to_string(), None);
-                            aligned_ref.extend(FastaBase::string(&aligned_sequence.reference_aligned).as_bytes());
-                            aligned_read.extend(FastaBase::string(&aligned_sequence.read_aligned).as_bytes());
+                            let aligned_sequence = align_two_strings(&"read".to_string(), clipped_ref, clipped_read, &AffineScoring::default_dna(), false, &"ref".to_string(), None);
+                            aligned_ref.extend(aligned_sequence.reference_aligned.clone());
+                            aligned_read.extend(aligned_sequence.read_aligned.clone());
                             read_pos += len;
-                            println!("Go1 {}",FastaBase::string(&aligned_sequence.read_aligned));
-                            println!("Go1 {}",FastaBase::string(&aligned_sequence.reference_aligned));
+                            println!("Go1 {}",u8s(&aligned_sequence.read_aligned));
+                            println!("Go1 {}",u8s(&aligned_sequence.reference_aligned));
 
                         } else if cigar_index == cigar.len() - 1 {
 
                             // take the rest of the reference and the trimmed read segment and realign
                             let max_right = min(read_pos + len,unaligned_read.len());
-                            let clipped_read = FastaBase::from_u8_slice(&unaligned_read[read_pos..max_right]);
-                            let clipped_ref = FastaBase::from_u8_slice(&reference[ref_pos..]);
-                            let aligned_sequence = align_two_strings(&"read".to_string(), &clipped_ref, &clipped_read, &AffineScoring::default_dna(), false, &"ref".to_string(), None);
-                            aligned_ref.extend(FastaBase::string(&aligned_sequence.reference_aligned).as_bytes());
-                            aligned_read.extend(FastaBase::string(&aligned_sequence.read_aligned).as_bytes());
+                            let clipped_read = &unaligned_read[read_pos..max_right];
+                            let clipped_ref = &reference[ref_pos..];
+                            let aligned_sequence = align_two_strings(&"read".to_string(), clipped_ref, clipped_read, &AffineScoring::default_dna(), false, &"ref".to_string(), None);
+                            aligned_ref.extend(aligned_sequence.reference_aligned.clone());
+                            aligned_read.extend(aligned_sequence.read_aligned.clone());
                             read_pos += len;
                             ref_pos += reference[ref_pos..].len();
-                            println!("Go2 {}",FastaBase::string(&aligned_sequence.read_aligned));
-                            println!("Go2 {}",FastaBase::string(&aligned_sequence.reference_aligned));
+                            println!("Go2 {}",u8s(&aligned_sequence.read_aligned));
+                            println!("Go2 {}",u8s(&aligned_sequence.reference_aligned));
 
                         }
                     }
@@ -232,7 +234,7 @@ pub fn extract_tagged_sequences(aligned_read: &[u8], aligned_ref: &[u8]) -> BTre
 
     for (reference_base, read_base) in std::iter::zip(aligned_ref, aligned_read) {
         match (
-            FastaBase::valid(reference_base),
+            is_valid_fasta_base(reference_base),
             reference_base.is_ascii_uppercase() || (*reference_base == b'-' && in_extractor),
             in_extractor,
         ) {
@@ -311,7 +313,7 @@ pub fn get_sorting_order(read_structure: &SequenceLayout, reference_name: &Strin
 pub fn extract_tag_sequences(
     reference_tags: &ReferenceRecord,
     ets: BTreeMap<u8, String>,
-) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {
+) -> (bool, VecDeque<(char, Vec<u8>)>) {
     let mut invalid_read = false;
     let queue = VecDeque::from(
         reference_tags
@@ -327,15 +329,14 @@ pub fn extract_tag_sequences(
                         };
                         let mut gaps = 0;
                         let str = e.as_bytes()
-                            .iter()
+                            .into_iter()
                             .map(|f| {
-                                let base = FastaBase::from(f.clone());
-                                if base == FASTA_UNSET {
+                                if *f == FASTA_UNSET {
                                     gaps += 1;
                                 }
-                                base
+                                *f
                             })
-                            .collect::<Vec<FastaBase>>();
+                            .collect::<Vec<u8>>();
 
                         if gaps > umi_obj.max_gaps.unwrap_or(gaps) {
                             println!("tossing reads {} {}", gaps, e);
@@ -360,7 +361,7 @@ pub fn extract_tag_sequences(
             })
             .filter(|x| x.is_some())
             .map(|x| x.unwrap())
-            .collect::<Vec<(char, Vec<FastaBase>)>>(),
+            .collect::<Vec<(char, Vec<u8>)>>(),
     );
     (invalid_read, queue)
 }

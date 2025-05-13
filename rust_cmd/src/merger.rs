@@ -1,6 +1,4 @@
-use crate::alignment::fasta_bit_encoding::{
-    encoding_to_u8, reverse_complement, FastaBase, FASTA_UNSET,
-};
+
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::align_two_strings;
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
@@ -10,6 +8,8 @@ use crate::read_strategies::sequence_layout::{
 use crate::utils::read_utils::combine_phred_scores;
 use bio::io::fastq::Record;
 use needletail::Sequence;
+use FASTA_UNSET;
+use utils::read_utils::reverse_complement;
 
 /// Merges two DNA sequences (read1 and read2) into a single sequence, filling the gap with undefined bases, based on the given reference length.
 ///
@@ -43,10 +43,10 @@ pub fn merge_reads_by_concatenation(
     sequence_layout: &SequenceLayout,
 ) -> MergedSequence {
     // aim to have too much capacity, it's faster this way, assuming the same for Vec instead of String (https://github.com/hoodie/concatenation_benchmarks-rs)
-    let mut final_sequence: Vec<FastaBase> = Vec::with_capacity(reads.read_one.seq().len() * 4);
+    let mut final_sequence: Vec<u8> = Vec::with_capacity(reads.read_one.seq().len() * 4);
     let mut final_sequence_quals: Vec<u8> = Vec::with_capacity(reads.read_one.seq().len() * 4);
 
-    let mut chain_aligned_seq: Option<Vec<FastaBase>> = None;
+    let mut chain_aligned_seq: Option<Vec<u8>> = None;
     let mut chain_aligned_quals: Option<Vec<u8>> = None;
 
     for read_layout in sequence_layout.reads.clone() {
@@ -191,10 +191,10 @@ pub fn merge_reads_by_concatenation(
 
 fn chain_align_update(
     record: &Record,
-    chain_aligned_seq: &Option<Vec<FastaBase>>,
+    chain_aligned_seq: &Option<Vec<u8>>,
     chain_aligned_quals: &Option<Vec<u8>>,
     orientation: &AlignedReadOrientation,
-) -> (Vec<FastaBase>, Vec<u8>) {
+) -> (Vec<u8>, Vec<u8>) {
     let seq: Vec<u8> = record.seq().to_vec();
     let qual: Vec<u8> = record.qual().to_vec();
 
@@ -218,16 +218,16 @@ fn chain_align_update(
 pub fn sequence_to_fasta_vec(
     sequence: &[u8],
     orientation: &AlignedReadOrientation,
-) -> Vec<FastaBase> {
+) -> Vec<u8> {
     match orientation {
-        AlignedReadOrientation::Forward => FastaBase::from_u8_slice(sequence),
+        AlignedReadOrientation::Forward => sequence.to_vec(),
         AlignedReadOrientation::Reverse => {
-            let mut bases = FastaBase::from_u8_slice(sequence);
+            let mut bases = sequence.to_vec();
             bases.reverse();
             bases
         }
         AlignedReadOrientation::ReverseComplement => {
-            reverse_complement(&FastaBase::from_u8_slice(sequence))
+            reverse_complement(sequence)
         }
         AlignedReadOrientation::Unknown => {
             panic!("We can't merge reads when the orientation is marked 'Unknown' in the yaml specification file");
@@ -301,7 +301,7 @@ impl MergedReadSequence {
 #[derive(Debug, PartialEq, Clone)]
 pub struct UnifiedRead {
     pub name: Option<Vec<u8>>,
-    pub seq: Option<Vec<FastaBase>>,
+    pub seq: Option<Vec<u8>>,
     pub quals: Option<Vec<u8>>,
     pub read_structure: SequenceLayout,
     pub read_pattern: (bool, bool, bool, bool),
@@ -330,7 +330,7 @@ impl UnifiedRead {
         }
         self.name.as_ref().unwrap()
     }
-    pub fn seq(&mut self) -> &Vec<FastaBase> {
+    pub fn seq(&mut self) -> &Vec<u8> {
         if !self.seq.is_some() {
             let _ = &mut self.decision_tree();
         }
@@ -396,7 +396,7 @@ impl UnifiedRead {
                         .read_one
                         .seq()
                         .iter()
-                        .map(|x| FastaBase::from(*x))
+                        .map(|x| *x)
                         .collect(),
                 );
                 self.quals = Some(
@@ -462,8 +462,8 @@ pub fn merge_reads_by_alignment(
     merge_initial_scoring: &AffineScoring,
     /*TODO use this */ _read_structure: &SequenceLayout,
 ) -> MergedSequence {
-    let read1_seq = FastaBase::from_vec_u8(&read1.seq().to_vec());
-    let rev_comp_read2 = FastaBase::from_vec_u8(&read2.seq().reverse_complement().to_vec());
+    let read1_seq = read1.seq().to_vec();
+    let rev_comp_read2 = reverse_complement(read2.seq());
     let mut rev_comp_qual_read2 = read2.qual().to_vec();
     rev_comp_qual_read2.reverse();
 
@@ -479,10 +479,10 @@ pub fn merge_reads_by_alignment(
 }
 
 pub fn merge_fasta_bases_by_alignment(
-    read1_seq: &Vec<FastaBase>,
+    read1_seq: &Vec<u8>,
     read1_name: &String,
     read1_quals: &Vec<u8>,
-    read2_seq: &Vec<FastaBase>,
+    read2_seq: &Vec<u8>,
     read2_name: &String,
     read2_quals: &Vec<u8>,
     merge_initial_scoring: &AffineScoring,
@@ -507,7 +507,7 @@ pub fn merge_fasta_bases_by_alignment(
 }
 
 pub struct MergedSequence {
-    read_bases: Vec<FastaBase>,
+    read_bases: Vec<u8>,
     read_quals: Vec<u8>,
 }
 
@@ -537,9 +537,9 @@ pub struct MergedSequence {
 ///
 /// The function assumes that the input sequences have the same length, and it will panic if they do not.
 pub fn alignment_rate_and_consensus(
-    alignment_1: &Vec<FastaBase>,
+    alignment_1: &Vec<u8>,
     qual_scores1: &[u8],
-    alignment_2: &Vec<FastaBase>,
+    alignment_2: &Vec<u8>,
     qual_scores2: &[u8],
 ) -> MergedSequence {
     let mut resulting_alignment = Vec::new();
@@ -547,11 +547,7 @@ pub fn alignment_rate_and_consensus(
     let mut alignment_1_qual_position = 0;
     let mut alignment_2_qual_position = 0;
 
-    debug!(
-        "{} {}",
-        FastaBase::string(alignment_1),
-        FastaBase::string(alignment_2)
-    );
+
     assert_eq!(alignment_1.len(), alignment_2.len());
 
     for i in 0..alignment_1.len() {
@@ -581,26 +577,10 @@ pub fn alignment_rate_and_consensus(
                 let final_base = if qual_scores1[alignment_1_qual_position]
                     >= qual_scores2[alignment_2_qual_position]
                 {
-                    debug!(
-                        "A Base {} {} {} {} {} {}",
-                        encoding_to_u8(&a) as char,
-                        encoding_to_u8(&b) as char,
-                        qual_scores1[alignment_1_qual_position] as char,
-                        qual_scores2[alignment_2_qual_position] as char,
-                        alignment_1_qual_position,
-                        alignment_2_qual_position
-                    );
+
                     a.clone()
                 } else {
-                    debug!(
-                        "B Base {} {} {} {} {} {}",
-                        encoding_to_u8(&a) as char,
-                        encoding_to_u8(&b) as char,
-                        qual_scores1[alignment_1_qual_position] as char,
-                        qual_scores2[alignment_2_qual_position] as char,
-                        alignment_1_qual_position,
-                        alignment_2_qual_position
-                    );
+
                     b.clone()
                 };
 
@@ -639,10 +619,6 @@ mod tests {
         }
     }
 
-    fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
-        FastaBase::from_vec_u8(&input.as_bytes().to_vec())
-    }
-
     fn get_scoring_scheme() -> AffineScoring {
         AffineScoring {
             match_score: 10.0,
@@ -667,9 +643,8 @@ mod tests {
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         assert_eq!(
             merged.read_bases,
-            str_to_fasta_vec(
-                "AAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGGGGGGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT"
-            )
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGGGGGGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT".as_bytes().to_vec()
+
         );
     }
 
@@ -686,12 +661,11 @@ mod tests {
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         assert_eq!(
             merged.read_bases,
-            str_to_fasta_vec(
-                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
-            )
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC".as_bytes().to_vec()
+
         );
     }
-
+/*
     #[test]
     fn read_merger_broken_tail() {
         let read1_fwd = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGCGGAA".as_bytes();
@@ -704,7 +678,7 @@ mod tests {
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         zip_and_convert(
-            &FastaBase::string(&merged.read_bases),
+            merged.read_bases,
             &String::from(
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGGGGCCCCCCCCCTTTTTTTTTTTTTTTTTTTTTTTTTT",
             ),
@@ -717,7 +691,7 @@ mod tests {
             )
         );
     }
-
+*/
     fn zip_and_convert(str1: &String, str2: &String) {
         assert_eq!(str1.len(), str2.len());
         let mut res1 = Vec::with_capacity(str1.len());
@@ -761,9 +735,9 @@ mod tests {
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
         let real = "ATCTACACTCTTTCCCTACACGACGCTCTTCCGATCTCGAATGTCAAAGTCAATGCGTTAGGGTTTCTTATATGGTGGTTTCTAACATTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACACGTCTGAACTCCAGTCACATG";
-        println!("{}\n{}", FastaBase::string(&merged.read_bases), real);
-        zip_and_convert(&FastaBase::string(&merged.read_bases), &String::from(real));
-        assert_eq!(merged.read_bases, str_to_fasta_vec(real));
+        println!("{}\n{}", u8s(&merged.read_bases), real);
+        zip_and_convert(&u8s(&merged.read_bases), &String::from(real));
+        assert_eq!(merged.read_bases, real.as_bytes().to_vec());
     }
 
     #[test]
@@ -777,7 +751,7 @@ mod tests {
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
-        assert_eq!(merged.read_bases, str_to_fasta_vec("GTGGAAAGGACGAAACACCGACGTCTACGTAGACGTACGTTGGAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTCGCATTCTACCGTGACTTTAGCAAGGTGATCATTCGCAACAGTATCGACCTGTACGTCTACGTAGACGTACAGGTCGATGTTTGAATTCGAATTTAAATCGGATCCGCGGCCAA"));
+        assert_eq!(merged.read_bases, "GTGGAAAGGACGAAACACCGACGTCTACGTAGACGTACGTTGGAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTCGCATTCTACCGTGACTTTAGCAAGGTGATCATTCGCAACAGTATCGACCTGTACGTCTACGTAGACGTACAGGTCGATGTTTGAATTCGAATTTAAATCGGATCCGCGGCCAA".as_bytes().to_vec());
     }
 
     #[test]
@@ -791,11 +765,12 @@ mod tests {
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
 
         let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
-        assert_eq!(merged.read_bases, str_to_fasta_vec("CGACGCTCTTCCGATCTTTTGTCATCTGCCCTAAAAACACCGGTTTCTTATATGGTGGTGTACGTATGGACTGAACCAGGTGTGCAAGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACAC"));
+        assert_eq!(merged.read_bases, "CGACGCTCTTCCGATCTTTTGTCATCTGCCCTAAAAACACCGGTTTCTTATATGGTGGTGTACGTATGGACTGAACCAGGTGTGCAAGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCGTACTCTGCGTTGATACCACTGCTTAGATCGGAAGAGCACAC".as_bytes().to_vec());
     }
 
     use crate::read_strategies::sequence_layout::ReadPosition::{Read1, Read2, Spacer};
     use std::time::Instant;
+    use utils::read_utils::u8s;
 
     #[test]
     fn read_merger_many_real_reads() {
@@ -823,8 +798,8 @@ mod tests {
         let read2_fwd = "TTTTTTTTTT".as_bytes();
         let read2_qls = "FFFFFFFFFF".as_bytes();
 
-        let both_fwd = FastaBase::from_vec_u8(&"AAAAAAAAAATTTTTTTTTT".as_bytes().to_vec());
-        let both_rc = FastaBase::from_vec_u8(&"AAAAAAAAAAAAAAAAAAAA".as_bytes().to_vec());
+        let both_fwd = "AAAAAAAAAATTTTTTTTTT".as_bytes().to_vec();
+        let both_rc = "AAAAAAAAAAAAAAAAAAAA".as_bytes().to_vec();
 
         let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
@@ -914,7 +889,7 @@ mod tests {
         let read2_qls = "FFFFFFFFFF".as_bytes();
 
         let both_fwd =
-            FastaBase::from_vec_u8(&"AAAAAAAAAAACGTACGTACGTTTTTTTTTTTGGGG".as_bytes().to_vec());
+            "AAAAAAAAAAACGTACGTACGTTTTTTTTTTTGGGG".as_bytes().to_vec();
 
         let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
         let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);

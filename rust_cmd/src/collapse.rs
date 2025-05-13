@@ -1,4 +1,3 @@
-use crate::alignment::fasta_bit_encoding::{FASTA_N, FASTA_UNSET, FastaBase};
 use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::extractor::{extract_tag_sequences, extract_tagged_sequences, recover_align_sequences, SoftClipResolution, stretch_sequence_to_alignment};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
@@ -9,7 +8,7 @@ use crate::umis::known_list::KnownList;
 use crate::InstanceLivedTempDir;
 use indicatif::ProgressBar;
 
-use noodles_bam as bam;
+use ::{FASTA_UNSET, noodles_bam as bam};
 use noodles_bam::{bai, Record};
 use noodles_sam::Header;
 
@@ -20,6 +19,7 @@ use std::path::PathBuf;
 
 use noodles_sam::alignment::record::QualityScores;
 use petgraph::visit::Walker;
+use FASTA_N;
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::degenerate_tags::DegenerateBuffer;
@@ -43,7 +43,7 @@ pub fn collapse(
                 .get(String::from_utf8(rf.1.name.clone()).unwrap().as_str())
                 .unwrap();
             SequenceLayout::validate_reference_sequence(
-                &rf.1.sequence_u8,
+                &rf.1.sequence,
                 &reference_config.umi_configurations,
             )
         })
@@ -190,7 +190,7 @@ impl ReferenceLookupTable {
                                 .get(our_index)
                                 .unwrap()
                                 .clone()
-                                .sequence_u8,
+                                .sequence,
                         )
                         .unwrap()
                         .clone(),
@@ -236,9 +236,9 @@ impl AlignmentFilter for AlignmentCheck {
         let mut alignable_bases = 0;
 
         read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(x,y)| {
-            if !x.identity(&FASTA_UNSET) && !x.identity(&FASTA_UNSET) {
+            if x != &FASTA_UNSET && x != &FASTA_UNSET {
                 alignable_bases += 1;
-                if x.identity(y) {
+                if x == y {
                     alignment_count += 1;
                 }
             }
@@ -275,16 +275,16 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
                     ret = false;
                 }
             }
-            else if !reference_base.identity(&FASTA_UNSET) && !reference_base.identity(&FASTA_N){
+            else if reference_base != &FASTA_UNSET && reference_base != &FASTA_N {
                 count_down_check -= 1;
-                if read_base.identity(reference_base) {
+                if read_base == reference_base {
                     pushed_binary_comp.push(1)
                 } else {
                     pushed_binary_comp.push(0)
                 }
             }
                 // lookback case for start of Ns
-            else if reference_base.identity(&FASTA_N) && pushed_binary_comp.len() > 0 {
+            else if reference_base == &FASTA_N && pushed_binary_comp.len() > 0 {
                 let lookback_length = min(pushed_binary_comp.len(),self.flanking_window_size);
                 let sum: u32 = pushed_binary_comp[pushed_binary_comp.len() - lookback_length..pushed_binary_comp.len()].iter().sum();
                 let matching_prop = sum as f64 / lookback_length as f64;
@@ -293,7 +293,7 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
                     ret = false;
                 }
             }
-            else if reference_base.identity(&FASTA_N) && pushed_binary_comp.len() == 0 {
+            else if reference_base == &FASTA_N && pushed_binary_comp.len() == 0 {
                 count_down_check = self.flanking_window_size;
             }
         });
@@ -375,7 +375,7 @@ pub fn sort_reads_from_bam_file(
             .references
             .get(reference_sequence_id)
             .unwrap()
-            .sequence_u8
+            .sequence
             .clone();
 
         let reference_config = read_structure.references.get(reference_name).unwrap();
@@ -465,7 +465,7 @@ fn create_sorted_read_container(reference_name: &String,
             .references
             .get(reference_sequence_id)
             .unwrap()
-            .sequence_u8,
+            .sequence,
     );
 
     let extracted_tags =
@@ -480,7 +480,7 @@ fn create_sorted_read_container(reference_name: &String,
             ordered_unsorted_keys: read_tags_ordered, // the current unsorted tag collection
             aligned_read: AlignmentResult {
                 reference_name: reference_name.clone(),
-                read_aligned: FastaBase::from_vec_u8(&aligned_read.aligned_read),
+                read_aligned: aligned_read.aligned_read,
                 read_quals: Some(read_qual),
                 cigar_string: cigar
                     .iter()
@@ -490,9 +490,7 @@ fn create_sorted_read_container(reference_name: &String,
                 score: 0.0,
                 reference_start: start_pos,
                 read_start: 0,
-                reference_aligned: FastaBase::from_vec_u8_default_ns(
-                    &aligned_read.aligned_ref,
-                ),
+                reference_aligned: aligned_read.aligned_ref,
                 read_name: String::from_utf8(read_name.as_bytes().to_vec()).unwrap(),
                 bounding_box: None,
             },
@@ -744,9 +742,9 @@ pub fn sort_known_level(
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use ::{FASTA_A, FASTA_T};
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
-    use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_T};
     use crate::utils::read_utils::fake_reads;
 
     pub fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
@@ -848,7 +846,7 @@ mod tests {
                 reference_name: "".to_string(),
                 read_name: "".to_string(),
                 reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
-                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,FASTA_T,  FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A, FASTA_T,  FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
                 read_quals: None,
                 cigar_string: vec![],
                 path: vec![],
@@ -999,8 +997,8 @@ mod tests {
             .read_one
             .seq()
             .iter()
-            .map(|x| FastaBase::from(x.clone()))
-            .collect::<Vec<FastaBase>>();
+            .map(|x| x.clone())
+            .collect::<Vec<u8>>();
 
         let fake_read = AlignmentResult {
             reference_name: "".to_string(),
@@ -1036,19 +1034,19 @@ mod tests {
         // real example we hit
         let st1 = SortingReadSetContainer {
             ordered_sorting_keys: vec![
-                ('a', FastaBase::from_str("AAACCCATCAGCATTA")),
-                ('b', FastaBase::from_str("TATTGACAACCT")),
+                ('a', "AAACCCATCAGCATTA".as_bytes().to_vec()),
+                ('b', "TATTGACAACCT".as_bytes().to_vec()),
             ],
-            ordered_unsorted_keys: VecDeque::from(vec![('c', FastaBase::from_str("TGGTATGCTGG"))]),
+            ordered_unsorted_keys: VecDeque::from(vec![('c', "TGGTATGCTGG".as_bytes().to_vec())]),
             aligned_read: fake_read.clone(),
         };
 
         let st2 = SortingReadSetContainer {
             ordered_sorting_keys: vec![
-                ('a', FastaBase::from_str("AAACCCATCAGCATTA")),
-                ('b', FastaBase::from_str("TATTGACAACCT")),
+                ('a', "AAACCCATCAGCATTA".as_bytes().to_vec()),
+                ('b', "TATTGACAACCT".as_bytes().to_vec()),
             ],
-            ordered_unsorted_keys: VecDeque::from(vec![('c', FastaBase::from_str("TGGTATGCTGGG"))]),
+            ordered_unsorted_keys: VecDeque::from(vec![('c', "TGGTATGCTGGG".as_bytes().to_vec())]),
             aligned_read: fake_read.clone(),
         };
 
@@ -1064,7 +1062,7 @@ mod tests {
             println!("{} -> {}",String::from_utf8(x.0.clone()).unwrap(),String::from_utf8(x.1.clone()).unwrap());
             assert_eq!(
                 String::from_utf8(x.1.clone()).unwrap(),
-                String::from("TGGTATGCTGGG")
+                String::from_utf8("TGGTATGCTGGG".as_bytes().to_vec()).unwrap()
             );
         });
     }

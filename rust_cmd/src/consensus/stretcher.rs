@@ -2,7 +2,6 @@ use std::fmt;
 use itertools::enumerate;
 use serde::{Deserialize, Serialize};
 use crate::alignment::alignment_matrix::AlignmentResult;
-use crate::alignment::fasta_bit_encoding::{encoding_to_u8, FASTA_A, FASTA_N, FastaBase};
 use crate::consensus::consensus_builders::{calculate_qual_scores, combine_qual_scores, prob_to_phred};
 
 // take a series of reads aligned to a common reference and create a consensus using their alignments
@@ -222,8 +221,7 @@ impl fmt::Debug for AlignmentCandidate {
 impl AlignmentCandidate {
     pub fn new(alignment: &AlignmentResult) -> AlignmentCandidate {
         AlignmentCandidate {
-            reference: FastaBase::string(&alignment.reference_aligned).
-                into_bytes().
+            reference: alignment.reference_aligned.
                 iter().enumerate().
                 map(|(index,x)| {
                     println!("adding ref base {:?}",*x as char);
@@ -244,8 +242,8 @@ impl AlignmentCandidate {
 
 
         while existing_index < existing_ref_size && incoming_index < alignment.reference_aligned.len() {
-            let incoming_ref_base = encoding_to_u8(&alignment.reference_aligned[incoming_index]);
-            let incoming_read_base = encoding_to_u8(&alignment.read_aligned[incoming_index]);
+            let incoming_ref_base = &alignment.reference_aligned[incoming_index];
+            let incoming_read_base = &alignment.read_aligned[incoming_index];
             let incoming_read_qual = read_qual[incoming_index];
 
             let existing_ref_base = &mut self.reference.get_mut(existing_index).unwrap();
@@ -255,7 +253,7 @@ impl AlignmentCandidate {
                 // we're in an insertion on both references -- we're not going to concern ourselves with multiple paths and just record insertion bases
                 (ReferenceStatus::Insertion { base, counts }, b'-') => {
                     //println!("step1");
-                    counts.update(incoming_read_base, Some(incoming_read_qual));
+                    counts.update(*incoming_read_base, Some(incoming_read_qual));
                     incoming_index += 1;
                     existing_index += 1;
                 }
@@ -269,7 +267,7 @@ impl AlignmentCandidate {
                 (ReferenceStatus::Original { base, original_position, counts}, b'-') => {
                     //println!("step2");
                     // we're going to add an insertion -- we have to choose if we're going to left or right align them (we choose right)
-                    self.reference.insert(existing_index, ReferenceStatus::Insertion{base: incoming_read_base, counts: NucCounts::new_from(incoming_read_base, incoming_read_qual) });
+                    self.reference.insert(existing_index, ReferenceStatus::Insertion{base: *incoming_read_base, counts: NucCounts::new_from(*incoming_read_base, incoming_read_qual) });
                     incoming_index += 1;
                     existing_index += 1;
                 }
@@ -277,14 +275,14 @@ impl AlignmentCandidate {
 
                 // this should not happen, where we're at the same position but we have different reference nucleotides; panic
                 (ReferenceStatus::Original { base, original_position, counts}, new_ref)
-                if *base != new_ref && *base != b'-' && new_ref != b'-' => {
-                    panic!("Two mismatched reference nucleotides that are not gaps: {} and {}, pos {} and {}", *base as char, new_ref as char, existing_index, incoming_index);
+                if base != new_ref && *base != b'-' && *new_ref != b'-' => {
+                    panic!("Two mismatched reference nucleotides that are not gaps: {} and {}, pos {} and {}", *base as char, *new_ref as char, existing_index, incoming_index);
                 }
                 // easy -- two reference aligned bases -- make sure they agree and then add to the counts
                 (ReferenceStatus::Original { base, original_position, counts}, new_ref)
-                if *base == new_ref && *base != b'-' && new_ref != b'-' => {
+                if base == new_ref && *base != b'-' && *new_ref != b'-' => {
                     //println!("step3 {}",incoming_read_base as char);
-                    counts.update(incoming_read_base, Some(incoming_read_qual));;
+                    counts.update(*incoming_read_base, Some(incoming_read_qual));;
                     incoming_index += 1;
                     existing_index += 1;
                 }
@@ -322,8 +320,8 @@ impl AlignmentCandidate {
         AlignmentResult{
             reference_name: self.reference_name.as_ref().unwrap().clone(),
             read_name: self.read_names.get(0).unwrap_or(&"UnnamedRead".to_string()).clone(),
-            reference_aligned: FastaBase::from_u8_slice(&resulting_alignmented_ref),
-            read_aligned: FastaBase::from_u8_slice(&resulting_alignmented_read),
+            reference_aligned: resulting_alignmented_ref.clone(),
+            read_aligned: resulting_alignmented_read.clone(),
             read_quals: Some(resulting_alignmented_qual),
             cigar_string: cigar_tokens,
             path: vec![],
@@ -344,8 +342,8 @@ mod tests {
         AlignmentResult {
             reference_name: "testref".to_string(),
             read_name: "testread".to_string(),
-            reference_aligned: FastaBase::from_u8_slice(ref_bases.as_bytes()),
-            read_aligned: FastaBase::from_u8_slice(read_bases.as_bytes()),
+            reference_aligned: ref_bases.as_bytes().to_vec(),
+            read_aligned: read_bases.as_bytes().to_vec(),
             read_quals: Some(read_bases.as_bytes().iter().filter(|x| **x != b'-').map(|x| b'H').collect::<Vec<u8>>()), // not right
             cigar_string: vec![],
             path: vec![],

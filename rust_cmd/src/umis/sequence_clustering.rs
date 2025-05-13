@@ -4,12 +4,6 @@ use petgraph::algo::{tarjan_scc};
 use petgraph::prelude::*;
 use indicatif::ProgressBar;
 use vpsearch::{BestCandidate, MetricSpace};
-use crate::alignment::fasta_bit_encoding::FastaBase;
-
-
-
-
-
 
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,
@@ -44,7 +38,7 @@ pub fn string_distance_break(str1: &Vec<u8>, str2: &Vec<u8>, max_dist: &usize) -
 }
 
 pub struct BestHits {
-    pub hits: Vec<Vec<FastaBase>>,
+    pub hits: Vec<Vec<u8>>,
     pub distance: usize,
 }
 
@@ -261,11 +255,12 @@ pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>>
 mod tests {
 
     use std::time::Instant;
-    use rand::distributions::{Slice};
+    use indexmap::map::Slice;
     use triple_accel::levenshtein_exp;
     use crate::utils::base_utils::edit_distance;
     use super::*;
-    use crate::rand::Rng;
+    use rand::prelude::*;
+    use rand::thread_rng;
 
     #[test]
     fn string_distance_test() {
@@ -289,21 +284,17 @@ mod tests {
         assert_eq!(4, str_dist);
     }
 
-    fn create_random_string(length: &usize) -> Vec<u8> {
-        let vowels = ['A', 'C', 'G', 'T'];
-        let vowels_dist = Slice::new(&vowels).unwrap();
-        let rng = rand::thread_rng();
+    /// Generates a random DNA sequence of the given length as a Vec<u8>
+    fn create_random_string(length: usize) -> Vec<u8> {
+        let bases = b"ACGT";
+        let mut rng = thread_rng();
 
-    // build a string of 10 vowels
-        let vowel_string: String = rng
-            .sample_iter(&vowels_dist)
-            .take(*length)
-            .collect();
-        vowel_string.into_bytes()
+        (0..length)
+            .map(|_| *bases.choose(&mut rng).unwrap())
+            .collect()
     }
-
     fn create_set_of_random_strings(length: &usize, pool_size: &usize) -> Vec<Vec<u8>> {
-        (0..*pool_size).map(|_| create_random_string(length)).into_iter().collect()
+        (0..*pool_size).map(|_| create_random_string(*length)).into_iter().collect()
     }
 
     #[test]
@@ -338,27 +329,27 @@ mod tests {
 
 
 
-    fn aln_distance(st1: &Vec<FastaBase>, _st2: &Vec<FastaBase>) -> f64 {
-        levenshtein_exp(&&FastaBase::vec_u8(&st1), &FastaBase::vec_u8(&st1)) as f64
+    fn aln_distance(st1: &Vec<u8>, st2: &Vec<u8>) -> f64 {
+        levenshtein_exp(st1,st2) as f64
         
     }
 
     #[test]
     fn test_sift4_vs_string_dist() {
-        let low_match = "AAAAAAAA";
-        let low_match_fb = FastaBase::from_str(&low_match);
-        let low_match_bytes = low_match.to_string().into_bytes();
-        let high_match = "TTTTTTTT";
-        let high_match_fb = FastaBase::from_str(&high_match);
-        let high_match_bytes = high_match.to_string().into_bytes();
-        let close_match = "AATAAAAA";
-        let close_match_bytes = close_match.to_string().into_bytes();
+        let low_match = "AAAAAAAA".as_bytes().to_vec();
+        let low_match_str = String::from_utf8(low_match.clone()).unwrap();
+
+        let high_match = "TTTTTTTT".as_bytes().to_vec();
+        let high_match_str = String::from_utf8(low_match.clone()).unwrap();
+
+        let close_match = "AATAAAAA".as_bytes().to_vec();
+        let close_match_str = String::from_utf8(low_match.clone()).unwrap();
 
         let iterations = 1000000;
         for _i in 0..4 {
             let now = Instant::now();
             for _x in 0..iterations {
-                let _ = aln_distance(&low_match_fb, &high_match_fb);
+                let _ = aln_distance(&low_match, &high_match);
             }
             println!("Aligned high/low {}", now.elapsed().as_millis());
 
@@ -368,7 +359,7 @@ mod tests {
         for _i in 0..4 {
             let now = Instant::now();
             for _x in 0..iterations {
-                let sift_dist = sift4::simple(&low_match, &high_match);
+                let sift_dist = sift4::simple(&low_match_str.as_str(), &high_match_str.as_str());
                 assert_eq!(sift_dist, 8);
             }
             println!("Sift4 high/low {}", now.elapsed().as_millis());
@@ -378,7 +369,7 @@ mod tests {
 
             let now = Instant::now();
             for _x in 0..iterations {
-                let _ = sift4::simple(&low_match, &close_match);
+                let _ = sift4::simple(&low_match_str.as_str(), &close_match_str.as_str());
             }
             println!("Sift4 close/low {}", now.elapsed().as_millis());
 
@@ -386,7 +377,7 @@ mod tests {
         for _i in 0..4 {
             let now = Instant::now();
             for _x in 0..iterations {
-                let _ = string_distance_no_break(&low_match_bytes, &high_match_bytes, &2);
+                let _ = string_distance_no_break(&low_match, &high_match, &2);
             }
             println!("string_distance high/low {}", now.elapsed().as_millis());
 
@@ -395,7 +386,7 @@ mod tests {
 
             let now = Instant::now();
             for _x in 0..iterations {
-                let _ = string_distance_no_break(&low_match_bytes, &close_match_bytes, &2);
+                let _ = string_distance_no_break(&low_match, &high_match, &2);
             }
             println!("string_distance close/low {}", now.elapsed().as_millis());
 
@@ -404,7 +395,7 @@ mod tests {
 
             let now = Instant::now();
             for _x in 0..iterations {
-                let _ = string_distance_break(&low_match_bytes, &high_match_bytes, &2);
+                let _ = string_distance_break(&low_match, &high_match, &2);
             }
             println!("string_distance_break high/low {}", now.elapsed().as_millis());
 
@@ -413,7 +404,7 @@ mod tests {
 
             let now = Instant::now();
             for _x in 0..iterations {
-                let _ = string_distance_break(&low_match_bytes, &close_match_bytes, &2);
+                let _ = string_distance_break(&low_match, &close_match, &2);
             }
             println!("string_distance_break close/low {}", now.elapsed().as_millis());
         }

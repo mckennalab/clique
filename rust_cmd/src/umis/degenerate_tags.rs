@@ -6,12 +6,13 @@ use std::path::PathBuf;
 
 use rustc_hash::{FxHasher, FxHashMap};
 use shardio::{Range, ShardReader, ShardSender, ShardWriter};
-use crate::alignment::fasta_bit_encoding::{FastaBase};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
 
 use rust_starcode::StarcodeAlignment;
 use std::io::Write;
+use utils::read_utils::{strip_gaps, u8s};
+
 pub struct DegenerateBuffer {
     buffer: VecDeque<SortingReadSetContainer>,
     max_buffer_size: usize,
@@ -48,12 +49,12 @@ impl DegenerateBuffer {
         assert_eq!(key_value.0, self.tag.symbol);
 
 
-        let gapless = FastaBase::strip_gaps(&key_value.1);
+        let gapless = strip_gaps(&key_value.1);
 
         if gapless.len() >= self.tag.length - self.tag.max_distance && gapless.len() <= self.tag.length + self.tag.max_distance {
             *self
                 .hash_map
-                .entry(FastaBase::vec_u8(&gapless))
+                .entry(gapless)
                 .or_insert(0) += 1;
 
             //println!("{} {} {} {}",self.shard_writer.is_some(), self.buffer.len(), self.max_buffer_size,self.buffer.len() >= self.max_buffer_size);
@@ -82,8 +83,9 @@ impl DegenerateBuffer {
             ShardWriter::new(&self.output_file, 32, 256, 1 << 16).unwrap(),
         ));
         self.shard_sender = Some(Box::new(self.shard_writer.as_mut().unwrap().get_sender()));
+        let sender = self.shard_sender.as_mut().unwrap();
         self.buffer.iter().for_each(|x| {
-            self.shard_sender.as_mut().unwrap().send(x.clone()).unwrap();
+            sender.send(x.clone()).unwrap();
         });
         self.buffer.clear();
     }
@@ -114,7 +116,7 @@ impl DegenerateBuffer {
                 knowns
             }
             _ => {
-                let correction = StarcodeAlignment::align_sequences(&self.hash_map, &(i32::try_from(self.tag.max_distance + 1).unwrap()), &3.0); // TODO: the plus 1 here is a patch until it's clear why starcode distance metrics are weird
+                let correction = StarcodeAlignment::align_sequences(&self.hash_map, &((self.tag.max_distance  as i32) + 1), &3.0); // TODO: the plus 1 here is a patch until it's clear why starcode distance metrics are weird
                 for i in 0..correction.cluster_centers.len() {
                     let center = correction.cluster_centers.get(i).unwrap();
                     correction.cluster_members.get(i).unwrap().iter().for_each(|v| {
@@ -143,12 +145,12 @@ impl DegenerateBuffer {
         self.buffer.iter().for_each(|y| {
             let mut y = y.clone();
             let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
-            let corrected = match final_correction.get(&FastaBase::vec_u8_strip_gaps(&key_value.1)) {
-                None => { panic!("Unable to find match for key {} in corrected values", FastaBase::string(&key_value.1)); }
-                Some(x) => { x }
+            let corrected = match final_correction.get(&strip_gaps(&key_value.1)) {
+                None => { panic!("Unable to find match for key {} in corrected values", u8s(&key_value.1)); }
+                Some(x) => { x.clone() }
             };
             y.ordered_sorting_keys
-                .push((key_value.0, FastaBase::from_vec_u8(corrected)));
+                .push((key_value.0, corrected));
             sender.send(y).unwrap();
             read_count += 1;
             buffered_reads += 1;
@@ -161,12 +163,12 @@ impl DegenerateBuffer {
             reader.iter_range(&Range::all()).unwrap().for_each(|current_read| {
                 let mut current_read: SortingReadSetContainer = current_read.unwrap();
                 let key_value = current_read.ordered_unsorted_keys.pop_front().unwrap();
-                let corrected = match final_correction.get(&FastaBase::vec_u8_strip_gaps(&key_value.1)) {
-                    None => { panic!("Unable to find match for key {} in corrected values", FastaBase::string(&key_value.1)); }
+                let corrected = match final_correction.get(&strip_gaps(&key_value.1)) {
+                    None => { panic!("Unable to find match for key {} in corrected values", u8s(&key_value.1)); }
                     Some(x) => { x }
                 };
                 current_read.ordered_sorting_keys
-                    .push((key_value.0, FastaBase::from_vec_u8(corrected)));
+                    .push((key_value.0, corrected.clone()));
                 sender.send(current_read).unwrap();
                 read_count += 1;
                 unbuffered_reads += 1;

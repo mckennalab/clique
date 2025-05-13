@@ -37,6 +37,17 @@ extern crate noodles_util;
 extern crate bstr;
 extern crate rust_starcode;
 extern crate libc;
+extern crate clap;
+extern crate indexmap;
+extern crate sigalign;
+extern crate counter;
+extern crate rustc_hash;
+extern crate noodles_sam;
+extern crate nohash_hasher;
+extern crate vpsearch;
+extern crate nanoid;
+extern crate triple_accel;
+extern crate spoa;
 
 use ::std::io::Result;
 use std::path::{Path, PathBuf};
@@ -48,8 +59,6 @@ use tempfile::{TempDir as ActualTempDir};
 use clap::Parser;
 use clap::Subcommand;
 use nanoid::nanoid;
-
-use pretty_trace::*;
 use crate::alignment_functions::align_reads;
 use crate::calling::call_events::BamCallingParser;
 use crate::collapse::collapse;
@@ -60,6 +69,15 @@ mod linked_alignment;
 pub mod extractor;
 pub mod sequence_lookup;
 
+const FASTA_UNSET: u8 = b'-';
+const FASTA_N: u8 = b'N';
+const FASTA_A: u8 = b'A';
+const FASTA_C: u8 = b'C';
+const FASTA_G: u8 = b'G';
+const FASTA_T: u8 = b'T';
+
+
+
 mod read_strategies {
     pub mod read_set;
     pub mod sequence_layout;
@@ -69,7 +87,7 @@ mod read_strategies {
 mod alignment {
     pub mod alignment_matrix;
     pub mod scoring_functions;
-    pub mod fasta_bit_encoding;
+    //pub mod fasta_bit_encoding;
 }
 
 mod umis {
@@ -77,8 +95,6 @@ mod umis {
     pub mod bronkerbosch;
     pub mod known_list;
     pub mod degenerate_tags;
-
-    pub mod starcode_tree;
 }
 mod calling {
 //    pub mod bam_file_to_cell_list;
@@ -190,7 +206,6 @@ struct Args {
 
 
 fn main() {
-    PrettyTrace::new().ctrlc().on();
 
     if let Err(_) = std::env::var("RUST_LOG") {
         std::env::set_var("RUST_LOG", "info");

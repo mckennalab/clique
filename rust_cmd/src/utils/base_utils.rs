@@ -14,6 +14,14 @@ pub fn edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
     dist
 }
 
+pub fn is_valid_fasta_base(b: &u8) -> bool {
+    matches!(b.to_ascii_uppercase(),
+        b'A' | b'C' | b'G' | b'T' | b'U' |
+        b'R' | b'Y' | b'S' | b'W' | b'K' | b'M' |
+        b'B' | b'D' | b'H' | b'V' | b'N'
+    )
+}
+
 #[allow(dead_code)]
 pub fn simple_edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
     assert_eq!(str1.len(), str2.len());

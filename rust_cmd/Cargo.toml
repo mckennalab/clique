@@ -2,7 +2,6 @@
 name = "clique"
 version = "0.1.0"
 authors = ["aaronmck <aaronatwpi@gmail.com>"]
-edition = "2021"
 
 [dependencies]
 bio = "*"
@@ -30,7 +29,6 @@ typetag = "0.2"
 nanoid = "0.4.0"
 pretty_env_logger = "0.4"
 chrono = "0.4"
-pretty_trace = {git = "https://github.com/10XGenomics/rust-toolbox.git"}
 serde_yaml = "0.9"
 symspell = "0.4.3"
 shrinkwraprs = "*"
@@ -43,9 +41,9 @@ counter = "*"
 actix = "0.13"
 sift4 = "*"
 colored = "*"
-vpsearch = "*"
+vpsearch = "2.0.1"
 libc = "0.2"
-sigalign = "0.4.0"
+sigalign = "0.4.1"
 
 phf = {version = "0.11", features = ["macros"] }
 priority-queue = "1.3.1"

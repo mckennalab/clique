@@ -10,7 +10,7 @@ use noodles_sam::header::record::value::Map;
 use noodles_sam::Header;
 use noodles_util::alignment;
 use std::collections::HashMap;
-
+use std::convert::TryFrom;
 
 
 use std::io::Result;
@@ -23,10 +23,9 @@ use crate::alignment::alignment_matrix::{
     create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment,
     AlignmentResult, AlignmentTag, AlignmentType,
 };
-use crate::alignment::fasta_bit_encoding::FastaBase;
 use noodles_sam;
 use noodles_sam::alignment::record::Name;
-
+use utils::read_utils::u8s;
 
 
 /// something that writes aligned reads. The output may or may not respect all the fields
@@ -58,7 +57,7 @@ impl<'a> BamFileAlignmentWriter<'a> {
 
         let reference_sequences : IndexMap<BString,Map<ReferenceSequence>> = reference_manager.references.iter().map(|(_k, v)| {
             (BString::from(v.name.clone()), 
-            Map::<ReferenceSequence>::new(NonZeroUsize::try_from(v.sequence_u8.len()).unwrap()))
+            Map::<ReferenceSequence>::new(NonZeroUsize::try_from(v.sequence.len()).unwrap()))
         }).into_iter().collect();
         
         let header = Header::builder()
@@ -109,7 +108,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
         read_set_container.ordered_sorting_keys.iter().for_each(|(key, value)| {
             extra_annotations.insert(
                 [b'e', *key as u8],
-                FastaBase::string(value),
+                u8s(value),
             );
         });
 
@@ -138,8 +137,8 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
 }
 
 pub fn align_two_strings(
-    reference_sequence: &Vec<FastaBase>,
-    read_sequence: &Vec<FastaBase>,
+    reference_sequence: &Vec<u8>,
+    read_sequence: &Vec<u8>,
     read_qual: Option<Vec<u8>>,
     scoring_function: &AffineScoring,
     local: bool,

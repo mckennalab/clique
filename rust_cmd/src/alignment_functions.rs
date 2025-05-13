@@ -14,7 +14,6 @@ use std::time::{Instant};
 use bio::alignment::AlignmentOperation;
 use ndarray::Ix3;
 
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 use crate::merger::{MergedReadSequence, UnifiedRead};
 
 use crate::read_strategies::sequence_layout::{SequenceLayout};
@@ -22,14 +21,12 @@ use crate::read_strategies::sequence_layout::{SequenceLayout};
 
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use itertools::Itertools;
+use FASTA_UNSET;
+use utils::read_utils::{reverse_complement, u8s};
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::consensus::consensus_builders::SamReadyOutput;
 use crate::alignment_manager::OutputAlignmentWriter;
-use sigalign::{
-    Aligner,
-    algorithms::Local,
-    ReferenceBuilder,
-};
+
 
 pub fn align_reads(read_structure: &SequenceLayout,
                    rm: &ReferenceManager,
@@ -158,28 +155,28 @@ pub fn align_reads(read_structure: &SequenceLayout,
 }
 
 #[allow(dead_code)]
-fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<FastaBase>)>) {
+fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<u8>)>) {
     let mut invalid_read = false;
     let queue = VecDeque::from(sorted_tags.iter().
         map(|x| {
             let ets_hit = ets.get(&x.to_string().as_bytes()[0]);
             match ets_hit {
                 Some(e) => {
-                    Some((x.clone(), e.as_bytes().iter().map(|f| FastaBase::from(f.clone())).collect::<Vec<FastaBase>>()))
+                    Some((x.clone(), e.as_bytes().to_vec()))
                 }
                 None => {
                     invalid_read = true;
                     None
                 }
             }
-        }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<FastaBase>)>>());
+        }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<u8>)>>());
     (invalid_read, queue)
 }
 
 #[allow(dead_code)]
 pub fn align_two_strings(read1_name: &String,
-                         read1_seq: &Vec<FastaBase>,
-                         sequence_2_seq: &Vec<FastaBase>,
+                         read1_seq: &[u8],
+                         sequence_2_seq: &[u8],
                          scoring_function: &AffineScoring,
                          local: bool,
                          ref_name: &String,
@@ -197,8 +194,8 @@ pub fn align_two_strings(read1_name: &String,
             let shared_segments = &x.references.get(ref_id).unwrap().suffix_table;
             let ref_name = String::from_utf8(x.references.get(ref_id).unwrap().name.clone()).unwrap();
 
-            let ref_seq = FastaBase::vec_u8(read1_seq);
-            let read_seq = FastaBase::vec_u8(sequence_2_seq);
+            let ref_seq = read1_seq;
+            let read_seq = sequence_2_seq;
 
             let shared_segs = find_greedy_non_overlapping_segments(
                 &ref_seq,
@@ -298,8 +295,8 @@ pub fn align_two_strings(read1_name: &String,
 pub fn align_two_strings_passed_matrix(
     read1_name: &String,
     read2_name: &String,
-    read1_seq: &[FastaBase],
-    read2_seq: &[FastaBase],
+    read1_seq: &[u8],
+    read2_seq: &[u8],
     qual_sequence: Option<Vec<u8>>,
     scoring_function: &AffineScoring,
     alignment_mat: &mut Alignment<Ix3>,
@@ -431,7 +428,7 @@ pub struct AlignmentWithRef {
 /// ```
 ///
 pub fn align_to_reference_choices(read_name: &String,
-                                  read: &Vec<FastaBase>,
+                                  read: &Vec<u8>,
                                   qual_sequence: Option<Vec<u8>>,
                                   rm: &ReferenceManager,
                                   fast_lookup: &bool,
@@ -447,14 +444,14 @@ pub fn align_to_reference_choices(read_name: &String,
     match rm.references.len() {
         0 => {
             // TODO: we should track this and provide a final summary
-            warn!("Unable to align read {} as it has no candidate references",FastaBase::string(read));
+            warn!("Unable to align read {} as it has no candidate references",u8s(read));
             None
         }
         1 => {
             let ref_base = &rm.references.get(&0).unwrap();
             let ref_name = String::from_utf8(ref_base.name.clone()).unwrap();
             let forward_oriented_seq = if !read_structure.known_strand {
-                let orientation = orient_by_longest_segment(&read, &ref_base.sequence_u8, &ref_base.suffix_table).0;
+                let orientation = orient_by_longest_segment(&read, &ref_base.sequence, &ref_base.suffix_table).0;
                 if orientation {
                     read.clone()
                 } else {
@@ -477,7 +474,7 @@ pub fn align_to_reference_choices(read_name: &String,
             Some(AlignmentWithRef {
                 alignment: Some(aln),
                 ref_name: ref_base.name.clone(),
-                ref_sequence: ref_base.sequence_u8.clone(),
+                ref_sequence: ref_base.sequence.clone(),
             })
         }
         x if x > 1 => {
@@ -552,12 +549,12 @@ pub fn align_to_reference_choices(read_name: &String,
 /// // Process `result` here
 /// ```
 fn quick_alignment_search(read_name: &String,
-                          read: &Vec<FastaBase>,
+                          read: &Vec<u8>,
                           qual_sequence: Option<Vec<u8>>,
                           rm: &ReferenceManager,
                           alignment_mat: &mut Alignment<Ix3>,
                           my_aff_score: &AffineScoring) -> Option<AlignmentWithRef> {
-    let read_u8 = FastaBase::vec_u8(read);
+    let read_u8 = read;
     let read_kmers = ReferenceManager::sequence_to_kmers(&read_u8, &rm.kmer_size, &rm.kmer_skip);
 
     let max_ref = read_kmers.iter().map(|(kmer, _c)| {
@@ -582,14 +579,14 @@ fn quick_alignment_search(read_name: &String,
                     alignment_mat,
                     &read.len())),
                 ref_name: x.0.name.clone(),
-                ref_sequence: x.0.sequence_u8.clone(),
+                ref_sequence: x.0.sequence.clone(),
             })
         }
     }
 }
 
 fn exhaustive_alignment_search(read_name: &String,
-                               read: &Vec<FastaBase>,
+                               read: &Vec<u8>,
                                qual_sequence: Option<Vec<u8>>,
                                rm: &ReferenceManager,
                                alignment_mat: &mut Alignment<Ix3>,
@@ -600,7 +597,7 @@ fn exhaustive_alignment_search(read_name: &String,
         let qual = qual_sequence.clone();
         let lt = align_two_strings_passed_matrix(&String::from_utf8(reference.1.name.clone()).unwrap(), read_name, &reference.1.sequence, read, qual, my_aff_score, alignment_mat, &read.len());
 
-        Some((lt, reference.1.sequence_u8.clone(), reference.1.name.clone()))
+        Some((lt, reference.1.sequence.clone(), reference.1.name.clone()))
     }).filter(|x| x.is_some()).map(|c| c.unwrap());
 
     let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2| {
@@ -624,9 +621,9 @@ fn exhaustive_alignment_search(read_name: &String,
 }
 
 #[allow(dead_code)]
-fn cigar_to_alignment(reference: &Vec<FastaBase>,
-                      read: &Vec<FastaBase>,
-                      cigar: &Vec<u8>) -> (Vec<FastaBase>, Vec<FastaBase>) {
+fn cigar_to_alignment(reference: &Vec<u8>,
+                      read: &Vec<u8>,
+                      cigar: &Vec<u8>) -> (Vec<u8>, Vec<u8>) {
     let mut alignment_string1 = Vec::new();
     let mut alignment_string2 = Vec::new();
     let mut seq1_index = 0;
@@ -657,7 +654,7 @@ fn cigar_to_alignment(reference: &Vec<FastaBase>,
 }
 
 #[allow(dead_code)]
-pub fn bio_to_alignment_result(_read_name: &String, _ref_name: &String, alignment: bio::alignment::Alignment, reference: &Vec<FastaBase>, read: &Vec<FastaBase>) -> AlignmentResult {
+pub fn bio_to_alignment_result(_read_name: &String, _ref_name: &String, alignment: bio::alignment::Alignment, reference: &Vec<u8>, read: &Vec<u8>) -> AlignmentResult {
     let mut aligned_ref = Vec::new();
     let mut aligned_read = Vec::new();
     let mut ref_pos = alignment.ystart;
@@ -694,13 +691,13 @@ pub fn bio_to_alignment_result(_read_name: &String, _ref_name: &String, alignmen
             }
             AlignmentOperation::Xclip(x) => {
                 aligned_ref.extend(reference[ref_pos..ref_pos + x].iter());
-                aligned_read.extend(FastaBase::from_vec_u8(&vec![b'-'; x]).iter());
+                aligned_read.extend(vec![b'-'; x]);
                 ref_pos += x.clone();
                 resulting_cigar.push(AlignmentTag::Ins(x));
             }
             AlignmentOperation::Yclip(y) => {
                 aligned_read.extend(read[read_pos..read_pos + y].iter());
-                aligned_ref.extend(FastaBase::from_vec_u8(&vec![b'-'; y]).iter());
+                aligned_ref.extend(vec![b'-'; y]);
                 read_pos += y.clone();
                 resulting_cigar.push(AlignmentTag::Del(y));
             }
@@ -768,7 +765,6 @@ mod tests {
     use sigalign::{Aligner, ReferenceBuilder};
 
     use crate::alignment::alignment_matrix::{AlignmentTag, AlignmentType, create_scoring_record_3d};
-    use crate::alignment::fasta_bit_encoding::FastaBase;
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
     use crate::alignment_functions::{exhaustive_alignment_search, simplify_cigar_string};
     use crate::read_strategies::sequence_layout::{AlignedReadOrientation, ReadPosition, SequenceLayout};
@@ -779,7 +775,7 @@ mod tests {
         let ref_location = &"test_data/test_best_alignment.fasta".to_string();
         let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
 
-        let read_one = FastaBase::from_string(&"atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTAGCAAACGTTTGGACGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAAACCCCGGGgaat".to_string().to_ascii_uppercase());
+        let read_one = "atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTAGCAAACGTTTGGACGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAAACCCCGGGgaat".to_string().to_ascii_uppercase().into_bytes();
 
         let _read_structure = SequenceLayout {
             aligner: None,
@@ -814,7 +810,7 @@ mod tests {
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("1_AAACCCCGGG_GGTAGCAAACGTTTGGACGTG".to_string().into_bytes()).unwrap());
 
-        let read_one = FastaBase::from_string(&"atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTGCCCTTACTCTCACCTGATTACTTAATCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAACGCCCTACgaattcgggcccattggtatggc".to_string().to_ascii_uppercase());
+        let read_one = "atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTGCCCTTACTCTCACCTGATTACTTAATCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAACGCCCTACgaattcgggcccattggtatggc".to_string().to_ascii_uppercase().into_bytes();
         let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
 
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
@@ -826,7 +822,7 @@ mod tests {
         let ref_location = &"test_data/test_ref_alignment.fasta".to_string();
         let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
 
-        let read_one = FastaBase::from_string(&"ATGGACTATCATATGCTTACCGTAACTTGAAAGTATTTCGATTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACCGGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTG".to_string().to_ascii_uppercase());
+        let read_one = "ATGGACTATCATATGCTTACCGTAACTTGAAAGTATTTCGATTTCTTGGCTTTATATATCTTGTGGAAAGGACGAAACACCGGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTG".to_string().to_ascii_uppercase().into_bytes();
 
         let _read_structure = SequenceLayout {
             aligner: None,
@@ -956,7 +952,7 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
         let ref_location = &"test_data/larger_two_reference_example.fa".to_string();
         let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
 
-        let read_one = FastaBase::from_string(&"TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGCGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATGTGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCCACCGCTCCGAAAGATCCCGAGGTCGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTACAACCCCGGACGAAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATCACGCAGGGGACTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCAGAGCGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCCGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGCACCAGATGAAAGGCACACCCACGCCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTCCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCACCTCGTCTACGCGAAACGCTCGTACGCGTACGGGCTGAAAGCGATACACCGCTCGCCCCTGAAACCCTCTAGTTACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCCGTGCCGGGAAAATAAGAGCGCCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTCACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCCATCTGGTACACCCCCTGCTCGGGGCAAGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACGTCTGTCGAAGCAGCTACAA".to_string().to_ascii_uppercase());
+        let read_one = "TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTAGCGATGCAATTTCCTCATTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGCGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGCGTCGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATGTGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGACGCCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCCACCGCTCCGAAAGATCCCGAGGTCGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTACAACCCCGGACGAAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATCACGCAGGGGACTGAAAAACATGGGCACGCCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCAGAGCGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCCATCAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTACGTTACTTCGAAAATGAAGGGACAGCGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGCACGCACAGAAAAGATTGACCTCCGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGCACCAGATGAAAGGCACACCCACGCCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTCCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTCACCTCGTCTACGCGAAACGCTCGTACGCGTACGGGCTGAAAGCGATACACCGCTCGCCCCTGAAACCCTCTAGTTACGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTCACTGTGCGAAAGTACTCGATGGCGTGGCTTAGAAAGCGTACAGTCTCCGTGCCGGGAAAATAAGAGCGCCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGCACATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATCACTCGTAGGAAACTACGCCGGTCACGACGGGCGAAACGACATGAACTCATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCCATCTGGTACACCCCCTGCTCGGGGCAAGTACCTGATGCGGCACAATGTCTAGCAGGTGCTGAAGAAAGTTGTCGGTGTCTTTGTGTTAACCTTAGCAATACGTCTGTCGAAGCAGCTACAA".to_string().to_ascii_uppercase().into_bytes();
 
         let _read_structure = SequenceLayout {
             aligner: None,

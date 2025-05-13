@@ -1,4 +1,4 @@
-use crate::alignment::fasta_bit_encoding::{FastaBase, FASTA_N};
+use FASTA_N;
 
 /// Trait required to instantiate a Scoring instance
 pub trait ScoringFunction {
@@ -95,8 +95,8 @@ impl AffineScoring {
         }
     }
 
-    pub fn match_mismatch(&self, bit_a: &FastaBase, bit_b: &FastaBase) -> f64 {
-        if bit_a == bit_b && (bit_a.identity(&FASTA_N) || bit_b.identity(&FASTA_N)) { self.special_character_score } else if bit_a == bit_b { self.match_score } else { self.mismatch_score }
+    pub fn match_mismatch(&self, bit_a: &u8, bit_b: &u8) -> f64 {
+        if bit_a == bit_b && (*bit_a == FASTA_N || *bit_b == FASTA_N) { self.special_character_score } else if bit_a == bit_b { self.match_score } else { self.mismatch_score }
     }
 
     pub fn gap_open(&self) -> f64 {
@@ -135,7 +135,7 @@ impl InversionScoring {
         }
     }
 
-    pub fn match_mismatch(&self, a: &FastaBase, b: &FastaBase) -> f64 {
+    pub fn match_mismatch(&self, a: &u8, b: &u8) -> f64 {
         if a == b { self.match_score } else { self.mismatch_score }
     }
     pub fn gap_open(&self) -> f64 {

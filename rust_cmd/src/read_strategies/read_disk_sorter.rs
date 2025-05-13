@@ -2,14 +2,13 @@ use std::cmp::Ordering;
 use std::collections::{VecDeque};
 use serde::{Serialize, Deserialize};
 use crate::alignment::alignment_matrix::{AlignmentResult};
-use crate::alignment::fasta_bit_encoding::{FastaBase};
 
 /// a sortable read set container that sorts on a set of keys -- which we populate with
 /// extracted barcode sequences. These sorting sequences could have been corrected to a known list
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SortingReadSetContainer {
-    pub ordered_sorting_keys: Vec<(char,Vec<FastaBase>)>,   // grow in order
-    pub ordered_unsorted_keys: VecDeque<(char, Vec<FastaBase>)>, // use the default behavior to push back, pop front
+    pub ordered_sorting_keys: Vec<(char,Vec<u8>)>,   // grow in order
+    pub ordered_unsorted_keys: VecDeque<(char, Vec<u8>)>, // use the default behavior to push back, pop front
     pub aligned_read: AlignmentResult,
 }
 impl SortingReadSetContainer {
@@ -75,8 +74,9 @@ impl Ord for SortingReadSetContainer {
 mod tests {
     use std::cmp::Ordering;
     use std::collections::VecDeque;
+    use ::{FASTA_A, FASTA_N};
+    use FASTA_T;
     use crate::alignment::alignment_matrix::AlignmentResult;
-    use crate::alignment::fasta_bit_encoding::{FASTA_A, FASTA_N, FASTA_T, FastaBase};
     use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
     use crate::utils::read_utils::fake_reads;
 
@@ -208,7 +208,7 @@ mod tests {
         let key2 = ('$',vec![FASTA_N, FASTA_N]);
 
         let reads = fake_reads(10, 1);
-        let read_seq = reads.get(0).unwrap().read_one.seq().iter().map(|x| FastaBase::from(x.clone())).collect::<Vec<FastaBase>>();
+        let read_seq = reads.get(0).unwrap().read_one.seq().iter().map(|x| x.clone()).collect::<Vec<u8>>();
         let fake_read = AlignmentResult{
             reference_name: "".to_string(),
             read_name: "".to_string(),
@@ -240,8 +240,8 @@ mod tests {
         assert!(st1 > st2);
 
         // real example we hit
-        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![('a',FastaBase::from_str("AAACCCATCAGCATTA")),
-                                                                        ('a',FastaBase::from_str("TATTGACAACCT"))],
+        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![('a',"AAACCCATCAGCATTA".as_bytes().to_vec()),
+                                                                        ('a',"TATTGACAACCT".as_bytes().to_vec())],
             ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
         let st2 = st1.clone();
         assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);

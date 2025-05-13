@@ -1,18 +1,19 @@
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt;
+use std::iter::FromIterator;
 use std::ops::Add;
+use bstr::ByteSlice;
 
 use ndarray::Array;
 use ndarray::prelude::*;
 use num_traits::identities::Zero;
 use log::{trace};
 use serde::{Deserialize, Serialize};
-use crate::alignment::fasta_bit_encoding::{FASTA_UNSET, FastaBase, reverse_complement};
 
 use crate::alignment::scoring_functions::*;
 
-use noodles_sam;
+use ::{FASTA_UNSET, noodles_sam};
 
 
 use noodles_sam::alignment::RecordBuf;
@@ -28,9 +29,10 @@ use crate::alignment_manager::simplify_cigar_string;
 use noodles_sam::alignment::record::cigar::Op as Op;
 use noodles_sam::alignment::record::Flags;
 use noodles_sam::alignment::record_buf::Cigar as CigarBuf;
+use utils;
+use utils::read_utils::{reverse_complement, u8s};
 
 pub const MAX_NEG_SCORE: f64 = -100000.0;
-
 
 #[derive(Copy, Clone, Debug)]
 pub struct MatchedPosition {
@@ -236,8 +238,8 @@ pub fn create_scoring_record_3d(hint_seq_a_len: usize, hint_seq_b_len: usize, al
 ///
 /// # Parameters
 /// - `alignment`: A mutable reference to an `Alignment<Ix3>` object representing the 3D alignment matrix.
-/// - `sequence1`: A slice of `FastaBase` representing the first sequence involved in the alignment.
-/// - `sequence2`: A slice of `FastaBase` representing the second sequence involved in the alignment.
+/// - `sequence1`: A slice of `u8` representing the first sequence involved in the alignment.
+/// - `sequence2`: A slice of `u8` representing the second sequence involved in the alignment.
 /// - `scoring_function`: A reference to an `AffineScoring` object used to calculate score updates during the alignment.
 /// - `row`: The starting row index for the update process.
 /// - `column`: The starting column index for the update process.
@@ -263,8 +265,8 @@ pub fn create_scoring_record_3d(hint_seq_a_len: usize, hint_seq_b_len: usize, al
 #[allow(dead_code)]
 #[inline(always)]
 fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
-                       sequence1: &[FastaBase],
-                       sequence2: &[FastaBase],
+                       sequence1: &[u8],
+                       sequence2: &[u8],
                        scoring_function: &AffineScoring,
                        row: usize,
                        column: usize,
@@ -304,8 +306,8 @@ fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
 ///
 /// # Parameters
 /// - `alignment`: A mutable reference to an `Alignment<Ix3>` object representing the 3D alignment matrix.
-/// - `sequence1`: A slice of `FastaBase` representing the first sequence involved in the alignment.
-/// - `sequence2`: A slice of `FastaBase` representing the second sequence involved in the alignment.
+/// - `sequence1`: A slice of `u8` representing the first sequence involved in the alignment.
+/// - `sequence2`: A slice of `u8` representing the second sequence involved in the alignment.
 /// - `scoring_function`: A reference to an `AffineScoring` object used to calculate score updates during the alignment.
 /// - `previous_result`: A reference to an `AlignmentResult` object containing the path of the previously found alignment.
 ///
@@ -328,8 +330,8 @@ fn update_sub_vector3d(alignment: &mut Alignment<Ix3>,
 #[inline(always)]
 #[allow(dead_code)]
 fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
-                                     sequence1: &[FastaBase],
-                                     sequence2: &[FastaBase],
+                                     sequence1: &[u8],
+                                     sequence2: &[u8],
                                      scoring_function: &AffineScoring,
                                      previous_result: &AlignmentResult) {
     let mut current_row = 0;
@@ -360,8 +362,8 @@ fn clean_and_find_next_best_match_3d(alignment: &mut Alignment<Ix3>,
 
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
-                                sequence1: &[FastaBase],
-                                sequence2: &[FastaBase],
+                                sequence1: &[u8],
+                                sequence2: &[u8],
                                 scoring_function: &AffineScoring) {
     let new_bandwidth = max(sequence1.len(), sequence2.len());
     perform_affine_alignment_bandwidth(alignment, sequence1, sequence2, scoring_function, &new_bandwidth)
@@ -370,13 +372,13 @@ pub fn perform_affine_alignment(alignment: &mut Alignment<Ix3>,
 
 /// Affine matrix dimensions are row,column,dimension, where dim 1 is match, dim 2 is deletion (relative to read, sequence2) and dim 3 is insertion
 pub fn perform_affine_alignment_bandwidth(alignment: &mut Alignment<Ix3>,
-                                          sequence1: &[FastaBase],
-                                          sequence2: &[FastaBase],
+                                          sequence1: &[u8],
+                                          sequence2: &[u8],
                                           scoring_function: &AffineScoring,
                                           bandwidth: &usize) {
     assert_eq!(alignment.scores.shape()[2], 3);
-    assert!(alignment.scores.shape()[0] > sequence1.len(), "Asked to align sequence 1 with length {} in a matrix sized {} in that dimension, sequence {}", sequence1.len() + 1, alignment.scores.shape()[0], FastaBase::string_from_slice(sequence1));
-    assert!(alignment.scores.shape()[1] > sequence2.len(), "Asked to align sequence 2 with length {} in a matrix sized {} in that dimension, sequence {}", sequence2.len() + 1, alignment.scores.shape()[1], FastaBase::string_from_slice(sequence2));
+    assert!(alignment.scores.shape()[0] > sequence1.len(), "Asked to align sequence 1 with length {} in a matrix sized {} in that dimension, sequence {}", sequence1.len() + 1, alignment.scores.shape()[0], u8s(&sequence1.to_vec()));
+    assert!(alignment.scores.shape()[1] > sequence2.len(), "Asked to align sequence 2 with length {} in a matrix sized {} in that dimension, sequence {}", sequence2.len() + 1, alignment.scores.shape()[1], u8s(&sequence2.to_vec()));
 
     alignment.scores[[0, 0, 0]] = 0.0;
     alignment.scores[[0, 0, 1]] = MAX_NEG_SCORE;
@@ -424,8 +426,8 @@ pub fn perform_affine_alignment_bandwidth(alignment: &mut Alignment<Ix3>,
 #[allow(dead_code)]
 fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
                                      alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
-                                     sequence1: &Vec<FastaBase>,
-                                     sequence2: &Vec<FastaBase>,
+                                     sequence1: &[u8],
+                                     sequence2: &[u8],
                                      scoring_function: &InversionScoring) {
     assert_eq!(alignment.scores.shape()[2], 3);
     assert_eq!(alignment.scores.shape()[0], sequence1.len() + 1);
@@ -464,8 +466,8 @@ fn perform_inversion_aware_alignment(alignment: &mut Alignment<Ix3>,
 #[allow(dead_code)]
 fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
                               alignment_inversion: &HashMap<AlignmentLocation, BoundedAlignment>,
-                              sequence1: &[FastaBase],
-                              sequence2: &[FastaBase],
+                              sequence1: &[u8],
+                              sequence2: &[u8],
                               scoring_function: &InversionScoring,
                               x: usize,
                               y: usize) -> (bool, bool, bool) {
@@ -556,7 +558,7 @@ fn update_inversion_alignment(alignment: &mut Alignment<Ix3>,
 }
 
 #[inline(always)]
-fn update_3d_score_local(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase], sequence2: &[FastaBase], scoring_function: &AffineScoring, x: usize, y: usize) -> (bool, bool, bool) {
+fn update_3d_score_local(alignment: &mut Alignment<Ix3>, sequence1: &[u8], sequence2: &[u8], scoring_function: &AffineScoring, x: usize, y: usize) -> (bool, bool, bool) {
     let mut _update_x = false;
     let mut _update_y = false;
     let mut _update_z = false;
@@ -607,7 +609,7 @@ fn update_3d_score_local(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase]
 }
 
 #[inline(always)]
-fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[FastaBase], sequence2: &[FastaBase], scoring_function: &AffineScoring, x: usize, y: usize) -> (bool, bool, bool) {
+fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[u8], sequence2: &[u8], scoring_function: &AffineScoring, x: usize, y: usize) -> (bool, bool, bool) {
     let mut _update_x = false;
     let mut _update_y = false;
     let mut _update_z = false;
@@ -683,8 +685,8 @@ pub struct AlignmentLocation {
 pub struct AlignmentResult {
     pub reference_name: String,
     pub read_name: String,
-    pub reference_aligned: Vec<FastaBase>,
-    pub read_aligned: Vec<FastaBase>,
+    pub reference_aligned: Vec<u8>,
+    pub read_aligned: Vec<u8>,
     pub read_quals: Option<Vec<u8>>,
     pub cigar_string: Vec<AlignmentTag>,
     pub path: Vec<AlignmentLocation>,
@@ -696,8 +698,8 @@ pub struct AlignmentResult {
 
 #[allow(dead_code)]
 impl AlignmentResult {
-    pub fn from_match_segment(str1: &[FastaBase],
-                              str2: &[FastaBase],
+    pub fn from_match_segment(str1: &[u8],
+                              str2: &[u8],
                               reference_name: &String,
                               read_name: &String,
                               start_x: usize,
@@ -743,7 +745,7 @@ impl AlignmentResult {
 
         data.insert(Tag::from([b'a', b's']), Value::from(self.score.to_string()));
 
-        let seq = FastaBase::string(self.read_aligned.clone().into_iter().filter(|b| b != &FASTA_UNSET).collect::<Vec<FastaBase>>().as_slice());
+        let seq = &self.read_aligned.clone().into_iter().filter(|b| b != &FASTA_UNSET).collect::<Vec<u8>>();
 
         // set the read name
         //println!("quals\n{}seq{}\n",String::from_utf8(self.read_quals.as_ref().unwrap().clone()).unwrap(),seq);
@@ -763,8 +765,8 @@ impl AlignmentResult {
 
     #[allow(dead_code)]
     fn slice_out_inversions(&self) -> Vec<AlignmentResult> {
-        let mut alignment_string1: Vec<FastaBase> = Vec::new();
-        let mut alignment_string2: Vec<FastaBase> = Vec::new();
+        let mut alignment_string1: Vec<u8> = Vec::new();
+        let mut alignment_string2: Vec<u8> = Vec::new();
         let mut cigar_string: Vec<AlignmentTag> = Vec::new();
         let mut path = Vec::new();
         let mut score: f64 = 0.0;
@@ -894,15 +896,15 @@ pub struct BoundedAlignment {
 }
 
 #[allow(dead_code)]
-pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBase>, reference_name: &String, read_name: &String, inversion_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
+pub(crate) fn inversion_alignment(reference: &[u8], read: &[u8], reference_name: &String, read_name: &String, inversion_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, local);
     let mut inversion_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, true);
 
     let mut long_enough_hits: HashMap<AlignmentLocation, BoundedAlignment> = HashMap::new();
-    let rev_comp_read = &reverse_complement(read);
-    perform_affine_alignment(&mut inversion_mat, reference, rev_comp_read, my_aff_score);
+    let rev_comp_read = reverse_complement(read);
+    perform_affine_alignment(&mut inversion_mat, reference, rev_comp_read.as_slice(), my_aff_score);
 
-    let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read, reference_name, read_name, None, None)); // TODO fix with quality scores
+    let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read.as_slice(), reference_name, read_name, None, None)); // TODO fix with quality scores
 
     while aligned_inv.is_some() {
         let aligned_inv_local = aligned_inv.unwrap();
@@ -913,9 +915,9 @@ pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
             let b_alignment = BoundedAlignment { alignment_result: converted_path, bounding_box: bounding };
             let true_position = AlignmentLocation { x: bounding.1.x, y: bounding.1.y };
             aligned_inv = if length >= inversion_score.min_inversion_length {
-                clean_and_find_next_best_match_3d(&mut inversion_mat, reference, rev_comp_read, my_aff_score, &aligned_inv_local);
+                clean_and_find_next_best_match_3d(&mut inversion_mat, reference, rev_comp_read.as_slice(), my_aff_score, &aligned_inv_local);
                 long_enough_hits.insert(true_position, b_alignment);
-                Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read, reference_name, read_name, None, None))// TODO fix with quality scores
+                Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read.as_slice(), reference_name, read_name, None, None))// TODO fix with quality scores
             } else {
                 None
             }
@@ -930,15 +932,15 @@ pub(crate) fn inversion_alignment(reference: &Vec<FastaBase>, read: &Vec<FastaBa
 #[allow(dead_code)]
 pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
                                    inversion_mapping: Option<&HashMap<AlignmentLocation, BoundedAlignment>>,
-                                   sequence1: &[FastaBase],
-                                   sequence2: &[FastaBase],
+                                   sequence1: &[u8],
+                                   sequence2: &[u8],
                                    sequence1_name: &String,
                                    sequence2_name: &String,
                                    read_quality: Option<Vec<u8>>,
                                    starting_position: Option<(usize, usize)>,
 ) -> AlignmentResult {
-    let mut alignment1: Vec<FastaBase> = Vec::with_capacity(sequence1.len() * 2);
-    let mut alignment2: Vec<FastaBase> = Vec::with_capacity(sequence1.len() * 2);
+    let mut alignment1: Vec<u8> = Vec::with_capacity(sequence1.len() * 2);
+    let mut alignment2: Vec<u8> = Vec::with_capacity(sequence1.len() * 2);
     let mut cigars: Vec<AlignmentTag> = Vec::with_capacity(100);
 
     let mut _starting_x = sequence1.len();
@@ -1115,14 +1117,13 @@ pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &Vec<u8>, s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alignment::fasta_bit_encoding::{reverse_complement};
 
-    fn str_to_fasta_vec(input: &str) -> Vec<FastaBase> {
-        FastaBase::from_vec_u8_default_ns(&input.as_bytes().to_vec())
+    fn str_to_fasta_vec(input: &str) -> Vec<u8> {
+        input.as_bytes().to_vec()
     }
 
-    fn fasta_vec_to_string(input: &Vec<FastaBase>) -> String {
-        FastaBase::string(input)
+    fn fasta_vec_to_string(input: &Vec<u8>) -> String {
+        u8s(input)
     }
 
     #[test]
@@ -1152,8 +1153,8 @@ mod tests {
         //pretty_print_3d_matrix(&alignment_mat, &reference, &test_read);
 
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
-        assert_eq!(results.reference_aligned, FastaBase::from_vec_u8(&"CTACTACTGCT".as_bytes().to_vec()));
-        assert_eq!(results.read_aligned, str_to_fasta_vec("CTACT-CTACT"));
+        assert_eq!(results.reference_aligned, "CTACTACTGCT".as_bytes().to_vec());
+        assert_eq!(results.read_aligned, "CTACT-CTACT".as_bytes().to_vec());
     }
 
     #[test]
@@ -1291,9 +1292,9 @@ mod tests {
         let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, test_read.len() + 1, AlignmentType::Affine, false);
         perform_affine_alignment(&mut alignment_mat, &reference, &test_read, &my_score);
 
-        //pretty_print_3d_matrix(&alignment_mat, &FastaBase::vec_u8(&reference), &FastaBase::vec_u8(&test_read));
+        //pretty_print_3d_matrix(&alignment_mat, &u8::vec_u8(&reference), &u8::vec_u8(&test_read));
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
-        println!("{}\n{}\n{}", FastaBase::string(results.reference_aligned.as_slice()), FastaBase::string(results.read_aligned.as_slice()), results.score);
+        println!("{}\n{}\n{}", u8s(&results.reference_aligned.to_vec()), u8s(&results.read_aligned.to_vec()), results.score);
         assert_eq!(results.reference_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT"));
         //                                                            TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTG------T
         assert_eq!(results.read_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTGT------"));
