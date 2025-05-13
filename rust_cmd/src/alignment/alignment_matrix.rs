@@ -613,7 +613,9 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[u8], sequence2: 
     let mut _update_x = false;
     let mut _update_y = false;
     let mut _update_z = false;
+
     assert!(!alignment.is_local);
+
     let gap_multiplier = if x == sequence1.len() || y == sequence2.len() { scoring_function.final_gap_multiplier() } else { 1.0 };
     let x1 = scoring_function.gap_open() + (scoring_function.gap_extend() * gap_multiplier);
     let local_gap_ext = scoring_function.gap_extend() * gap_multiplier;
@@ -1284,7 +1286,8 @@ mod tests {
 
     #[test]
     fn affine_alignment_test_favor_non_special_characters() {
-        let reference = str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT");
+        let reference = str_to_fasta_vec( "TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT");
+        //                                               "TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACCAACAAGTTTTTCAACACCTAGCGTGT");
         let test_read = str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACCAACAAGTTTTTCAACACCTAGCGTGT");
 
         let my_score = AffineScoring::default_dna();
@@ -1295,9 +1298,9 @@ mod tests {
         //pretty_print_3d_matrix(&alignment_mat, &u8::vec_u8(&reference), &u8::vec_u8(&test_read));
         let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), None, None);
         println!("{}\n{}\n{}", u8s(&results.reference_aligned.to_vec()), u8s(&results.read_aligned.to_vec()), results.score);
-        assert_eq!(results.reference_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT"));
-        //                                                            TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTG------T
-        assert_eq!(results.read_aligned, str_to_fasta_vec("TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTGT------"));
+        assert_eq!(u8s(&results.reference_aligned), u8s(&"TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTATTTCTAGCTCTAACCCCACCCACGATTGCCGCCGACCCCCATATAAGAAANNNNNNNNNNNNNNNNNNNNNNNNNNAGAT".as_bytes().to_vec()));
+        //                                                TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTG------T
+        assert_eq!(u8s(&results.read_aligned), u8s(&"TTAAGCAGTGGTATCAACGCAGAGTACGCCTTAGGTTAACTTGCTAGTTCTAGCTCTAACCCCACC----------------------------AACAAGTTTTTCAACACCTAGCGTGT------".as_bytes().to_vec()));
     }
 
     #[test]

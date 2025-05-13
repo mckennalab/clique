@@ -53,7 +53,7 @@ pub enum SoftClipResolution {
     Realign,
 }
 
-pub fn recover_align_sequences(
+pub fn recover_soft_clipped_align_sequences(
     unaligned_read: &[u8],
     one_based_start_pos: usize,
     cigar: &Vec<Op>,
@@ -64,13 +64,15 @@ pub fn recover_align_sequences(
     let mut aligned_ref = Vec::new();
     let mut read_pos = 0;
     let mut ref_pos = one_based_start_pos - 1;
+    //println!("START read pos {} ref pos: {} ", read_pos, ref_pos);
 
     if ref_pos > 0 && cigar.len() > 0 && cigar[0].kind() != Kind::SoftClip {
         aligned_read.extend(b"-".repeat(ref_pos));
-        aligned_ref.extend(reference[ref_pos..ref_pos].to_vec());
+        aligned_ref.extend(reference[0..ref_pos].to_vec());
         //println!("ADDING");
-        ref_pos += ref_pos;
+        //ref_pos += ref_pos;
     };
+    //println!("START read pos {} ref pos: {} ", read_pos, ref_pos);
 
 
     //println!("\n\nread length {} cigar {:?} ref length {:?}", unaligned_read.len(), cigar, reference.len());
@@ -82,7 +84,7 @@ pub fn recover_align_sequences(
 
         match cigar_v.kind() {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
-                //println!("Ref length {}",(ref_pos + len) - ref_pos);
+                // println!("Ref length {} ({} {} {:?})",(ref_pos + len) - ref_pos,ref_pos,ref_pos+len,cigar_sub);
                 aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
                 aligned_ref.extend(reference[ref_pos..ref_pos + len].to_vec());
                 read_pos += len;
@@ -509,15 +511,15 @@ mod tests {
 
     #[test]
     fn test_recover_align_sequences() {
-        let read = "TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT".as_bytes();
+        let read =                   "TTCCGATCTGTCATAACACCACACTAGAATCACGCGGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT".as_bytes();
         let reference = "CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes();
-        let start_pos: usize = 52;
+        let start_pos: usize = 23;
         let mut cigar = Vec::new();
-        cigar.push(Op::new(Kind::SoftClip, 42));
-        cigar.push(Op::new(Kind::Match, 24));
+        cigar.push(Op::new(Kind::SoftClip, 9));
+        cigar.push(Op::new(Kind::Match, 58));
 
 
-        let recovered = recover_align_sequences(
+        let recovered = recover_soft_clipped_align_sequences(
             read,
             start_pos,
             &cigar,
@@ -525,29 +527,32 @@ mod tests {
             reference,
         );
         println!("Ref\n{}\nread\n{} ",String::from_utf8(recovered.aligned_ref.clone()).unwrap(),String::from_utf8(recovered.aligned_read.clone()).unwrap());
-        assert_eq!("-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT----------------------------------".as_bytes().to_vec(),recovered.aligned_read);
+        assert_eq!(u8s(&"-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT-----------------------------".as_bytes().to_vec()),u8s(&recovered.aligned_read));
         assert_eq!(read,strip_gaps(&recovered.aligned_read));
-        assert_eq!("CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNT----TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec(),recovered.aligned_ref);
+        assert_eq!(     u8s(&"CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec()),u8s(&recovered.aligned_ref));
 
 
-        let read = "TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA".as_bytes();
-        let reference = "CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes();
-        let start_pos: usize = 52;
+        let read =                        "TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA".as_bytes();
+        let reference =      "CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes();
+        let start_pos: usize = 14;
         let mut cigar = Vec::new();
-        cigar.push(Op::new(Kind::SoftClip, 42));
-        cigar.push(Op::new(Kind::Match, 24));
-        cigar.push(Op::new(Kind::SoftClip, "TTTTTTATTAGGAAAGGACAGTGGGAGTGGCA".len()));
+        cigar.push(Op::new(Kind::Match, 38));
+        cigar.push(Op::new(Kind::Insertion, 4));
+        cigar.push(Op::new(Kind::Match, 54));
+        cigar.push(Op::new(Kind::SoftClip, 2));
 
-        let recovered = recover_align_sequences(
+
+        let recovered = recover_soft_clipped_align_sequences(
             read,
             start_pos,
             &cigar,
             &SoftClipResolution::Realign,
             reference,
         );
+
         println!("Ref\n{}\nread\n{} ",String::from_utf8(recovered.aligned_ref.clone()).unwrap(),String::from_utf8(recovered.aligned_read.clone()).unwrap());
-        assert_eq!("-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA--".as_bytes().to_vec(),recovered.aligned_read);
-        assert_eq!("CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNT----TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec(),recovered.aligned_ref);
+        assert_eq!(u8s(&"-------------TTCCGATCTGTCATAACACCACACTAGAATCACGCGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCA--".as_bytes().to_vec()),u8s(&recovered.aligned_read));
+        assert_eq!(u8s(&"CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNT----TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACC".as_bytes().to_vec()),u8s(&recovered.aligned_ref));
         assert_eq!(read,strip_gaps(&recovered.aligned_read));
         assert_eq!(reference,strip_gaps(&recovered.aligned_ref));
 

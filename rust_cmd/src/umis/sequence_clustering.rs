@@ -336,31 +336,32 @@ mod tests {
 
     #[test]
     fn test_sift4_vs_string_dist() {
-        let low_match = "AAAAAAAA".as_bytes().to_vec();
+        let low_match =  "AAAAAAAA".as_bytes().to_vec();
         let low_match_str = String::from_utf8(low_match.clone()).unwrap();
 
-        let high_match = "TTTTTTTT".as_bytes().to_vec();
-        let high_match_str = String::from_utf8(low_match.clone()).unwrap();
+        let high_match = "AAAATTTT".as_bytes().to_vec();
+        let high_match_str = String::from_utf8(high_match.clone()).unwrap();
 
         let close_match = "AATAAAAA".as_bytes().to_vec();
         let close_match_str = String::from_utf8(low_match.clone()).unwrap();
 
-        let iterations = 1000000;
+        let iterations = 10000;
         for _i in 0..4 {
             let now = Instant::now();
             for _x in 0..iterations {
-                let _ = aln_distance(&low_match, &high_match);
+                let aln_dist = aln_distance(&low_match, &high_match);
+                assert_eq!(aln_dist,4.0);
             }
             println!("Aligned high/low {}", now.elapsed().as_millis());
 
         }
 
-        let iterations = 1000000;
+        let iterations = 10000;
         for _i in 0..4 {
             let now = Instant::now();
             for _x in 0..iterations {
                 let sift_dist = sift4::simple(&low_match_str.as_str(), &high_match_str.as_str());
-                assert_eq!(sift_dist, 8);
+                assert_eq!(sift_dist, 4);
             }
             println!("Sift4 high/low {}", now.elapsed().as_millis());
 

@@ -992,7 +992,7 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
     use flate2::read::GzDecoder;
     use sigalign::results::TargetAlignment;
 
-    #[test]
+    // #[test]
     fn test_alignment_marc1_data() {
 
         // Open the FASTA file

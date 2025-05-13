@@ -1,5 +1,5 @@
 use crate::consensus::consensus_builders::write_consensus_reads;
-use crate::extractor::{extract_tag_sequences, extract_tagged_sequences, recover_align_sequences, SoftClipResolution, stretch_sequence_to_alignment};
+use crate::extractor::{extract_tag_sequences, extract_tagged_sequences, recover_soft_clipped_align_sequences, SoftClipResolution, stretch_sequence_to_alignment};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout, UMIConfiguration, UMISortType};
 use crate::reference::fasta_reference::ReferenceManager;
@@ -457,7 +457,7 @@ fn create_sorted_read_container(reference_name: &String,
     let ref_slice = reference_sequence.as_slice();
 
     let aligned_read =
-        recover_align_sequences(&seq, start_pos, &cigar.iter().map(|x| x.unwrap()).collect(), &SoftClipResolution::Realign, ref_slice);
+        recover_soft_clipped_align_sequences(&seq, start_pos, &cigar.iter().map(|x| x.unwrap()).collect(), &SoftClipResolution::Realign, ref_slice);
 
     let stretched_alignment = stretch_sequence_to_alignment(
         &aligned_read.aligned_ref,

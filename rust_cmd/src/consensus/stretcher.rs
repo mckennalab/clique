@@ -233,6 +233,7 @@ impl AlignmentCandidate {
         }
     }
 
+    // TODO this is broken: quals and gaps aren't handled right
     pub fn add_alignment(&mut self, alignment: &AlignmentResult) {
         let mut existing_index = 0;
         let mut incoming_index = 0;
@@ -244,7 +245,7 @@ impl AlignmentCandidate {
         while existing_index < existing_ref_size && incoming_index < alignment.reference_aligned.len() {
             let incoming_ref_base = &alignment.reference_aligned[incoming_index];
             let incoming_read_base = &alignment.read_aligned[incoming_index];
-            let incoming_read_qual = read_qual[incoming_index];
+            let incoming_read_qual = if incoming_read_base == &b'-' {&b'+'} else {&read_qual[incoming_index]};
 
             let existing_ref_base = &mut self.reference.get_mut(existing_index).unwrap();
             //println!("Loop: {:?} and {}, pos {} and {}, max is {} and {}", *existing_ref_base, incoming_ref_base as char, existing_index, incoming_index, existing_ref_size, alignment.read_aligned.len());
@@ -253,7 +254,7 @@ impl AlignmentCandidate {
                 // we're in an insertion on both references -- we're not going to concern ourselves with multiple paths and just record insertion bases
                 (ReferenceStatus::Insertion { base, counts }, b'-') => {
                     //println!("step1");
-                    counts.update(*incoming_read_base, Some(incoming_read_qual));
+                    counts.update(*incoming_read_base, Some(*incoming_read_qual));
                     incoming_index += 1;
                     existing_index += 1;
                 }
@@ -267,7 +268,7 @@ impl AlignmentCandidate {
                 (ReferenceStatus::Original { base, original_position, counts}, b'-') => {
                     //println!("step2");
                     // we're going to add an insertion -- we have to choose if we're going to left or right align them (we choose right)
-                    self.reference.insert(existing_index, ReferenceStatus::Insertion{base: *incoming_read_base, counts: NucCounts::new_from(*incoming_read_base, incoming_read_qual) });
+                    self.reference.insert(existing_index, ReferenceStatus::Insertion{base: *incoming_read_base, counts: NucCounts::new_from(*incoming_read_base, *incoming_read_qual) });
                     incoming_index += 1;
                     existing_index += 1;
                 }
@@ -282,7 +283,7 @@ impl AlignmentCandidate {
                 (ReferenceStatus::Original { base, original_position, counts}, new_ref)
                 if base == new_ref && *base != b'-' && *new_ref != b'-' => {
                     //println!("step3 {}",incoming_read_base as char);
-                    counts.update(*incoming_read_base, Some(incoming_read_qual));;
+                    counts.update(*incoming_read_base, Some(*incoming_read_qual));;
                     incoming_index += 1;
                     existing_index += 1;
                 }
