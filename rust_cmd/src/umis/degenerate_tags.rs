@@ -8,14 +8,17 @@ use rustc_hash::{FxHasher, FxHashMap};
 use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
-
-use rust_starcode::StarcodeAlignment;
 use std::io::Write;
+use std::ops::Deref;
+use rand::distr::uniform::SampleBorrow;
+use rust_star::{DistanceGraphNode, LinkedDistances};
+use alignment::alignment_matrix::AlignmentResult;
 use utils::read_utils::{strip_gaps, u8s};
 
 pub struct DegenerateBuffer {
     buffer: VecDeque<SortingReadSetContainer>,
     max_buffer_size: usize,
+    collapse_ratio: f64,
     shard_writer: Option<Box<ShardWriter<SortingReadSetContainer>>>,
     shard_sender: Option<Box<ShardSender<SortingReadSetContainer>>>,
     output_file: PathBuf,
@@ -28,6 +31,7 @@ impl DegenerateBuffer {
         DegenerateBuffer {
             buffer: VecDeque::new(),
             max_buffer_size: *max_size,
+            collapse_ratio: *tag.minimum_collapsing_difference.as_ref().unwrap_or(&5.0),
             shard_writer: None,
             shard_sender: None,
             output_file,
@@ -37,7 +41,7 @@ impl DegenerateBuffer {
     }
 
     /// Pushes a new item onto the buffer
-    /// we buffer writing to prevent the costly disk writes when we have smaller sets of barcodes.
+    /// we buffer writing to disk, to prevent the costly disk writes when we have smaller sets of barcodes.
     /// When we overflow we write the whole buffer to disk and continue to write additional reads to
     /// disk until we've finished.
     ///
@@ -116,15 +120,23 @@ impl DegenerateBuffer {
                 knowns
             }
             _ => {
-                let correction = StarcodeAlignment::align_sequences(&self.hash_map, &((self.tag.max_distance  as i32) + 1), &3.0); // TODO: the plus 1 here is a patch until it's clear why starcode distance metrics are weird
-                for i in 0..correction.cluster_centers.len() {
-                    let center = correction.cluster_centers.get(i).unwrap();
-                    correction.cluster_members.get(i).unwrap().iter().for_each(|v| {
-                        assert!(!knowns.contains_key(v));
-                        //println!("COrrection center {} for {}, count {}",String::from_utf8(center.clone()).unwrap(),String::from_utf8(v.clone()).unwrap(),correction.cluster_count.get(i).unwrap());
-                        knowns.insert(v.clone(), center.clone());
+                let tags = self.hash_map.iter().map(|x| (x.0.clone(),*x.1)).collect::<Vec<(Vec<u8>,usize)>>();
+
+                tags.iter().for_each(|x| println!("tag {} size {}",u8s(&x.0),&x.1));
+
+                let correction = LinkedDistances::cluster_string_vector_list(tags, &self.tag.max_distance, &self.collapse_ratio);
+
+                correction.into_iter().for_each(|(mut center,mut dist_graph)| {
+                    let mut connected_node = dist_graph.borrow_mut();
+                    let mut connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
+                    let string_name = connected_node.string.clone();
+                    knowns.insert(string_name.clone(),string_name.clone());
+                    println!("Known {} to known {}",u8s(&string_name),u8s(&string_name));
+                    connected_node.swallowed_links.iter().for_each(|(x,y)| {
+                        knowns.insert(x.clone(), string_name.clone());
+                        println!("Unknown {} to known {}",u8s(&x),u8s(&string_name));
                     });
-                };
+                });
                 knowns
             }
         }
@@ -189,4 +201,117 @@ impl DegenerateBuffer {
 trait ListCorrector {
     fn correct_list(&self, counts: &FxHashMap<String, usize>) -> HashMap<Vec<u8>, Vec<u8>, BuildHasherDefault<FxHasher>>;
     fn get_max_distance(&self) -> u32;
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use bio::io::fastq::Record;
+    use tempfile::tempfile;
+    use ::{FASTA_A, FASTA_T};
+    use read_strategies::read_set::ReadSetContainer;
+    use read_strategies::sequence_layout::UMISortType;
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_tag_buffer_corrects() {
+        let tempfile = NamedTempFile::new().unwrap(); // creates a new temp file
+        let path: PathBuf = tempfile.path().to_path_buf(); // clone the path
+        //let path_str = path.to_string_lossy(); // convert to a string-like type
+        //
+        //
+        let config = UMIConfiguration{
+            symbol: '1',
+            file: None,
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::DegenerateTag,
+            length: 10,
+            order: 0,
+            pad: None,
+            max_distance: 2,
+            maximum_subsequences: Some(5000),
+            minimum_collapsing_difference: Some(5.0),
+            max_gaps: None,
+        };
+
+
+        // above the threshold for merging
+        let mut tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&10,&path, &config);
+        let list = tag_buffer.correct_list();
+        let minimum_thresh = 5.0;
+
+        assert!(list.contains_key("AAAAATTTTT".as_bytes()));
+        assert_eq!(list.get("AAAAATTTTT".as_bytes()).unwrap().clone(),"AAAAATTTTT".as_bytes().to_vec());
+
+        assert!(list.contains_key("AAAAATTTGT".as_bytes()));
+        assert_eq!(list.get("AAAAATTTGT".as_bytes()).unwrap().clone(),"AAAAATTTTT".as_bytes().to_vec());
+
+        assert!(list.contains_key("GGGGGCCCCC".as_bytes()));
+        assert_eq!(list.get("GGGGGCCCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec());
+
+        assert!(list.contains_key("GCGGGCCCCC".as_bytes()));
+        assert_eq!(list.get("GCGGGCCCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec());
+
+        // below the threshold for merging
+        let mut tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&3,&path, &config);
+        let list = tag_buffer.correct_list();
+
+        assert!(list.contains_key("AAAAATTTTT".as_bytes()));
+        assert_eq!(list.get("AAAAATTTTT".as_bytes()).unwrap().clone(),"AAAAATTTTT".as_bytes().to_vec());
+
+        assert!(list.contains_key("AAAAATTTGT".as_bytes()));
+        assert_eq!(list.get("AAAAATTTGT".as_bytes()).unwrap().clone(),"AAAAATTTGT".as_bytes().to_vec()); // not corrected
+
+        assert!(list.contains_key("GGGGGCCCCC".as_bytes()));
+        assert_eq!(list.get("GGGGGCCCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec());
+
+        assert!(list.contains_key("GCGGGCCCCC".as_bytes()));
+        assert_eq!(list.get("GCGGGCCCCC".as_bytes()).unwrap().clone(),"GCGGGCCCCC".as_bytes().to_vec()); // not corrected
+
+
+
+    }
+
+    fn create_tag_buffer_with_set_anchor_seq_count(count: &usize, path: &PathBuf, config: &UMIConfiguration) -> DegenerateBuffer {
+        let mut tag_buffer = crate::umis::degenerate_tags::DegenerateBuffer::new(path.clone(),&5000, config.clone());
+
+        for i in 0..*count {
+            tag_buffer.push(create_fake_read_set_container(&"read1".to_string(), &"AAAAATTTTT".to_string(), &config));
+        }
+        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&"AAAAATTTGT".to_string(),&config));
+
+        for i in 0..*count {
+            tag_buffer.push(create_fake_read_set_container(&"read1".to_string(), &"GGGGGCCCCC".to_string(), &config));
+        }
+        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&"GCGGGCCCCC".to_string(),&config));
+
+        tag_buffer
+    }
+
+    fn create_fake_read_set_container(name: &String, read_one_seq: &String, config : &UMIConfiguration) -> SortingReadSetContainer {
+        let read_1_qual = vec![b'H'; read_one_seq.len()];
+
+        let mut unsorted_keys = VecDeque::default();
+        unsorted_keys.push_front((config.symbol.clone(), read_one_seq.clone().into_bytes().to_vec()));
+
+        SortingReadSetContainer{
+            ordered_sorting_keys: Vec::new(),
+            ordered_unsorted_keys: unsorted_keys,
+            aligned_read: AlignmentResult {
+                reference_name: "default".to_string(),
+                read_name: name.clone(),
+                reference_aligned: vec![], // can be empty -- only the tags are used in this case
+                read_aligned: vec![], // can be empty -- only the tags are used in this case
+                read_quals: None, // can be empty -- only the tags are used in this case
+                cigar_string: vec![], // can be empty -- only the tags are used in this case
+                path: vec![], // can be empty -- only the tags are used in this case
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            }
+        }
+    }
 }

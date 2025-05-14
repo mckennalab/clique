@@ -7,8 +7,8 @@ use crate::alignment::alignment_matrix::{AlignmentResult};
 /// extracted barcode sequences. These sorting sequences could have been corrected to a known list
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SortingReadSetContainer {
-    pub ordered_sorting_keys: Vec<(char,Vec<u8>)>,   // grow in order
-    pub ordered_unsorted_keys: VecDeque<(char, Vec<u8>)>, // use the default behavior to push back, pop front
+    pub ordered_sorting_keys: Vec<(char,Vec<u8>)>,   // contains an ordered list of how this SortingReadSetContainer has been sorted so far
+    pub ordered_unsorted_keys: VecDeque<(char, Vec<u8>)>, // a list of keys in this SortingReadSetContainer that have yet to be used to sort the container
     pub aligned_read: AlignmentResult,
 }
 impl SortingReadSetContainer {
@@ -26,6 +26,7 @@ impl SortingReadSetContainer {
             aligned_read: new_alignment,
         }
     }
+
 
 }
 impl Eq for SortingReadSetContainer {}

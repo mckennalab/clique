@@ -35,7 +35,7 @@ extern crate rust_htslib;
 extern crate noodles_bam;
 extern crate noodles_util;
 extern crate bstr;
-extern crate rust_starcode;
+extern crate rust_star;
 extern crate libc;
 extern crate clap;
 extern crate indexmap;

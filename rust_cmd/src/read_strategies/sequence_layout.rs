@@ -129,7 +129,7 @@ pub struct UMIConfiguration {
     pub max_distance: usize,
     pub maximum_subsequences: Option<usize>,
     pub max_gaps: Option<usize>,
-
+    pub minimum_collapsing_difference: Option<f64>,
 }
 
 #[derive(Debug, PartialEq, Hash, Serialize, Deserialize, Clone, Eq)]

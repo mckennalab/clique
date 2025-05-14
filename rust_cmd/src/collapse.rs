@@ -594,7 +594,8 @@ pub fn sort_degenerate_level(
                 let mut bin = DegenerateBuffer::new(
                     temp_directory.temp_file(format!("{}.fasta", tag.order).as_str()),
                     &maximum_reads_per_bin,
-                    tag.clone());
+                    tag.clone(),
+                );
                 bin.push(current_read);
                 current_sorting_bin = Some(bin);
             }
@@ -1028,6 +1029,7 @@ mod tests {
                 max_distance: 2, // TODO: the plus 1 here is confusing -- does STARCODE
                 maximum_subsequences: None,
                 max_gaps: Some(1),
+                minimum_collapsing_difference: Some(10.0),
             },
         );
 

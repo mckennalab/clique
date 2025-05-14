@@ -57,7 +57,7 @@ indexmap = "2.0.0"
 triple_accel = "*"
 
 rust-htslib = "*"
-rust_starcode = { git = "https://github.com/aaronmck/rust-starcode.git"}
+rust_star = { git = "https://github.com/mckennalab/ruststarcode.git"}
 
 
 [profile.release]
