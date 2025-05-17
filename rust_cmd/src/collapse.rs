@@ -238,7 +238,7 @@ impl AlignmentFilter for AlignmentCheck {
         let mut alignable_bases = 0;
 
         read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(x,y)| {
-            if *x > 59 && x != &FASTA_N {
+            if *y > 59 && x != &FASTA_N {
                 alignable_bases += 1;
                 if x == y {
                     alignment_count += 1;
@@ -247,9 +247,9 @@ impl AlignmentFilter for AlignmentCheck {
         });
 
         let ret = (alignment_count as f64 / alignable_bases as f64 >= self.min_aligned_identical_proportion) && (alignable_bases >= self.min_aligned_bases);
-        if !ret {
-            println!("aligning {} {}\n{}\n{}",alignment_count,alignable_bases,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
-        }
+        //if !ret {
+        //    println!("aligning {} {}\n{}\n{}",alignment_count,alignable_bases,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
+        //}
         ret
 
     }
