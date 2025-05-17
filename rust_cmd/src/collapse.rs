@@ -237,15 +237,19 @@ impl AlignmentFilter for AlignmentCheck {
         let mut alignable_bases = 0;
 
         read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(x,y)| {
-            if *x > 59 && x != &FASTA_UNSET {
+            if *x > 59 && x != &FASTA_N {
                 alignable_bases += 1;
                 if x == y {
                     alignment_count += 1;
                 }
             }
         });
-        //println!("aligning {} {} ",alignment_count,alignable_bases);
-        (alignment_count as f64 / alignable_bases as f64 >= self.min_aligned_identical_proportion) && (alignable_bases >= self.min_aligned_bases)
+
+        let ret = (alignment_count as f64 / alignable_bases as f64 >= self.min_aligned_identical_proportion) && (alignable_bases >= self.min_aligned_bases);
+        if !ret {
+            println!("aligning {} {} ",alignment_count,alignable_bases);
+        }
+        ret
 
     }
 }
