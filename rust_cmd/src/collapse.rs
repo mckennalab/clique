@@ -704,9 +704,9 @@ pub fn sort_known_level(
 
         reader.iter_range(&Range::all()).unwrap().for_each(|x| {
             processed_reads += 1;
-            //if processed_reads % 10000 == 0 {
+            if processed_reads % 20000 == 0 {
                 bar.as_mut().map(|b| b.set_position(processed_reads as u64));
-            //}
+            }
             let mut sorting_read_set_container = x.unwrap();
             assert_eq!(
                 sorting_read_set_container.ordered_sorting_keys.len(),
