@@ -16,7 +16,6 @@ pub enum MergeStrategy {
     ConcatenateBothForward,
 }
 
-
 impl SequenceLayout {
     /// Load up a YAML document describing the layout of specific sequences within the reads. This configuration is specific
     /// to each sequencing platform and sequencing type (10X, sci, etc). The layout is described below.
@@ -144,6 +143,7 @@ pub enum TargetType {
     Cas12CBE,
     Cas12ABECBE,
     Cas9Homing,
+    Cas9ABEPalindrome,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]

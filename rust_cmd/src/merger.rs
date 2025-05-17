@@ -9,7 +9,7 @@ use crate::utils::read_utils::combine_phred_scores;
 use bio::io::fastq::Record;
 use needletail::Sequence;
 use FASTA_UNSET;
-use utils::read_utils::reverse_complement;
+use utils::read_utils::{reverse_complement, u8s};
 
 /// Merges two DNA sequences (read1 and read2) into a single sequence, filling the gap with undefined bases, based on the given reference length.
 ///
@@ -175,6 +175,8 @@ pub fn merge_reads_by_concatenation(
                     spacer_sequence.as_bytes(),
                     &AlignedReadOrientation::Forward,
                 ));
+                final_sequence_quals.extend(vec![b'H';spacer_sequence.len()]);
+                //println!("read {} qual {}",final_sequence.len(), final_sequence_quals.len());
             }
         }
     }
@@ -182,7 +184,8 @@ pub fn merge_reads_by_concatenation(
         final_sequence.extend(chain_aligned_seq.unwrap());
         final_sequence_quals.extend(chain_aligned_quals.unwrap());
     }
-    //println!("Final sequence: {}", FastaBase::to_string(&final_sequence));
+    //println!("Final sequence: \n{}\n{}", u8s(&final_sequence), u8s(&final_sequence_quals));
+    //println!("read {} qual {}",final_sequence.len(), final_sequence_quals.len());
     MergedSequence {
         read_bases: final_sequence,
         read_quals: final_sequence_quals,
@@ -340,7 +343,7 @@ impl UnifiedRead {
     fn decision_tree(&mut self) {
         match (self.read_pattern, &self.read_structure.merge) {
             ((true, true, false, false), Some(MergeStrategy::Align)) => {
-                // TODO: quality scores
+                // TODO: this part is broken = see merge by concat above
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(
                     merge_reads_by_alignment(
@@ -357,31 +360,17 @@ impl UnifiedRead {
                 if strat == &MergeStrategy::Concatenate
                     || strat == &MergeStrategy::ConcatenateBothForward =>
             {
-                // TODO: quality scores
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
-                self.seq = Some(
-                    merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure)
-                        .read_bases,
-                );
-                let mut qual = self.underlying_reads.read_one.qual().to_vec();
 
-                if strat == &MergeStrategy::Concatenate {
-                    let mut rt = self.underlying_reads.read_two.as_ref().unwrap().qual().to_vec();
-                    rt.reverse();
-                    qual.extend(rt);
-
-                } else {
-                    qual.extend(self.underlying_reads.read_two.as_ref().unwrap().qual().to_vec());
-                }
-
-                self.quals = Some(qual);
-                //println!("sequence {}",FastaBase::string(&self.seq.as_ref().unwrap()));
+                let rst = merge_reads_by_concatenation(&self.underlying_reads,&self.read_structure);
+                self.seq = Some(rst.read_bases.to_vec());
+                self.quals = Some(rst.read_quals.to_vec());
             }
             ((true, true, true, false), Some(strat))
                 if strat == &MergeStrategy::Concatenate
                     || strat == &MergeStrategy::ConcatenateBothForward =>
             {
-                // TODO: quality scores
+                // TODO: this part is broken = see merge by concat above
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(
                     merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure)
@@ -389,7 +378,7 @@ impl UnifiedRead {
                 );
             }
             ((true, false, false, false), _) => {
-
+                // TODO: this part is broken = see merge by concat above
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(
                     self.underlying_reads

@@ -6,7 +6,6 @@ use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
 use crate::alignment::alignment_matrix::{Alignment, AlignmentResult, AlignmentTag, AlignmentType, create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment, perform_affine_alignment_bandwidth};
 use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
-
 use crate::linked_alignment::{align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment};
 use crate::read_strategies::read_set::{ReadIterator};
 use crate::reference::fasta_reference::{ReferenceManager};
@@ -39,6 +38,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
                    index2: &String,
                    threads: &usize,
                    inversions: &bool) {
+
     let read_iterator = ReadIterator::new(PathBuf::from(&read1),
                                           Some(PathBuf::from(&read2)),
                                           Some(PathBuf::from(&index1)),
@@ -67,7 +67,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
         mismatch_score: -9.0,
         special_character_score: 9.0,
         gap_open: -20.0,
-        gap_extend: -1.0,
+        gap_extend: -2.0,
         final_gap_multiplier: 1.0,
 
     };
@@ -76,7 +76,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
 
     type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 
-    lazy_static! {static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());}
+    lazy_static!{static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());}
     thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
 
     let max_read_size = (rm.longest_ref + 1) * 2;

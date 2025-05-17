@@ -96,7 +96,7 @@ impl AffineScoring {
     }
 
     pub fn match_mismatch(&self, bit_a: &u8, bit_b: &u8) -> f64 {
-        if (*bit_a == FASTA_N || *bit_b == FASTA_N) { self.special_character_score } else if bit_a == bit_b { self.match_score } else { self.mismatch_score }
+        if (*bit_a == FASTA_N || *bit_b == FASTA_N || *bit_a < 58 || *bit_b < 58) { self.special_character_score } else if bit_a == bit_b { self.match_score } else { self.mismatch_score }
     }
 
     pub fn gap_open(&self) -> f64 {

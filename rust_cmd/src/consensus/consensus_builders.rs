@@ -218,9 +218,9 @@ pub fn get_reference_alignment_rate(reference: &[u8], read: &[u8]) -> f64 {
 
     //println!("reference: {} read: {}", FastaBase::string(&reference),FastaBase::string(&read));
     for index in 0..reference.len() {
-        if reference.get(index).unwrap() != &FASTA_UNSET
-            && reference.get(index).unwrap() != &FASTA_N
-            && read.get(index).unwrap() != &FASTA_UNSET
+        if *reference.get(index).unwrap() > 64 as u8 &&
+            reference.get(index).unwrap() != &FASTA_N &&
+            *read.get(index).unwrap() > 64 as u8
         {
             if reference.get(index).unwrap() == read.get(index).unwrap() {
                 matches += 1;

@@ -270,7 +270,18 @@ mod tests {
         assert!(list.contains_key("GCGGGCCCCC".as_bytes()));
         assert_eq!(list.get("GCGGGCCCCC".as_bytes()).unwrap().clone(),"GCGGGCCCCC".as_bytes().to_vec()); // not corrected
 
+        let mut tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&10,&path, &config);
+        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&"GGGGGCCCC-".to_string(),&config));
+        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&"GGGGCCCC--".to_string(),&config));
+        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&"GGGGGCCC--".to_string(),&config));
+        let list = tag_buffer.correct_list();
 
+        assert!(list.contains_key("GGGGGCCCC".as_bytes()));
+        assert!(list.contains_key("GGGGGCCC".as_bytes()));
+        assert!(list.contains_key("GGGGCCCC".as_bytes()));
+        assert_eq!(list.get("GGGGGCCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec()); // not corrected
+        assert_eq!(list.get("GGGGGCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec()); // not corrected
+        assert_eq!(list.get("GGGGCCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec()); // not corrected
 
     }
 

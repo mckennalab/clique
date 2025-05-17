@@ -632,6 +632,7 @@ fn update_3d_score(alignment: &mut Alignment<Ix3>, sequence1: &[u8], sequence2: 
         _update_x = alignment.scores[[x, y, 0]] != best_match.0;
         alignment.scores[[x, y, 0]] = best_match.0;
         alignment.traceback[[x, y, 0]] = best_match.1;
+
     }
     {
         let best_gap_x = three_way_max_and_direction(
@@ -969,6 +970,7 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
     let mut path = Vec::new();
 
     while _starting_x > 0 && _starting_y > 0 && ((alignment.is_local && alignment.scores[[_starting_x, _starting_y, _starting_z]] != 0.0) || !alignment.is_local) {
+        // zero out the current path as we go, allowing additional alignments to be extracted later
         alignment.scores[[_starting_x, _starting_y, 0]] = 0.0;
         alignment.scores[[_starting_x, _starting_y, 1]] = 0.0;
         alignment.scores[[_starting_x, _starting_y, 2]] = 0.0;
@@ -1061,6 +1063,8 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
     path.reverse();
     cigars.reverse();
 
+    //println!("\n{}\n{}\n",u8s(&alignment1), u8s(&alignment2));
+
     AlignmentResult {
         reference_name: sequence1_name.clone(),
         read_name: sequence2_name.clone(),
@@ -1077,8 +1081,9 @@ pub fn perform_3d_global_traceback(alignment: &mut Alignment<Ix3>,
 }
 
 #[allow(dead_code)]
-pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &Vec<u8>, sequence2: &Vec<u8>) {
+pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &[u8], sequence2: &[u8]) {
     println!("DIM: {:?}", alignment.scores.shape());
+
     print!("     ");
     for i in 0..sequence2.len() + 1 {
         print!("{: >9}", if i > 0 { sequence2[i - 1] as char } else { b'x' as char });
@@ -1086,6 +1091,7 @@ pub fn pretty_print_3d_matrix(alignment: &Alignment<Ix3>, sequence1: &Vec<u8>, s
     println!();
 
     for z in 0..3 {
+        println!("Matrix {}\n\n",z);
         for x in 0..sequence1.len() + 1 {
             print!("{:>7?},", if x > 0 { sequence1[x - 1] as char } else { b' ' as char });
             print!("[");

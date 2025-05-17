@@ -61,7 +61,8 @@ rust_star = { git = "https://github.com/mckennalab/ruststarcode.git"}
 
 
 [profile.release]
-lto = true
+lto = "fat"
+codegen-units = 1
 debug = true
 
 [target.x86_64-unknown-linux-gnu]
