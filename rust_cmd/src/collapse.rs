@@ -21,6 +21,7 @@ use itertools::Itertools;
 use noodles_sam::alignment::record::QualityScores;
 use petgraph::visit::Walker;
 use FASTA_N;
+use utils::read_utils::u8s;
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::degenerate_tags::DegenerateBuffer;
@@ -247,7 +248,7 @@ impl AlignmentFilter for AlignmentCheck {
 
         let ret = (alignment_count as f64 / alignable_bases as f64 >= self.min_aligned_identical_proportion) && (alignable_bases >= self.min_aligned_bases);
         if !ret {
-            println!("aligning {} {} ",alignment_count,alignable_bases);
+            println!("aligning {} {}\n{}\n{}",alignment_count,alignable_bases,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
         }
         ret
 
