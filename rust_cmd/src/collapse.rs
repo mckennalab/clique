@@ -237,7 +237,7 @@ impl AlignmentFilter for AlignmentCheck {
         let mut alignable_bases = 0;
 
         read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(x,y)| {
-            if x != &FASTA_UNSET && x != &FASTA_UNSET {
+            if *x > 59 && x != &FASTA_UNSET {
                 alignable_bases += 1;
                 if x == y {
                     alignment_count += 1;
@@ -278,7 +278,7 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
                     ret = false;
                 }
             }
-            else if reference_base != &FASTA_UNSET && reference_base != &FASTA_N {
+            else if *reference_base > 58 && reference_base != &FASTA_N {
                 count_down_check -= 1;
                 if read_base == reference_base {
                     pushed_binary_comp.push(1)
@@ -361,7 +361,7 @@ pub fn sort_reads_from_bam_file(
     let mut read_stats = BamReadFiltering::default();
 
     let filters : Vec<(String, &dyn AlignmentFilter)> = vec![("FlankingDegenerateBaseFilter".to_string(),&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10}),
-                                                             ("AlignmentCheck".to_string(),&AlignmentCheck{ min_aligned_bases: 50, min_aligned_identical_proportion: 0.8})];
+                                                             ("AlignmentCheck".to_string(),&AlignmentCheck{ min_aligned_bases: 45, min_aligned_identical_proportion: 0.8})];
     let mut filter_counts: HashMap<String,u64> = HashMap::default();
     filter_counts.insert("FlankingDegenerateBaseFilter".to_string(),0);
     filter_counts.insert("AlignmentCheck".to_string(),0);
