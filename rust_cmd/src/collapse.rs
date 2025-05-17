@@ -308,7 +308,7 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
                 count_down_check = self.flanking_window_size;
             }
         });
-        println!("aligning {}\n{}\n{}",ret,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
+        //println!("aligning {}\n{}\n{}",ret,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
         ret
     }
 }
