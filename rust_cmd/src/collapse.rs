@@ -272,7 +272,9 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
         let mut pushed_binary_comp = Vec::new();
         let mut ret = true;
         let mut count_down_check = usize::MAX;
+
         read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(read_base, reference_base)| {
+            // we're at the end of the countdown window - check the mating proportion
             if count_down_check == 0 {
                 count_down_check = usize::MAX;
                 let lookback_length = min(pushed_binary_comp.len(),self.flanking_window_size);
@@ -283,6 +285,7 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
                     ret = false;
                 }
             }
+                //
             else if *reference_base > 58 && reference_base != &FASTA_N {
                 count_down_check -= 1;
                 if read_base == reference_base {
@@ -292,7 +295,7 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
                 }
             }
                 // lookback case for start of Ns
-            else if reference_base == &FASTA_N && pushed_binary_comp.len() > 0 {
+            else if *reference_base < 59 && pushed_binary_comp.len() > 0 {
                 let lookback_length = min(pushed_binary_comp.len(),self.flanking_window_size);
                 let sum: u32 = pushed_binary_comp[pushed_binary_comp.len() - lookback_length..pushed_binary_comp.len()].iter().sum();
                 let matching_prop = sum as f64 / lookback_length as f64;
@@ -305,6 +308,7 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
                 count_down_check = self.flanking_window_size;
             }
         });
+        println!("aligning {}\n{}\n{}",ret,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
         ret
     }
 }
