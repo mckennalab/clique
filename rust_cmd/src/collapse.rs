@@ -16,6 +16,7 @@ use shardio::{Range, ShardReader, ShardWriter};
 use std::cmp::{min, Ordering};
 use std::collections::{HashMap};
 use std::path::PathBuf;
+use itertools::Itertools;
 
 use noodles_sam::alignment::record::QualityScores;
 use petgraph::visit::Walker;
@@ -245,6 +246,7 @@ impl AlignmentFilter for AlignmentCheck {
         });
         //println!("aligning {} {} ",alignment_count,alignable_bases);
         (alignment_count as f64 / alignable_bases as f64 >= self.min_aligned_identical_proportion) && (alignable_bases >= self.min_aligned_bases)
+
     }
 }
 
@@ -257,6 +259,7 @@ pub struct FlankingDegenerateBaseFilter {
     min_flanking_indentity: f64,
     flanking_window_size: usize,
 }
+
 impl AlignmentFilter for FlankingDegenerateBaseFilter {
     fn keep(&self, read: &SortingReadSetContainer) -> bool {
         // create a sliding window set to the flanking window size. When we hit a degenerate sequence
@@ -299,8 +302,6 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
         });
         ret
     }
-
-
 }
 
 #[derive(Default,Copy,Clone,Debug)]
@@ -319,9 +320,10 @@ impl BamReadFiltering {
         self.total_reads - self.unmapped_flag_reads - self.secondary_flag_reads - self.failed_alignment_filters - self.duplicate_reads - self.invalid_tags
     }
 
-    pub fn results(&self) {
+    pub fn results(&self, filters_counts: &HashMap<String,u64>) {
+        let filter_summary = filters_counts.iter().map(|x| format!("Name: {} failed {}",x.0.clone(),x.1)).join(", ");
         info!(
-            "Total reads processed: {}, Unmapped: {}, Secondary: {}, [Failed: {}, Failed alignment filters: {}, Duplicate: {}, Invalid_tags: {}, Passing: {}",
+            "Total reads processed: {}, Unmapped: {}, Secondary: {}, [Failed: {}, Failed alignment filters: {}, Duplicate: {}, Invalid_tags: {}, Passing: {} filter summary {}",
             self.total_reads,
             self.unmapped_flag_reads,
             self.secondary_flag_reads,
@@ -330,6 +332,7 @@ impl BamReadFiltering {
             self.duplicate_reads,
             self.invalid_tags,
             self.passing_reads(),
+            filter_summary,
         );
     }
 }
@@ -357,7 +360,11 @@ pub fn sort_reads_from_bam_file(
 
     let mut read_stats = BamReadFiltering::default();
 
-    let filters : Vec<&dyn AlignmentFilter> = vec![&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10 }, &AlignmentCheck{ min_aligned_bases: 50, min_aligned_identical_proportion: 0.8 }];
+    let filters : Vec<(String, &dyn AlignmentFilter)> = vec![("FlankingDegenerateBaseFilter".to_string(),&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10}),
+                                                             ("AlignmentCheck".to_string(),&AlignmentCheck{ min_aligned_bases: 50, min_aligned_identical_proportion: 0.8})];
+    let mut filter_counts: HashMap<String,u64> = HashMap::default();
+    filter_counts.insert("FlankingDegenerateBaseFilter".to_string(),0);
+    filter_counts.insert("AlignmentCheck".to_string(),0);
 
     let index = bai::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();
@@ -390,7 +397,7 @@ pub fn sort_reads_from_bam_file(
         for result in records {
             read_stats.total_reads += 1;
             if read_stats.total_reads % 1000000 == 0 {
-                read_stats.results();
+                read_stats.results(&filter_counts);
             }
 
             let record = result.unwrap();
@@ -401,7 +408,13 @@ pub fn sort_reads_from_bam_file(
 
                 match read {
                     Some(x) => {
-                        let survives_filtering = filters.iter().map(|t| t.keep(&x)).filter(|b| !*b).count() == 0;
+                        let survives_filtering = filters.iter().map(|t| {
+                            let x = t.1.keep(&x);
+                            if !x {
+                                filter_counts.insert(t.0.clone(),filter_counts.get(&t.0).unwrap_or(&0) + 1);
+                            }
+                            x
+                        }).filter(|b| !*b).count() == 0;
                         if survives_filtering {
                             sender.send(x).unwrap();
                         } else {
@@ -425,7 +438,7 @@ pub fn sort_reads_from_bam_file(
         sharded_output.finish().unwrap();
 
     }
-    read_stats.results();
+    read_stats.results(&filter_counts);
     if read_stats.passing_reads() > 0 {
         SortedReadsFromBam{
             bam: Some(ShardReader::open(aligned_temp).unwrap()),
