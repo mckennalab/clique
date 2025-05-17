@@ -321,7 +321,7 @@ impl BamReadFiltering {
 
     pub fn results(&self) {
         info!(
-            "Bam file processed, Total reads: {}, Unmapped reads: {}, Secondary reads: {},  Failed read construction: {}, Failed alignment filters: {}, Duplicate reads: {}, Invalid_tags: {}, Passing reads: {}",
+            "Total reads processed: {}, Unmapped: {}, Secondary: {}, [Failed: {}, Failed alignment filters: {}, Duplicate: {}, Invalid_tags: {}, Passing: {}",
             self.total_reads,
             self.unmapped_flag_reads,
             self.secondary_flag_reads,
@@ -357,7 +357,7 @@ pub fn sort_reads_from_bam_file(
 
     let mut read_stats = BamReadFiltering::default();
 
-    let filters : Vec<&dyn AlignmentFilter> = vec![&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10 }, &AlignmentCheck{ min_aligned_bases: 100, min_aligned_identical_proportion: 0.8 }];
+    let filters : Vec<&dyn AlignmentFilter> = vec![&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10 }, &AlignmentCheck{ min_aligned_bases: 50, min_aligned_identical_proportion: 0.8 }];
 
     let index = bai::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();

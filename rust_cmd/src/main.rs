@@ -129,7 +129,7 @@ mod reference {
 enum Cmd {
     Collapse {
         #[clap(long)]
-        outbam: String,
+        output_bam_file: String,
 
         #[clap(long)]
         read_structure: String,
@@ -141,7 +141,7 @@ enum Cmd {
         temp_dir: String,
 
         #[clap(long)]
-        inbam: String,
+        input_bam_file: String,
 
         #[clap(long)]
         find_inversions: bool,
@@ -218,11 +218,11 @@ fn main() {
 
     match &parameters.cmd {
         Cmd::Collapse {
-            outbam,
+            output_bam_file: outbam,
             read_structure,
             threads: _,
             temp_dir: _,
-            inbam,
+            input_bam_file: inbam,
             find_inversions: _,
             fast_reference_lookup: _,
             max_deletion: _,
