@@ -60,7 +60,7 @@ pub struct TargetExtractorState {
 
 impl ExtractorTags {
     pub fn extract_matching_tag(tag: &[u8; 2], value: &String, reference_name: &String, sequence_layout: &SequenceLayout) -> Option<ExtractorTags> {
-        println!("tag {} {} value {}",char::from(tag[0]).as_ascii().unwrap(),char::from(tag[1]).as_ascii().unwrap(),value);
+        //println!("tag {} {} value {}",char::from(tag[0]).as_ascii().unwrap(),char::from(tag[1]).as_ascii().unwrap(),value);
         match tag {
             &[b'r', b'c'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})}, // TODO fix this,
             &[b'r', b'm'] => { Some(ExtractorTags::AR{value: value.parse::<f64>().expect("Unable to parse integer from rc tag")})}, // TODO fix this,

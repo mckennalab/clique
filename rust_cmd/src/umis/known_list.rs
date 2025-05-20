@@ -25,6 +25,10 @@ impl FastaString {
     pub fn new(fa: Vec<u8>) -> FastaString {
         FastaString { fa: fa.clone(), distance: u32::MAX, count: 0 }
     }
+
+    pub fn hamming_distance(&self, other: &FastaString) -> u32 {
+        self.fa.iter().zip(other.fa.iter()).map(|(x,y)| if x == y {0} else {1}).sum()
+    }
 }
 
 impl MetricSpace for FastaString {
@@ -33,7 +37,7 @@ impl MetricSpace for FastaString {
     type Distance = u32;
 
     fn distance(&self, other: &Self, _consider: &()) -> Self::Distance {
-        levenshtein_exp(&self.fa, &other.fa)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
+        self.hamming_distance(other)//levenshtein_exp(&self.fa, &other.fa)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
     }
 }
 

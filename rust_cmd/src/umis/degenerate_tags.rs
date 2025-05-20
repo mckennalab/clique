@@ -78,7 +78,7 @@ impl DegenerateBuffer {
                 }
             }
         } else {
-            // TODO record missing reads here
+            println!("Dropping record *** {}",u8s(&gapless));
         }
     }
     /// Dumps the buffer to disk
@@ -112,19 +112,35 @@ impl DegenerateBuffer {
 
         match self.hash_map.len() {
             0 => {
+                println!("Zeros!");
                 knowns
             }
             1 => {
-                let kn = self.hash_map.iter().next().unwrap().0;
-                knowns.insert(kn.clone(),kn.clone());
+                let mut kn = self.hash_map.iter().next().unwrap().0.clone();
+                if kn.len() < self.tag.length {
+                    kn.resize(self.tag.length, b'-');
+                }
+                println!("Ones! {}",u8s(&kn));
+                knowns.insert(kn.clone(),kn);
                 knowns
             }
             _ => {
-                let tags = self.hash_map.iter().map(|x| (x.0.clone(),*x.1)).collect::<Vec<(Vec<u8>,usize)>>();
+                let mut max_length : usize = 0;
+                let tags = self.hash_map.iter().map(|x| {
+                    let mut ns : Vec<u8> = x.0.clone().into_iter().filter(|x| *x != b'-').collect();
+                    println!("XXX {} to {}",u8s(x.0),u8s(&ns));
+                    if ns.len() < self.tag.length {
+                        ns.resize(self.tag.length, b'-');
+                    }
+                    if ns.len() > max_length {
+                        max_length = ns.len();
+                    }
+                    (ns,*x.1)
+                }).collect::<Vec<(Vec<u8>,usize)>>();
 
-                tags.iter().for_each(|x| println!("tag {} size {}",u8s(&x.0),&x.1));
 
-                let correction = LinkedDistances::cluster_string_vector_list(tags, &self.tag.max_distance, &self.collapse_ratio);
+                //tags.iter().for_each(|x| println!("tag {} size {}",u8s(&x.0),&x.1));
+                let correction = LinkedDistances::cluster_string_vector_list(&max_length, tags, &self.tag.max_distance, &self.collapse_ratio);
 
                 correction.into_iter().for_each(|(mut center,mut dist_graph)| {
                     let mut connected_node = dist_graph.borrow_mut();
@@ -157,8 +173,10 @@ impl DegenerateBuffer {
         self.buffer.iter().for_each(|y| {
             let mut y = y.clone();
             let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
-            let corrected = match final_correction.get(&strip_gaps(&key_value.1)) {
-                None => { panic!("Unable to find match for key {} in corrected values", u8s(&key_value.1)); }
+            let mut corrected_value : Vec<u8> = key_value.1.clone().into_iter().filter(|x| *x != b'-').collect::<Vec<u8>>();
+            corrected_value.resize(self.tag.length, b'-');;
+            let corrected = match final_correction.get(&corrected_value) {
+                None => { panic!("Unable to find match for key {} in corrected values ({})", u8s(&corrected_value), u8s(&key_value.1)); }
                 Some(x) => { x.clone() }
             };
             y.ordered_sorting_keys
@@ -172,11 +190,13 @@ impl DegenerateBuffer {
             self.shard_sender.as_mut().unwrap().finished().unwrap();
             self.shard_writer.as_mut().unwrap().as_mut().finish().unwrap();
             let reader: ShardReader<SortingReadSetContainer> = ShardReader::open(&self.output_file).unwrap();
+
             reader.iter_range(&Range::all()).unwrap().for_each(|current_read| {
                 let mut current_read: SortingReadSetContainer = current_read.unwrap();
                 let key_value = current_read.ordered_unsorted_keys.pop_front().unwrap();
-                let corrected = match final_correction.get(&strip_gaps(&key_value.1)) {
-                    None => { panic!("Unable to find match for key {} in corrected values", u8s(&key_value.1)); }
+                let corrected_value : Vec<u8> = key_value.1.clone().into_iter().filter(|x| *x != b'-').collect::<Vec<u8>>();
+                let corrected = match final_correction.get(&strip_gaps(&corrected_value)) {
+                    None => { panic!("Unable to find match for key {} in corrected values", u8s(&corrected_value)); }
                     Some(x) => { x }
                 };
                 current_read.ordered_sorting_keys
@@ -271,17 +291,23 @@ mod tests {
         assert_eq!(list.get("GCGGGCCCCC".as_bytes()).unwrap().clone(),"GCGGGCCCCC".as_bytes().to_vec()); // not corrected
 
         let mut tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&10,&path, &config);
-        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&"GGGGGCCCC-".to_string(),&config));
-        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&"GGGGCCCC--".to_string(),&config));
-        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&"GGGGGCCC--".to_string(),&config));
-        let list = tag_buffer.correct_list();
+        let off_by_one_1 = "GGGGGCCCC-";
+        let off_by_two_1 = "GGGGGCCCCA";
+        let off_by_two_2 = "GGGGCCCCC-";
+        let truth_seqeun = "GGGGGCCCCC";
 
-        assert!(list.contains_key("GGGGGCCCC".as_bytes()));
-        assert!(list.contains_key("GGGGGCCC".as_bytes()));
-        assert!(list.contains_key("GGGGCCCC".as_bytes()));
-        assert_eq!(list.get("GGGGGCCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec()); // not corrected
-        assert_eq!(list.get("GGGGGCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec()); // not corrected
-        assert_eq!(list.get("GGGGCCCC".as_bytes()).unwrap().clone(),"GGGGGCCCCC".as_bytes().to_vec()); // not corrected
+        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&off_by_one_1.to_string(),&config));
+        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&off_by_two_1.to_string(),&config));
+        tag_buffer.push(create_fake_read_set_container(&"read1".to_string(),&off_by_two_2.to_string(),&config));
+        let list = tag_buffer.correct_list();
+        list.iter().for_each(|(x,y)| println!("x {} y {}",u8s(x), u8s(y)));
+
+        assert!(list.contains_key(off_by_one_1.as_bytes()));
+        assert!(list.contains_key(off_by_two_1.as_bytes()));
+        assert!(list.contains_key(off_by_two_2.as_bytes()));
+        assert_eq!(list.get(off_by_one_1.as_bytes()).unwrap().clone(),truth_seqeun.as_bytes().to_vec()); // not corrected
+        assert_eq!(list.get(off_by_two_1.as_bytes()).unwrap().clone(),truth_seqeun.as_bytes().to_vec()); // not corrected
+        assert_eq!(list.get(off_by_two_2.as_bytes()).unwrap().clone(),truth_seqeun.as_bytes().to_vec()); // not corrected
 
     }
 
