@@ -273,11 +273,11 @@ pub fn create_poa_consensus(
         .iter().take(*downsample_to)
         .for_each(|n| {
 
-            let mut y = n.aligned_read.read_aligned.clone(); // TODO: fix me, we need to strip out gaps!
+            let mut y = n.aligned_read.read_aligned.iter().filter(|x| **x != b'-').map(|x|*x).collect::<Vec<u8>>();
             y.push(b'\0');
             base_sequences.push(y);
             quals_sequences.push(n.aligned_read.read_quals.as_ref().unwrap().clone());
-            panic!("Panic for now");
+            // TODO we were panic'ing here --- why?
         });
 
     poa_consensus(&base_sequences, &quals_sequences)
