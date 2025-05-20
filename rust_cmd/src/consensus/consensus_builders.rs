@@ -277,7 +277,7 @@ pub fn create_poa_consensus(
             y.push(b'\0');
             base_sequences.push(y);
             quals_sequences.push(n.aligned_read.read_quals.as_ref().unwrap().clone());
-            // TODO we were panic'ing here --- why?
+            // TODO we were panic'ing here --- why? oh right, we should move to stretcher
         });
 
     poa_consensus(&base_sequences, &quals_sequences)

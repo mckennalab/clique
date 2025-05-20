@@ -78,7 +78,7 @@ impl DegenerateBuffer {
                 }
             }
         } else {
-            println!("Dropping record *** {}",u8s(&gapless));
+            debug!("Dropping record *** {}",u8s(&gapless));
         }
     }
     /// Dumps the buffer to disk
@@ -112,7 +112,7 @@ impl DegenerateBuffer {
 
         match self.hash_map.len() {
             0 => {
-                println!("Zeros!");
+                //println!("Zeros!");
                 knowns
             }
             1 => {
@@ -120,7 +120,7 @@ impl DegenerateBuffer {
                 if kn.len() < self.tag.length {
                     kn.resize(self.tag.length, b'-');
                 }
-                println!("Ones! {}",u8s(&kn));
+                //println!("Ones! {}",u8s(&kn));
                 knowns.insert(kn.clone(),kn);
                 knowns
             }
@@ -128,7 +128,7 @@ impl DegenerateBuffer {
                 let mut max_length : usize = 0;
                 let tags = self.hash_map.iter().map(|x| {
                     let mut ns : Vec<u8> = x.0.clone().into_iter().filter(|x| *x != b'-').collect();
-                    println!("XXX {} to {}",u8s(x.0),u8s(&ns));
+                    //println!("XXX {} to {}",u8s(x.0),u8s(&ns));
                     if ns.len() < self.tag.length {
                         ns.resize(self.tag.length, b'-');
                     }
@@ -147,10 +147,10 @@ impl DegenerateBuffer {
                     let mut connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
                     let string_name = connected_node.string.clone();
                     knowns.insert(string_name.clone(),string_name.clone());
-                    println!("Known {} to known {}",u8s(&string_name),u8s(&string_name));
+                    //println!("Known {} to known {}",u8s(&string_name),u8s(&string_name));
                     connected_node.swallowed_links.iter().for_each(|(x,y)| {
                         knowns.insert(x.clone(), string_name.clone());
-                        println!("Unknown {} to known {}",u8s(&x),u8s(&string_name));
+                        //println!("Unknown {} to known {}",u8s(&x),u8s(&string_name));
                     });
                 });
                 knowns
