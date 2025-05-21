@@ -59,6 +59,7 @@ use tempfile::{TempDir as ActualTempDir};
 use clap::Parser;
 use clap::Subcommand;
 use nanoid::nanoid;
+use consensus::consensus_builders::MergeStrategy;
 use crate::alignment_functions::align_reads;
 use crate::calling::call_events::BamCallingParser;
 use crate::collapse::collapse;
@@ -151,6 +152,8 @@ enum Cmd {
 
         #[clap(long, default_value = "0")]
         max_deletion: usize,
+
+
     },
     Align {
         #[clap(long)]
@@ -235,7 +238,9 @@ fn main() {
             collapse(outbam,
                      &mut tmp,
                      &my_yaml,
-                     inbam);
+                     inbam,
+                     &MergeStrategy::STRETCHER,
+            );
         },
 
         Cmd::Align {

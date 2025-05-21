@@ -20,6 +20,7 @@ use itertools::Itertools;
 
 use noodles_sam::alignment::record::QualityScores;
 use petgraph::visit::Walker;
+use consensus::consensus_builders::MergeStrategy;
 use FASTA_N;
 use utils::read_utils::u8s;
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
@@ -31,6 +32,7 @@ pub fn collapse(
     temp_directory: &mut InstanceLivedTempDir,
     read_structure: &SequenceLayout,
     bam_file: &String,
+    merge_strategy: &MergeStrategy,
 ) {
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
@@ -113,7 +115,7 @@ pub fn collapse(
 
                 info!("writing consensus reads for reference {}", ref_name);
                 // collapse the final reads down to a single sequence and write everything to the disk
-                write_consensus_reads(&sorted_reads, &mut writer, levels, &rm, &40);
+                write_consensus_reads(&sorted_reads, &mut writer, levels, &rm, &40, merge_strategy);
             }
         }
     });

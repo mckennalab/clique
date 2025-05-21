@@ -20,7 +20,14 @@ use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
 use ::{FASTA_N, FASTA_UNSET};
+use alignment::alignment_matrix::AlignmentResult;
 
+
+pub enum MergeStrategy {
+    STRICT_CONSENSUS,
+    HYBRID,
+    STRETCHER,
+}
 
 pub fn write_consensus_reads(
     reader: &ShardReader<SortingReadSetContainer>,
@@ -28,7 +35,9 @@ pub fn write_consensus_reads(
     levels: usize,
     reference_manager: &ReferenceManager,
     maximum_reads_before_downsampling: &usize,
+    merge_strategy: &MergeStrategy,
 ) {
+
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
 
@@ -70,19 +79,26 @@ pub fn write_consensus_reads(
                         &my_buffered_reads,
                         &AffineScoring::default_dna(),
                         &mut alignment_mat,
+                        merge_strategy,
                     );
 
-                    let arc_writer = arc_output.clone();
-                    let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
-                    arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC1)");
+                    match new_read {
+                        None => {}
+                        Some(x) => {
+                            let arc_writer = arc_output.clone();
+                            let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
+                            arc_writer.write_read(&x.read, &x.added_tags).expect("Unable to write a read to the arc writer (LOC1)");
 
-                    let processed_reads = processed_reads.clone();
-                    let mut processed_reads = processed_reads.lock().expect("Unable to lock processed read count");
-                    let current_proc_read = *processed_reads;
-                    *processed_reads += my_buffered_reads.len();
-                    if (*processed_reads as f64 / 100000.0).floor() - (current_proc_read as f64 / 1000.0).floor() >= 1.0 {
-                        info!("Processed {} reads into their consensus", processed_reads);
+                            let processed_reads = processed_reads.clone();
+                            let mut processed_reads = processed_reads.lock().expect("Unable to lock processed read count");
+                            let current_proc_read = *processed_reads;
+                            *processed_reads += my_buffered_reads.len();
+                            if (*processed_reads as f64 / 100000.0).floor() - (current_proc_read as f64 / 1000.0).floor() >= 1.0 {
+                                info!("Processed {} reads into their consensus", processed_reads);
+                            }
+                        }
                     }
+
                 });
             }
 
@@ -104,10 +120,18 @@ pub fn write_consensus_reads(
             &buffered_reads,
             &score,
             &mut alignment_mat,
+            merge_strategy
         );
-        let arc_writer = arc_output.clone();
-        let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
-        arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC2)");
+
+        match new_read {
+            None => {}
+            Some(x) => {
+                let arc_writer = arc_output.clone();
+                let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
+                arc_writer.write_read(&x.read, &x.added_tags).expect("Unable to write a read to the arc writer (LOC2)");
+            }
+        }
+
     }
 }
 
@@ -122,7 +146,8 @@ fn create_sam_read(
     buffered_reads: &VecDeque<SortingReadSetContainer>,
     my_aff_score: &AffineScoring,
     _alignment_mat: &mut Alignment<Ix3>,
-) -> SamReadyOutput {
+    merge_strategy: &MergeStrategy,
+) -> Option<SamReadyOutput> {
     let mut added_tags = HashMap::new();
     added_tags.insert([b'r', b'c'], buffered_reads.len().to_string());
     added_tags.insert(
@@ -131,9 +156,6 @@ fn create_sam_read(
     );
 
     if buffered_reads.len() > 1 {
-        let consensus_reads = create_poa_consensus(buffered_reads, maximum_reads_before_downsampling);
-
-        let gapless_quals = consensus_reads.1.iter().enumerate().filter(|(i, _x)| consensus_reads.0.get(*i).unwrap() != &b'-').map(|(_i, x)| x.clone()).collect();
 
         let consensus_reference = Counter::<Vec<u8>, usize>::init(
             buffered_reads
@@ -161,41 +183,112 @@ fn create_sam_read(
             .read_name
             .clone();
 
-        let mut new_alignment = align_two_strings(
-            &reference_pointer.sequence,
-            &consensus_reads.0,
-            None, // TODO: fix with quality scores
-            my_aff_score,
-            false,
-            &String::from_utf8(reference_pointer.name.clone()).unwrap(),
-            &read_name,
-            None,
-        );
-        new_alignment.read_quals = Some(gapless_quals);
+        let consensus_reads = match merge_strategy {
+            MergeStrategy::STRICT_CONSENSUS => {
+                let consensus_reads = create_poa_consensus(buffered_reads, maximum_reads_before_downsampling);
 
-        //println!("New alignment: \n{}\n{}\n{:?}", FastaBase::string(&new_alignment.read_aligned),FastaBase::string(&new_alignment.reference_aligned),simplify_cigar_string(&new_alignment.cigar_string));
-        let read_names = buffered_reads
-            .iter()
-            .map(|x| x.aligned_read.read_name.clone())
-            .collect::<Vec<String>>();
+                let gapless_quals = consensus_reads.1.iter().enumerate().filter(|(i, _x)| consensus_reads.0.get(*i).unwrap() != &b'-').map(|(_i, x)| x.clone()).collect();
 
-        added_tags.insert([b'a', b'r'], read_names.join(","));
-        added_tags.insert(
-            [b'r', b'm'],
-            get_reference_alignment_rate(
-                &new_alignment.reference_aligned,
-                &new_alignment.read_aligned,
-            )
-                .to_string(),
-        );
+                let mut new_alignment = align_two_strings(
+                    &reference_pointer.sequence,
+                    &consensus_reads.0,
+                    None, // TODO: fix with quality scores
+                    my_aff_score,
+                    false,
+                    &String::from_utf8(reference_pointer.name.clone()).unwrap(),
+                    &read_name,
+                    None,
+                );
 
-        added_tags.insert([b'a', b's'], new_alignment.score.to_string());
-        let new_sorting_read = buffered_reads
-            .get(0)
-            .unwrap()
-            .with_new_alignment(new_alignment);
 
-        SamReadyOutput { read: new_sorting_read, added_tags }
+                new_alignment.read_quals = Some(gapless_quals);
+                Some(new_alignment)
+
+            }
+            MergeStrategy::HYBRID => {
+                // try the stretcher first, if that fails out, try the POA
+                let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), "ref_name".as_bytes());
+
+                let valid : usize = buffered_reads.iter().map(|x| {
+                    match candidate.add_alignment(&x.aligned_read) {
+                        Ok(_) => {0}
+                        Err(_) => {1}
+                    }
+                }).sum();
+
+                if valid > 1 {
+                    let consensus_reads = create_poa_consensus(buffered_reads, maximum_reads_before_downsampling);
+
+                    let gapless_quals = consensus_reads.1.iter().enumerate().filter(|(i, _x)| consensus_reads.0.get(*i).unwrap() != &b'-').map(|(_i, x)| x.clone()).collect();
+
+                    let mut new_alignment = align_two_strings(
+                        &reference_pointer.sequence,
+                        &consensus_reads.0,
+                        None, // TODO: fix with quality scores
+                        my_aff_score,
+                        false,
+                        &String::from_utf8(reference_pointer.name.clone()).unwrap(),
+                        &read_name,
+                        None,
+                    );
+
+
+                    new_alignment.read_quals = Some(gapless_quals);
+                    Some(new_alignment)
+                } else {
+                    Some(candidate.to_consensus(&0.75))
+                }
+            }
+            MergeStrategy::STRETCHER => {
+                let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), "ref_name".as_bytes());
+
+                let valid : usize = buffered_reads.iter().map(|x| {
+                    match candidate.add_alignment(&x.aligned_read) {
+                        Ok(_) => {0}
+                        Err(_) => {1}
+                    }
+                }).sum();
+
+                if valid > 1 {
+                    None
+                } else {
+                    Some(candidate.to_consensus(&0.75))
+                }
+
+            }
+        };
+
+        match consensus_reads {
+            None => {
+                None
+            }
+            Some(con) => {
+                //println!("New alignment: \n{}\n{}\n{:?}", FastaBase::string(&new_alignment.read_aligned),FastaBase::string(&new_alignment.reference_aligned),simplify_cigar_string(&new_alignment.cigar_string));
+                let read_names = buffered_reads
+                    .iter()
+                    .map(|x| x.aligned_read.read_name.clone())
+                    .collect::<Vec<String>>();
+
+                added_tags.insert([b'a', b'r'], read_names.join(","));
+                added_tags.insert(
+                    [b'r', b'm'],
+                    get_reference_alignment_rate(
+                        &con.reference_aligned,
+                        &con.read_aligned,
+                    )
+                        .to_string(),
+                );
+
+                added_tags.insert([b'a', b's'], con.score.to_string());
+                let new_sorting_read = buffered_reads
+                    .get(0)
+                    .unwrap()
+                    .with_new_alignment(con);
+
+                Some(SamReadyOutput { read: new_sorting_read, added_tags })
+            }
+        }
+
     } else {
         let single_read = buffered_reads.get(0).unwrap().clone();
         added_tags.insert([b'a', b'r'], single_read.aligned_read.read_name.clone());
@@ -208,7 +301,7 @@ fn create_sam_read(
                 .to_string(),
         );
         added_tags.insert([b'a', b's'], single_read.aligned_read.score.to_string());
-        SamReadyOutput { read: single_read, added_tags }
+        Some(SamReadyOutput { read: single_read, added_tags })
     }
 }
 
@@ -272,8 +365,7 @@ pub fn create_poa_consensus(
     sequences
         .iter().take(*downsample_to)
         .for_each(|n| {
-
-            let mut y = n.aligned_read.read_aligned.iter().filter(|x| **x != b'-').map(|x|*x).collect::<Vec<u8>>();
+            let mut y = n.aligned_read.read_aligned.iter().filter(|x| **x != b'-').map(|x| *x).collect::<Vec<u8>>();
             y.push(b'\0');
             base_sequences.push(y);
             quals_sequences.push(n.aligned_read.read_quals.as_ref().unwrap().clone());
@@ -338,7 +430,7 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
             quals.push(*qual);
         });
 
-        let qual_scores = combine_qual_scores(&bases, &quals, &0.75, &true);
+        let qual_scores = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &0.75, &true);
         let index_of_max: usize = qual_scores
             .iter()
             .enumerate()
@@ -397,7 +489,7 @@ pub fn prob_to_phred(prob: &f64) -> u8 {
     ret
 }
 
-pub(crate) fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior: &f64, phred_floor_at_33: &bool) -> [f64; 5] {
+pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], error_prior: &f64, phred_floor_at_33: &bool) -> [f64; 5] {
     // setup the priors
     let mut allele_props = [
         (error_prior / 3.0).log2(),
@@ -406,29 +498,37 @@ pub(crate) fn combine_qual_scores(bases: &Vec<u8>, scores: &Vec<u8>, error_prior
         (error_prior / 3.0).log2(),
         (error_prior / 3.0).log2()];
 
-    bases.iter().zip(scores.iter()).for_each(|(base, qs)| {
-        let base_id = match base {
-            b'A' | b'a' => { 0 }
-            b'C' | b'c' => { 1 }
-            b'G' | b'g' => { 2 }
-            b'T' | b't' => { 3 }
-            b'-' => { 4 }
-            _ => {
-                info!("unaccounted for quality score");
-                5
+    assert_eq!(bases.len(), scores.len());
+
+    bases.iter().zip(scores.iter()).for_each(|(base_set, qual_set)| {
+        assert_eq!(base_set.len(), qual_set.len());
+        for i in 0..base_set.len() {
+            let base = base_set[i];
+            let qs = qual_set[i];
+            //base_set.iter().zip(qual_set).for_each(|(base, qs)|{
+            let base_id = match base {
+                b'A' | b'a' => { 0 }
+                b'C' | b'c' => { 1 }
+                b'G' | b'g' => { 2 }
+                b'T' | b't' => { 3 }
+                b'-' => { 4 }
+                _ => {
+                    info!("unaccounted for quality score");
+                    5
+                }
+            };
+            if base_id < 5 {
+                (0..5).for_each(|i| {
+                    if i == base_id {
+                        allele_props[i] = allele_props[i] + (1.0 - phred_to_error_prob(&qs, phred_floor_at_33)).log2();
+                        //println!("MT id {} new prop {}", i, allele_props[i]);
+                    } else {
+                        allele_props[i] = allele_props[i] + (phred_to_error_prob(&qs, phred_floor_at_33) / 3.0_f64).log2();
+                        //println!("NM id {} new prop {}", i, allele_props[i]);
+                    }
+                });
             }
         };
-        if base_id < 5 {
-            (0..5).for_each(|i| {
-                if i == base_id {
-                    allele_props[i] = allele_props[i] + (1.0 - phred_to_error_prob(qs, phred_floor_at_33)).log2();
-                    //println!("MT id {} new prop {}", i, allele_props[i]);
-                } else {
-                    allele_props[i] = allele_props[i] + (phred_to_error_prob(qs, phred_floor_at_33) / 3.0_f64).log2();
-                    //println!("NM id {} new prop {}", i, allele_props[i]);
-                }
-            });
-        }
     });
     calculate_qual_scores(&mut allele_props)
 }
@@ -526,12 +626,12 @@ mod tests {
         let quals = Vec::from(&[b'I', b'I', b'I', b'I']);
 
         // rounding to 1
-        assert_eq!(1.0, combine_qual_scores(&bases, &quals, &0.1_f64, &true)[0]); // we're ~ 1.0, fully confident it's an 'A'
+        assert_eq!(1.0, combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &0.1_f64, &true)[0]); // we're ~ 1.0, fully confident it's an 'A'
 
         let bases = Vec::from(&[b'A', b'C', b'G', b'T']);
 
         // recover the priors
-        let qual_combined = combine_qual_scores(&bases, &quals, &0.1_f64, &true);
+        let qual_combined = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &0.1_f64, &true);
         println!("qual combined {} {} {} {} {}", qual_combined[0], qual_combined[1], qual_combined[2], qual_combined[3], qual_combined[4]);
 
         assert!((0.25 - qual_combined[1]).abs() < 0.0001);
