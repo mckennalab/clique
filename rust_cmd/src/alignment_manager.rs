@@ -89,10 +89,8 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
         read_set_container: &SortingReadSetContainer,
         additional_tags: &HashMap<[u8; 2], String>
     ) -> Result<()> {
-        let writer = Arc::clone(&self.underlying_bam_file);
 
-
-        let reference_record = self
+        let reference_record = match self
             .reference_manager
             .reference_name_to_ref
             .get(
@@ -101,8 +99,15 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
                     .reference_name
                     .as_bytes()
                     .to_vec(),
-            )
-            .unwrap();
+            ) {
+            None => {
+
+                let ref_name = u8s(&read_set_container.aligned_read.reference_name.as_bytes().to_vec());
+                println!("Unable to find reference name {}" , ref_name);
+                panic!("unable to find reference");
+            }
+            Some(x) => {x}
+        }
 
         let mut extra_annotations = additional_tags.clone();
         read_set_container.ordered_sorting_keys.iter().for_each(|(key, value)| {
@@ -116,6 +121,8 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
             read_set_container
                 .aligned_read
                 .to_sam_record(&(*reference_record as i32), &extra_annotations, None);
+
+        let writer = Arc::clone(&self.underlying_bam_file);
 
         let mut output = writer.lock().unwrap();
         
