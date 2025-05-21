@@ -207,7 +207,7 @@ fn create_sam_read(
             }
             MergeStrategy::HYBRID => {
                 // try the stretcher first, if that fails out, try the POA
-                let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), "ref_name".as_bytes());
+                let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), reference_pointer.name.as_slice());
 
                 let valid : usize = buffered_reads.iter().map(|x| {
                     match candidate.add_alignment(&x.aligned_read) {
@@ -240,7 +240,7 @@ fn create_sam_read(
                 }
             }
             MergeStrategy::STRETCHER => {
-                let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), "ref_name".as_bytes());
+                let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), reference_pointer.name.as_slice());
 
                 let valid : usize = buffered_reads.iter().map(|x| {
                     match candidate.add_alignment(&x.aligned_read) {
