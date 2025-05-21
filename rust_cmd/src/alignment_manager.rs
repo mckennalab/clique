@@ -107,7 +107,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
                 panic!("unable to find reference");
             }
             Some(x) => {x}
-        }
+        };
 
         let mut extra_annotations = additional_tags.clone();
         read_set_container.ordered_sorting_keys.iter().for_each(|(key, value)| {
