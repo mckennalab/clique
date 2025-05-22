@@ -751,7 +751,8 @@ impl AlignmentResult {
         let seq = &self.read_aligned.clone().into_iter().filter(|b| b != &FASTA_UNSET).collect::<Vec<u8>>();
 
         // set the read name
-        //println!("quals\n{}seq{}\n",String::from_utf8(self.read_quals.as_ref().unwrap().clone()).unwrap(),seq);
+        //let seq : Vec<u8> = seq.iter().filter(|x|**x != b'-').map(|x|*x).collect();
+        //println!("quals\n{}\nseq\n{}\n",String::from_utf8(self.read_quals.as_ref().unwrap().clone()).unwrap(),u8s(&seq));
         RecordBuf::builder()
             .set_name(Name::from(self.read_name.as_bytes()))
             .set_sequence(seq.as_bytes().into())
@@ -829,7 +830,8 @@ impl AlignmentResult {
         }
         return_vec
     }
-
+// AAACCCATCAGCATTAGAGTTCAGCCAGGATCGATAGCGATCC-ACGCCATAGACGATGTACCTGTCGTCTTGGCTAAGATGACAGGACATGTCCAGGAAGTGCTCGAGTACTTCCTGGCCCCATGTACTCTGCGTTGATACCACTGCTT------------------------------------------------------------------
+// ###########################################H##########################################################################################################HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
     fn convert_inverted_path(&self, total_string_length: usize) -> AlignmentResult {
         let mut new_path = Vec::new();
 

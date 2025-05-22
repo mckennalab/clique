@@ -132,7 +132,8 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
                     //println!("Added read!")
                 },
                 Err(e) => {
-                    println!("Sequence: {} {:?}", String::from_utf8(samrecord.name().unwrap().as_bytes().to_vec()).unwrap(),samrecord);
+                    println!("Sequence: {} {:?}", u8s(&samrecord.name().unwrap().as_bytes().to_vec()),samrecord);
+                    println!("Sequence: {} {}", u8s(&samrecord.quality_scores().clone().into()),u8s(&samrecord.sequence().clone().into()));
                     println!("error kind {} {}", e.kind().to_string(),e.to_string());
                     panic!("Unable to write record to bam file; error {}", e);
                 },

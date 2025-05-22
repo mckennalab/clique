@@ -2,6 +2,7 @@ use std::fmt;
 use itertools::enumerate;
 use serde::{Deserialize, Serialize};
 use alignment::alignment_matrix::AlignmentTag;
+use alignment_functions::simplify_cigar_string;
 use utils::read_utils::u8s;
 use crate::alignment::alignment_matrix::AlignmentResult;
 use crate::consensus::consensus_builders::{calculate_qual_scores, combine_qual_scores, prob_to_phred};
@@ -139,7 +140,7 @@ impl NucCounts {
         self.a + self.c + self.g + self.t + self.n + self.gap
     }
 
-    pub fn consensus_base(&self, gap_proportion_to_call: &f64) -> (u8, u8) {
+    pub fn consensus_base(&self, gap_proportion_to_call: &f64) -> (u8, Option<u8>) {
         if (self.gap as f64) / (self.total_count() as f64) < *gap_proportion_to_call {
             let a_slice = vec![b'A'; self.a];
             let c_slice = vec![b'C'; self.c];
@@ -160,17 +161,17 @@ impl NucCounts {
                 .map(|(index, _)| index).unwrap();
 
             let prob = prob_to_phred(&qual_normalized[index_of_max]);
-
+            //println!("quals {:?} {:?} {:?} prop {} qual {}",allele_props,qual_normalized,quals,&qual_normalized[index_of_max],prob);
             match index_of_max {
-                0 => (b'A', prob),
-                1 => (b'C', prob),
-                2 => (b'G', prob),
-                3 => (b'T', prob),
-                4 => (b'N', prob),
+                0 => (b'A', Some(prob)),
+                1 => (b'C', Some(prob)),
+                2 => (b'G', Some(prob)),
+                3 => (b'T', Some(prob)),
+                4 => (b'N', Some(prob)),
                 _ => panic!("Unknown index")
             }
         } else {
-            (b'-', b'H') // call a high-quality gap
+            (b'-', None) // call a high-quality gap
         }
     }
 }
@@ -285,7 +286,7 @@ impl AlignmentCandidate {
         while existing_index < existing_ref_size && incoming_ref_index < alignment.reference_aligned.len() {
             let incoming_ref_base = &alignment.reference_aligned[incoming_ref_index];
             let incoming_read_base = &alignment.read_aligned[incoming_ref_index];
-            let incoming_read_qual = if incoming_read_base == &b'-' { &b'+' } else { &read_qual[incoming_read_qual_index] };
+            let incoming_read_qual = if incoming_read_base == &b'-' { &b'+' } else { &(read_qual[incoming_read_qual_index] + 32)};
 
             let existing_ref_base = &mut self.reference.get_mut(existing_index).unwrap();
             //println!("Loop: {:?} and {}, pos {} and {}, max is {} and {}", *existing_ref_base, *incoming_ref_base as char, existing_index, incoming_ref_index, existing_ref_size, alignment.read_aligned.len());
@@ -346,10 +347,7 @@ impl AlignmentCandidate {
         let mut resulting_alignmented_read = Vec::new();
         let mut resulting_alignmented_ref = Vec::new();
         let mut resulting_alignmented_qual = Vec::new();
-        let cigar_tokens = Vec::new();
-        //panic!("implement cigars");
-
-        let mut current_token: Option<AlignmentTag> = None;
+        let mut cigar_tokens = Vec::new();
 
         self.reference.iter().for_each(|rb| {
             match rb {
@@ -358,14 +356,29 @@ impl AlignmentCandidate {
                     let base_qual = counts.consensus_base(gap_call_threshold);
                     resulting_alignmented_ref.push(*base);
                     resulting_alignmented_read.push(base_qual.0);
-                    resulting_alignmented_qual.push(base_qual.1);
+
+                    match base_qual.0 {
+                        b'-' => {cigar_tokens.push(AlignmentTag::Del(1))}
+                        _ => {
+                            resulting_alignmented_qual.push(base_qual.1.unwrap());
+                            cigar_tokens.push(AlignmentTag::MatchMismatch(1));
+                        }
+                    }
+
                 }
                 ReferenceStatus::Insertion { base, counts } if counts.proportion(base,&self.read_names.len()) >= *gap_call_threshold => {
                     //println!("added insert {} {}", *base as char, counts.proportion(base, &self.read_names.len()));
                     let base_qual = counts.consensus_base(gap_call_threshold);
                     resulting_alignmented_ref.push(b'-');
                     resulting_alignmented_read.push(base_qual.0);
-                    resulting_alignmented_qual.push(base_qual.1);
+
+                    match base_qual.0 {
+                        b'-' => {panic!("Can't insert a deletion")}
+                        _ => {
+                            cigar_tokens.push(AlignmentTag::MatchMismatch(1));
+                            resulting_alignmented_qual.push(base_qual.1.unwrap());
+                        }
+                    }
                 }
                 ReferenceStatus::Insertion { base, counts } => {
                     //println!("dropped insert {} {}", *base as char, counts.proportion(base,&self.read_names.len()));
@@ -373,6 +386,11 @@ impl AlignmentCandidate {
                 }
             }
         });
+        //if resulting_alignmented_read.len() != resulting_alignmented_qual.len() {
+        //    println!("ref {} read seq {} quals {}-----",self.reference_name.clone(),u8s(&resulting_alignmented_read.clone()), u8s(&resulting_alignmented_qual.clone()));
+        //}
+        //assert_eq!(resulting_alignmented_read.len(),resulting_alignmented_qual.len());
+        //
 
         AlignmentResult {
             reference_name: self.reference_name.clone(),
@@ -380,7 +398,7 @@ impl AlignmentCandidate {
             reference_aligned: resulting_alignmented_ref.clone(),
             read_aligned: resulting_alignmented_read.clone(),
             read_quals: Some(resulting_alignmented_qual),
-            cigar_string: cigar_tokens,
+            cigar_string: simplify_cigar_string(&cigar_tokens),
             path: vec![],
             score: 0.0,
             reference_start: 0,
@@ -389,8 +407,8 @@ impl AlignmentCandidate {
         }
     }
 }
-
-
+// AAAGAACAGGCCTTGTTGAAAGAGACTAGATCGATAGCGATCCCGGCCGATAGGGGATGTACCTGTCGTCTTAGCTAAGATGACAGGACATGTCCAGGAAGTGCTCGTGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT------------------------------------------------------------------
+// ###########################################################################################################"#########################################
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,4 +473,5 @@ mod tests {
         assert_eq!(u8s(&conc.reference_aligned),u8s(&"ACGT----ACGT".as_bytes().to_vec()));
         assert_eq!(u8s(&conc.read_aligned),u8s(&"ACGTAGGAACGT".as_bytes().to_vec()));
     }
+
 }

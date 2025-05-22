@@ -156,7 +156,6 @@ fn create_sam_read(
     );
 
     if buffered_reads.len() > 1 {
-
         let consensus_reference = Counter::<Vec<u8>, usize>::init(
             buffered_reads
                 .iter()
@@ -521,7 +520,7 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], error_prior
                 (0..5).for_each(|i| {
                     if i == base_id {
                         allele_props[i] = allele_props[i] + (1.0 - phred_to_error_prob(&qs, phred_floor_at_33)).log2();
-                        //println!("MT id {} new prop {}", i, allele_props[i]);
+                        //println!("MT id {} new prop {} {} {}", i, allele_props[i],&qs,phred_to_error_prob(&qs, phred_floor_at_33));
                     } else {
                         allele_props[i] = allele_props[i] + (phred_to_error_prob(&qs, phred_floor_at_33) / 3.0_f64).log2();
                         //println!("NM id {} new prop {}", i, allele_props[i]);
