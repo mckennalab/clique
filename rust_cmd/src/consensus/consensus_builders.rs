@@ -64,21 +64,12 @@ pub fn write_consensus_reads(
                 buffered_reads = VecDeque::new();
                 s.spawn(|_y| {
 
-                    // TODO fix to pooled approach like alignment
-                    let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
-                        (reference_manager.longest_ref + 1) * 2,
-                        (reference_manager.longest_ref + 1) * 2,
-                        LocalAlignmentType::Affine,
-                        false,
-                    );
-
                     let my_buffered_reads = my_buffered_reads;
                     let new_read = create_sam_read(
                         reference_manager,
                         maximum_reads_before_downsampling,
                         &my_buffered_reads,
                         &AffineScoring::default_dna(),
-                        &mut alignment_mat,
                         merge_strategy,
                     );
 
@@ -119,7 +110,6 @@ pub fn write_consensus_reads(
             maximum_reads_before_downsampling,
             &buffered_reads,
             &score,
-            &mut alignment_mat,
             merge_strategy
         );
 
@@ -145,7 +135,6 @@ fn create_sam_read(
     maximum_reads_before_downsampling: &usize,
     buffered_reads: &VecDeque<SortingReadSetContainer>,
     my_aff_score: &AffineScoring,
-    _alignment_mat: &mut Alignment<Ix3>,
     merge_strategy: &MergeStrategy,
 ) -> Option<SamReadyOutput> {
     let mut added_tags = HashMap::new();

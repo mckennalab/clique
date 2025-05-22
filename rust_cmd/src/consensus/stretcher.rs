@@ -16,7 +16,7 @@ struct AlignmentPile {
     //Vec<Alignment>
 }
 
-const DEFAULT_QUAL_FOR_UNKNOWN_QUAL: u8 = b'C';
+const DEFAULT_QUAL_FOR_UNKNOWN_QUAL: u8 = 32u8;
 
 #[derive(Clone, Serialize, Deserialize, Hash)]
 struct NucCounts {

@@ -34,6 +34,7 @@ use utils::read_utils::{reverse_complement, u8s};
 
 pub const MAX_NEG_SCORE: f64 = -100000.0;
 
+
 #[derive(Copy, Clone, Debug)]
 pub struct MatchedPosition {
     pub search_start: usize,
