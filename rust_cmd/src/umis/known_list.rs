@@ -37,7 +37,7 @@ impl MetricSpace for FastaString {
     type Distance = u32;
 
     fn distance(&self, other: &Self, _consider: &()) -> Self::Distance {
-        self.hamming_distance(other)//levenshtein_exp(&self.fa, &other.fa)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
+        self.hamming_distance(other) //levenshtein_exp(&self.fa, &other.fa)// self.hamming_distance(other) //levenshtein_exp(&self.fa_u8, &other.fa_u8) //
     }
 }
 

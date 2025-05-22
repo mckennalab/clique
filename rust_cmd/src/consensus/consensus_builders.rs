@@ -501,7 +501,7 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], error_prior
                 b'T' | b't' => { 3 }
                 b'-' => { 4 }
                 _ => {
-                    info!("unaccounted for quality score");
+                    debug!("unaccounted for quality score");
                     5
                 }
             };

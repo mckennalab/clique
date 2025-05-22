@@ -607,9 +607,9 @@ pub fn sort_degenerate_level(
 
     reader.iter_range(&Range::all()).unwrap().for_each(|current_read| {
         all_read_count += 1;
-        //if all_read_count % 10000 == 0 { // TODO for now to figure out what's going on
+        if all_read_count % 10000 == 0 {
             bar.as_mut().map(|b| b.set_position(all_read_count as u64));
-        //}
+        }
         let mut current_read = current_read.unwrap();
         let next_last_read = current_read.clone();
 
@@ -652,7 +652,10 @@ pub fn sort_degenerate_level(
         }
     }
 
-    bar.as_mut().map(|b| b.set_position(all_read_count as u64));
+    // otherwise we spend too much time updating a progress bar, which is very silly
+    if all_read_count % 10000 == 0 {
+        bar.as_mut().map(|b| b.set_position(all_read_count as u64));
+    }
 
     info!("For degenerate tag {} (iteration {}) we processed {} reads, of which {} were passed to the next level", &tag.symbol, iteration, all_read_count, output_reads);
     sender.finished().unwrap();

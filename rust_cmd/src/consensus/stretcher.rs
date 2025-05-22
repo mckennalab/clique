@@ -382,7 +382,7 @@ impl AlignmentCandidate {
                 }
                 ReferenceStatus::Insertion { base, counts } => {
                     //println!("dropped insert {} {}", *base as char, counts.proportion(base,&self.read_names.len()));
-                    // do nothing, we're not going to include this gap in the reference as it's not supported by enough read
+                    // do nothing, we're not going to include this gap in the reference as it's not supported by enough reads
                 }
             }
         });
@@ -439,7 +439,6 @@ mod tests {
         assert_eq!(u8s(&conc.reference_aligned),u8s(&ref_bases.as_bytes().to_vec()));
         assert_eq!(u8s(&conc.read_aligned),u8s(&read_bases.as_bytes().to_vec()));
 
-        //     t ref_bases =   "ACGTACGT";
         let ref_bases = "ACGT-ACGT";
         let read_bases = "ACGTAACGT";
         candidate.add_alignment(&create_alignment_result(read_bases, ref_bases));
