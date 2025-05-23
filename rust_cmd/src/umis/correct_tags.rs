@@ -1,21 +1,21 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
+use std::io::{self, Write};
+
 use std::hash::BuildHasherDefault;
-use std::io::BufWriter;
 use std::path::PathBuf;
 
 use rustc_hash::{FxHasher, FxHashMap};
 use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
-use std::io::Write;
 use std::ops::Deref;
-use rand::distr::uniform::SampleBorrow;
-use rust_star::{DistanceGraphNode, LinkedDistances};
-use alignment::alignment_matrix::AlignmentResult;
+use bstr::ByteSlice;
+use rust_star::{DistanceGraphNode, LinkedDistances, Trie};
+use read_strategies::sequence_layout::UMISortType;
 use utils::read_utils::{strip_gaps, u8s};
 
-pub struct DegenerateBuffer {
+pub struct SequenceCorrector {
     buffer: VecDeque<SortingReadSetContainer>,
     max_buffer_size: usize,
     collapse_ratio: f64,
@@ -24,11 +24,13 @@ pub struct DegenerateBuffer {
     output_file: PathBuf,
     tag: UMIConfiguration,
     hash_map: FxHashMap<Vec<u8>, usize>,
+    known_tags: Option<Vec<Vec<u8>>>,
+    processed_sequences: usize,
 }
 
-impl DegenerateBuffer {
-    pub fn new(output_file: PathBuf, max_size: &usize, tag: UMIConfiguration) -> DegenerateBuffer {
-        DegenerateBuffer {
+impl SequenceCorrector {
+    pub fn new(output_file: PathBuf, max_size: &usize, tag: UMIConfiguration, known_tags: Option<&Vec<Vec<u8>>>) -> SequenceCorrector {
+        SequenceCorrector {
             buffer: VecDeque::new(),
             max_buffer_size: *max_size,
             collapse_ratio: *tag.minimum_collapsing_difference.as_ref().unwrap_or(&5.0),
@@ -37,6 +39,8 @@ impl DegenerateBuffer {
             output_file,
             tag,
             hash_map: FxHashMap::default(),
+            known_tags: known_tags.map(|x| x.clone()),
+            processed_sequences: 0,
         }
     }
 
@@ -46,12 +50,14 @@ impl DegenerateBuffer {
     /// disk until we've finished.
     ///
     pub fn push(&mut self, mut item: SortingReadSetContainer) {
+        self.processed_sequences += 1;
         assert!(self.tag.length >= self.tag.max_distance);
 
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
-        item.ordered_unsorted_keys.push_front(key_value.clone()); // we want to keep the key in the list for now, we'll remove it later
         assert_eq!(key_value.0, self.tag.symbol);
 
+        // we need to make a copy of the key value, because we're going to pop it off the front of the record when we correct it in a second pass
+        item.ordered_unsorted_keys.push_front(key_value.clone());
 
         let gapless = strip_gaps(&key_value.1);
 
@@ -61,19 +67,19 @@ impl DegenerateBuffer {
                 .entry(gapless)
                 .or_insert(0) += 1;
 
-            //println!("{} {} {} {}",self.shard_writer.is_some(), self.buffer.len(), self.max_buffer_size,self.buffer.len() >= self.max_buffer_size);
-            match (
-                &self.shard_sender.is_some(),
-                self.buffer.len() >= self.max_buffer_size,
-            ) {
+            // do we have a disk writer already open? or do we need to open one?
+            match (&self.shard_sender.is_some(), self.buffer.len() >= self.max_buffer_size) {
                 (false, true) => {
+                    // we don't have a disk writer open, but we have reached the buffer size, so we need to dump the buffer to disk
                     self.buffer.push_back(item);
                     self.dump_buffer_to_disk();
                 }
                 (false, false) => {
+                    // we don't have a disk writer open, so we can just push the item onto the buffer
                     self.buffer.push_back(item);
                 }
                 (true, _) => {
+                    // we have a disk writer open, so we can just send the item to the disk writer
                     self.shard_sender.as_mut().unwrap().send(item).unwrap();
                 }
             }
@@ -94,33 +100,25 @@ impl DegenerateBuffer {
         self.buffer.clear();
     }
 
-    /// This function 'corrects' a list of barcodes using starcode
+    /// This function 'corrects' a list of barcodes using our Starcode clone
     pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
-
-        self.hash_map.iter().for_each(|(k, _v)| {
-            for x in k {
-                match x {
-                    &b'a' | &b'A' | &b'c' | &b'C' | &b'g' | &b'G' | &b't' | &b'T' => {}
-                    _ => {
-                        println!("Invalid character {} in {}", x, String::from_utf8(k.clone()).unwrap());
-                    }
-                }
-            }
-        });
-
         let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
-
+        let mut unmatched = 0;
+        let mut multimatched = 0;
+        let mut nostart = 0;
+        let mut matched = 0;
         match self.hash_map.len() {
             0 => {
-                //println!("Zeros!");
+                // case 0 -- no records, do nothing
                 knowns
             }
             1 => {
+                // TODO: wrong for known list
+                // case 1 -- manually create the known list -- pad if too short
                 let mut kn = self.hash_map.iter().next().unwrap().0.clone();
                 if kn.len() < self.tag.length {
                     kn.resize(self.tag.length, b'-');
                 }
-                //println!("Ones! {}",u8s(&kn));
                 knowns.insert(kn.clone(),kn);
                 knowns
             }
@@ -128,7 +126,6 @@ impl DegenerateBuffer {
                 let mut max_length : usize = 0;
                 let tags = self.hash_map.iter().map(|x| {
                     let mut ns : Vec<u8> = x.0.clone().into_iter().filter(|x| *x != b'-').collect();
-                    //println!("XXX {} to {}",u8s(x.0),u8s(&ns));
                     if ns.len() < self.tag.length {
                         ns.resize(self.tag.length, b'-');
                     }
@@ -139,21 +136,94 @@ impl DegenerateBuffer {
                 }).collect::<Vec<(Vec<u8>,usize)>>();
 
 
-                //tags.iter().for_each(|x| println!("tag {} size {}",u8s(&x.0),&x.1));
-                let correction = LinkedDistances::cluster_string_vector_list(&max_length, tags, &self.tag.max_distance, &self.collapse_ratio);
+                match self.tag.sort_type {
+                    UMISortType::KnownTag => {
+                        let mut trie = Trie::new(max_length);
+                        let mut file = File::create("output.txt").unwrap(); // overwrites if file exists
 
-                correction.into_iter().for_each(|(mut center,mut dist_graph)| {
-                    let mut connected_node = dist_graph.borrow_mut();
-                    let mut connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
-                    let string_name = connected_node.string.clone();
-                    knowns.insert(string_name.clone(),string_name.clone());
-                    //println!("Known {} to known {}",u8s(&string_name),u8s(&string_name));
-                    connected_node.swallowed_links.iter().for_each(|(x,y)| {
-                        knowns.insert(x.clone(), string_name.clone());
-                        //println!("Unknown {} to known {}",u8s(&x),u8s(&string_name));
-                    });
-                });
-                knowns
+                        self.known_tags.as_ref().unwrap().iter().for_each(|x| {trie.insert(x.as_bytes(),None,&self.tag.max_distance);});
+
+                        let mut sorted_tags: Vec<(Vec<u8>,usize)> = self.hash_map.iter().map(|(x,y)| (x.clone(),*y)).collect::<Vec<(Vec<u8>,usize)>>();
+                        sorted_tags.sort_by(|a, b| a.0.cmp(&b.0));
+
+                        let mut search_nodes = HashSet::default();
+
+                        (0..sorted_tags.len()).for_each(|x| {
+
+                            let start = if x >= 1 { LinkedDistances::prefix_overlap_str(&sorted_tags[x].0, &sorted_tags[x - 1].0) } else { 0 };
+                            let mut future = if x < sorted_tags.len() - 1 { LinkedDistances::prefix_overlap_str(&sorted_tags[x + 1].0, &sorted_tags[x].0) } else { 0 };
+
+                            if search_nodes.len() == 0 {
+                                search_nodes = trie.depth_links(&1);
+                            }
+
+                            if start < sorted_tags[0].0.len() {
+                                let rt = trie.chained_search(start, Some(future), &sorted_tags[x].0, &self.tag.max_distance, &search_nodes);
+                                search_nodes = rt.1;
+                                if future < 1 { future = 1; }
+
+                                match rt.0.len() {
+                                    1 => {
+                                        matched += 1;
+                                        nostart += sorted_tags[x].1;
+                                        knowns.insert(sorted_tags[x].0.clone(),rt.0[0].0.clone());
+                                        writeln!(file, "{}\ttrue\t1\thit\t{}\t{}",u8s(&sorted_tags[x].0),u8s(&rt.0[0].0),sorted_tags[x].1).unwrap();
+                                    }
+                                    0 => {
+                                        unmatched += 1;
+                                        writeln!(file, "{}\tfalse\t0\tzero\tNA\t{}",u8s(&sorted_tags[x].0),sorted_tags[x].1).unwrap();
+                                    }
+                                    x => {
+                                        multimatched += 1;
+                                        // is there a minimal hit? 
+                                        let mut min = usize::MAX;
+                                        let mut min_index = 0;
+                                        let mut min_count = 0;
+                                        rt.0.iter().enumerate().for_each(|(index,(x,y))| {
+                                            if *y < min {
+                                                min = *y;
+                                                min_index = index;
+                                                min_count = 1;
+                                            } else if *y == min {
+                                                min_count += 1;
+                                            } 
+                                        });
+                                        if min_count == 1 {
+                                            matched += 1;
+                                            nostart += sorted_tags[x].1;
+                                            knowns.insert(sorted_tags[x].0.clone(),rt.0[min_index].0.clone());
+                                            writeln!(file, "{}\ttrue\t{}\tmulti\tNA\t{}",u8s(&sorted_tags[x].0),x,sorted_tags[x].1).unwrap();
+                                        } else {
+                                            writeln!(file, "{}\tfalse\t{}\tmulti\tNA\t{}", u8s(&sorted_tags[x].0), x, sorted_tags[x].1).unwrap();
+                                        }
+                                    }
+                                }
+                            } else {
+                            }
+                        });
+                        println!("matched {} Unmatched {} multimatched {} nostart {} total {} super total {}",matched,unmatched,multimatched,nostart, self.hash_map.len(), self.processed_sequences);
+                        
+                        knowns
+
+                    }
+                    UMISortType::DegenerateTag => {
+                        let correction = LinkedDistances::cluster_string_vector_list(&max_length, tags, &self.tag.max_distance, &self.collapse_ratio);
+
+                        correction.into_iter().for_each(|(mut center,mut dist_graph)| {
+                            let mut connected_node = dist_graph.borrow_mut();
+                            let mut connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
+                            let string_name = connected_node.string.clone();
+                            knowns.insert(string_name.clone(),string_name.clone());
+                            //println!("Known {} to known {}",u8s(&string_name),u8s(&string_name));
+                            connected_node.swallowed_links.iter().for_each(|(x,y)| {
+                                knowns.insert(x.clone(), string_name.clone());
+                                //println!("Unknown {} to known {}",u8s(&x),u8s(&string_name));
+                            });
+                        });
+                        knowns
+                    }
+                }
+
             }
         }
 
@@ -167,9 +237,10 @@ impl DegenerateBuffer {
         let mut buffered_reads = 0;
         let mut unbuffered_reads = 0;
 
+        info!("Correcting reads...");
 
         let final_correction = self.correct_list();
-
+        let mut hit_count = 0;
         self.buffer.iter().for_each(|y| {
             let mut y = y.clone();
             let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
@@ -195,13 +266,19 @@ impl DegenerateBuffer {
                 let mut current_read: SortingReadSetContainer = current_read.unwrap();
                 let key_value = current_read.ordered_unsorted_keys.pop_front().unwrap();
                 let corrected_value : Vec<u8> = key_value.1.clone().into_iter().filter(|x| *x != b'-').collect::<Vec<u8>>();
-                let corrected = match final_correction.get(&strip_gaps(&corrected_value)) {
-                    None => { panic!("Unable to find match for key {} in corrected values", u8s(&corrected_value)); }
-                    Some(x) => { x }
+                //let corrected_value = strip_gaps(&corrected_value);
+                match final_correction.get(&strip_gaps(&corrected_value)) {
+                    None => { 
+                        info!("Unable to find match for key {} in corrected values {} {}", u8s(&corrected_value), final_correction.contains_key(&corrected_value), u8s(&key_value.1));
+                    }
+                    Some(x) => { 
+                        hit_count += 1;
+                        current_read.ordered_sorting_keys
+                            .push((key_value.0, x.clone()));
+                        sender.send(current_read).unwrap();
+                    }
                 };
-                current_read.ordered_sorting_keys
-                    .push((key_value.0, corrected.clone()));
-                sender.send(current_read).unwrap();
+                
                 read_count += 1;
                 unbuffered_reads += 1;
             });
@@ -212,8 +289,7 @@ impl DegenerateBuffer {
         self.shard_writer = None;
         self.buffer.clear();
         self.hash_map.clear();
-
-        //println!("COUNTS {} {} {}",read_count,buffered_reads,unbuffered_reads);
+        println!("COUNTS {} {} {} {}",read_count,buffered_reads,unbuffered_reads,hit_count);
         read_count
     }
 }
@@ -311,8 +387,8 @@ mod tests {
 
     }
 
-    fn create_tag_buffer_with_set_anchor_seq_count(count: &usize, path: &PathBuf, config: &UMIConfiguration) -> DegenerateBuffer {
-        let mut tag_buffer = crate::umis::degenerate_tags::DegenerateBuffer::new(path.clone(),&5000, config.clone());
+    fn create_tag_buffer_with_set_anchor_seq_count(count: &usize, path: &PathBuf, config: &UMIConfiguration) -> SequenceCorrector {
+        let mut tag_buffer = crate::umis::correct_tags::SequenceCorrector::new(path.clone(), &5000, config.clone());
 
         for i in 0..*count {
             tag_buffer.push(create_fake_read_set_container(&"read1".to_string(), &"AAAAATTTTT".to_string(), &config));

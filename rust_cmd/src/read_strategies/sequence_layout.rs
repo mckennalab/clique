@@ -131,6 +131,7 @@ pub struct UMIConfiguration {
     pub minimum_collapsing_difference: Option<f64>,
 }
 
+
 #[derive(Debug, PartialEq, Hash, Serialize, Deserialize, Clone, Eq)]
 pub enum TargetType {
     Static,

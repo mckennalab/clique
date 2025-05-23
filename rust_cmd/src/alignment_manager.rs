@@ -4,14 +4,12 @@ use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::reference::fasta_reference::ReferenceManager;
 use bstr::BString;
 
-
 use noodles_sam::header::record::value::map::ReferenceSequence;
 use noodles_sam::header::record::value::Map;
 use noodles_sam::Header;
 use noodles_util::alignment;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-
 
 use std::io::Result;
 use std::num::NonZeroUsize;
@@ -28,9 +26,19 @@ use noodles_sam::alignment::record::Name;
 use utils::read_utils::u8s;
 
 
-/// something that writes aligned reads. The output may or may not respect all the fields
-/// of the SortingReadSetContainer
+/// A trait for writing aligned reads to various output formats.
+/// The output may or may not respect all the fields of the SortingReadSetContainer.
 pub trait OutputAlignmentWriter: Sync + Send {
+    /// Writes a read to the output format.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_set_container` - The container holding the aligned read and its metadata
+    /// * `additional_tags` - Additional tags to be included in the output
+    ///
+    /// # Returns
+    ///
+    /// A `Result<()>` indicating success or failure of the write operation.
     fn write_read(
         &mut self,
         read_set_container: &SortingReadSetContainer,
@@ -39,7 +47,10 @@ pub trait OutputAlignmentWriter: Sync + Send {
 
 }
 
-/// implement a OutputAlignmentWriter for BAM files
+/// Implementation of `OutputAlignmentWriter` for BAM files.
+///
+/// This struct provides functionality to write aligned reads to BAM format files
+/// using the noodles library for SAM/BAM operations.
 pub struct BamFileAlignmentWriter<'a> {
     underlying_bam_file: Arc<Mutex<noodles_util::alignment::io::Writer>>,
     header: noodles_sam::Header,
@@ -50,6 +61,16 @@ unsafe impl<'a> Send for BamFileAlignmentWriter<'a> {}
 unsafe impl<'a> Sync for BamFileAlignmentWriter<'a> {}
 
 impl<'a> BamFileAlignmentWriter<'a> {
+    /// Creates a new BAM file writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path where the BAM file will be written
+    /// * `reference_manager` - Manager containing reference sequences and metadata
+    ///
+    /// # Returns
+    ///
+    /// A new `BamFileAlignmentWriter` instance ready to write aligned reads.
     pub fn new(
         path: &PathBuf,
         reference_manager: &ReferenceManager<'a, 'a, 'a>,
@@ -84,6 +105,24 @@ impl<'a> BamFileAlignmentWriter<'a> {
 }
 
 impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
+    /// Writes a read to the BAM file.
+    ///
+    /// This method converts the read container to a SAM record and writes it to the BAM file.
+    /// It includes additional tags and sorting keys from the read container.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_set_container` - The container holding the aligned read and its metadata
+    /// * `additional_tags` - Additional tags to be included in the BAM record
+    ///
+    /// # Returns
+    ///
+    /// A `Result<()>` indicating success or failure of the write operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the reference name cannot be found in the reference manager or
+    /// if writing to the BAM file fails.
     fn write_read(
         &mut self,
         read_set_container: &SortingReadSetContainer,
@@ -144,6 +183,26 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
 
 }
 
+/// Performs pairwise alignment between a reference sequence and a read sequence.
+///
+/// This function creates a 3D scoring matrix and performs affine gap alignment
+/// followed by traceback to generate the alignment result.
+///
+/// # Arguments
+///
+/// * `reference_sequence` - The reference sequence as a vector of bytes
+/// * `read_sequence` - The read sequence as a vector of bytes
+/// * `read_qual` - Optional quality scores for the read sequence
+/// * `scoring_function` - The affine scoring parameters for alignment
+/// * `local` - Whether to perform local alignment (true) or global alignment (false)
+/// * `ref_name` - Name of the reference sequence
+/// * `read_name` - Name of the read sequence
+/// * `_reference_manager` - Optional reference manager (currently unused)
+///
+/// # Returns
+///
+/// An `AlignmentResult` containing the alignment information including CIGAR string,
+/// scores, and positions.
 pub fn align_two_strings(
     reference_sequence: &Vec<u8>,
     read_sequence: &Vec<u8>,
@@ -188,26 +247,11 @@ pub fn align_two_strings(
     //}
 }
 
-/*
-impl BamFileAlignmentWriter {
-    pub fn new(output_path: &PathBuf) -> BamFileAlignmentWriter {
-        let mut writer = bam::io::Writer::new(output_path.to_str().expect("Unable to access output bam file path"));
-
-        let header = sam::Header::builder()
-            .set_header(Default::default())
-            .add_program("noodles-bam", Map::<Program>::default())
-            .add_comment("a BAM written by clique")
-            .build();
-
-        writer.write_header(&header).expect("Unable to write bam file header");
-
-        BamFileAlignmentWriter{
-            underlying_bam_file: Arc::new(Mutex::new(writer)),
-            header,
-        }
-    }
-}*/
-
+/// Configuration parameters for sequence alignment operations.
+///
+/// This struct holds all the necessary parameters and settings required
+/// for performing sequence alignments, including file paths, scoring functions,
+/// and filtering criteria.
 #[allow(dead_code)]
 struct AlignmentParameters<'a> {
     read_structure: &'a SequenceLayout,
@@ -226,6 +270,23 @@ struct AlignmentParameters<'a> {
 
 impl<'a> AlignmentParameters<'a> {
 
+    /// Creates default alignment parameters for affine gap alignment.
+    ///
+    /// This constructor sets up standard parameters suitable for most DNA sequence
+    /// alignment tasks using affine gap penalties.
+    ///
+    /// # Arguments
+    ///
+    /// * `read1` - Path to the first read file
+    /// * `read2` - Optional path to the second read file (for paired-end)
+    /// * `index1` - Optional path to the first index file
+    /// * `index2` - Optional path to the second index file
+    /// * `read_structure` - Layout describing the structure of the sequencing reads
+    /// * `reference_manager` - Manager containing reference sequences
+    ///
+    /// # Returns
+    ///
+    /// An `AlignmentParameters` instance with default settings for affine alignment.
     #[allow(dead_code)]
     pub fn default_affine_alignment(
         read1: PathBuf,
@@ -254,43 +315,6 @@ impl<'a> AlignmentParameters<'a> {
         }
     }
 }
-/*
-struct AlignmentResults {
-
-}
-
-trait AlignmentFilter {
-
-}
-
-/// Takes a recipe (alignment parameters) and an output sink and uses threads to
-/// align reads
-struct AlignmentEngine {
-
-}
-
-impl AlignmentEngine {
-    pub fn align_sequences(parameters: &AlignmentParameters, output_writer: &OutputAlignmentWriter, alignment_approach: &AlignmentType, threads: &usize) -> AlignmentResults {
-
-        let read_iterator = MergedReadSequence::new(ReadIterator::new(PathBuf::from(&read1),
-                                                                      Some(PathBuf::from(&read2)),
-                                                                      Some(PathBuf::from(&index1)),
-                                                                      Some(PathBuf::from(&index2))), read_structure);
-        // setup the alignment matrix with a thread pool
-        let alignment_mat: Alignment<Ix3> = create_scoring_record_3d((parameters.rm.longest_ref + 1),
-                                                                     (parameters.maximum_read_to_reference_length_ratio * parameters.rm.longest_ref).ceil() as usize + 1,
-                                                                     *alignment_approach,
-                                                                     false);
-
-        lazy_static! {static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());}
-        thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
-
-
-
-        AlignmentResults{}
-    }
-}
-*/
 
 /// Simplifies a CIGAR string represented as a vector of `AlignmentTag`.
 ///

@@ -1,31 +1,37 @@
 use crate::consensus::consensus_builders::write_consensus_reads;
-use crate::extractor::{extract_tag_sequences, extract_tagged_sequences, recover_soft_clipped_align_sequences, SoftClipResolution, stretch_sequence_to_alignment};
+use crate::extractor::{
+    extract_tag_sequences, extract_tagged_sequences, recover_soft_clipped_align_sequences,
+    stretch_sequence_to_alignment, SoftClipResolution,
+};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
-use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout, UMIConfiguration, UMISortType};
+use crate::read_strategies::sequence_layout::{
+    ReferenceRecord, SequenceLayout, UMIConfiguration, UMISortType,
+};
 use crate::reference::fasta_reference::ReferenceManager;
-use crate::umis::known_list::KnownList;
 
 use crate::InstanceLivedTempDir;
 use indicatif::ProgressBar;
 
-use ::{FASTA_UNSET, noodles_bam as bam};
 use noodles_bam::{bai, Record};
 use noodles_sam::Header;
+use noodles_bam as bam;
 
+use itertools::Itertools;
 use shardio::{Range, ShardReader, ShardWriter};
 use std::cmp::{min, Ordering};
-use std::collections::{HashMap};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use itertools::Itertools;
 
-use noodles_sam::alignment::record::QualityScores;
-use petgraph::visit::Walker;
-use consensus::consensus_builders::MergeStrategy;
-use FASTA_N;
-use utils::read_utils::u8s;
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
-use crate::umis::degenerate_tags::DegenerateBuffer;
+use crate::umis::correct_tags::SequenceCorrector;
+use consensus::consensus_builders::MergeStrategy;
+use noodles_sam::alignment::record::QualityScores;
+use petgraph::visit::Walker;
+use utils::read_utils::{reverse_complement, u8s};
+use FASTA_N;
 
 pub fn collapse(
     final_output: &String,
@@ -36,24 +42,6 @@ pub fn collapse(
 ) {
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
-
-    // validate that each reference has the specified capture groups
-    let validated_references = rm
-        .references
-        .iter()
-        .map(|rf| {
-            let reference_config = read_structure
-                .references
-                .get(String::from_utf8(rf.1.name.clone()).unwrap().as_str())
-                .unwrap();
-            SequenceLayout::validate_reference_sequence(
-                &rf.1.sequence,
-                &reference_config.umi_configurations,
-            )
-        })
-        .all(|x| x == true);
-
-    assert!(validated_references, "The reference sequences do not match the capture groups specified in the read structure file.");
 
     let mut known_level_lookups = get_known_level_lookups(read_structure);
 
@@ -67,7 +55,7 @@ pub fn collapse(
         let ref_name = String::from_utf8(reference.name.clone()).unwrap();
         info!("processing reads from input BAM file: {}", bam_file);
 
-        let sorted_reads_option=
+        let sorted_reads_option =
             sort_reads_from_bam_file(bam_file, &ref_name, &rm, read_structure, temp_directory);
         read_count = sorted_reads_option.read_stats.passing_reads();
 
@@ -78,37 +66,14 @@ pub fn collapse(
                 warn!("No valid reads found for reference {}", ref_name);
             }
             Some(mut sorted_reads) => {
-
                 read_structure
                     .get_sorted_umi_configurations(&ref_name)
                     .iter()
                     .for_each(|tag| {
-
-                        match tag.sort_type {
-                            UMISortType::KnownTag => {
-                                let ret = sort_known_level(
-                                    temp_directory,
-                                    &sorted_reads,
-                                    &tag,
-                                    &read_count,
-                                    &mut known_level_lookups,
-                                );
-                                sorted_reads = ret.1;
-                                read_count = ret.0;
-                            }
-
-                            UMISortType::DegenerateTag => {
-                                let ret = sort_degenerate_level(
-                                    temp_directory,
-                                    &sorted_reads,
-                                    &tag,
-                                    &levels,
-                                    &read_count,
-                                );
-                                sorted_reads = ret.1;
-                                read_count = ret.0;
-                            }
-                        }
+                        let ret =
+                            sort_level(temp_directory, &sorted_reads, &tag, &levels, &read_count, &known_level_lookups);
+                        sorted_reads = ret.1;
+                        read_count = ret.0;
 
                         levels += 1;
                     });
@@ -236,28 +201,31 @@ pub struct AlignmentCheck {
 
 impl AlignmentFilter for AlignmentCheck {
     fn keep(&self, read: &SortingReadSetContainer) -> bool {
-        let mut alignment_count =0;
+        let mut alignment_count = 0;
         let mut alignable_bases = 0;
 
-        read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(x,y)| {
-            if *y > 59 && *x > 59 && y != &FASTA_N {
-                alignable_bases += 1;
-                if x == y {
-                    alignment_count += 1;
+        read.aligned_read
+            .read_aligned
+            .iter()
+            .zip(read.aligned_read.reference_aligned.iter())
+            .for_each(|(x, y)| {
+                if *y > 59 && *x > 59 && y != &FASTA_N {
+                    alignable_bases += 1;
+                    if x == y {
+                        alignment_count += 1;
+                    }
                 }
-            }
-        });
+            });
 
-        let ret = (alignment_count as f64 / alignable_bases as f64 >= self.min_aligned_identical_proportion) && (alignable_bases >= self.min_aligned_bases);
+        let ret = (alignment_count as f64 / alignable_bases as f64
+            >= self.min_aligned_identical_proportion)
+            && (alignable_bases >= self.min_aligned_bases);
         //if !ret {
         //    println!("aligning {} {}\n{}\n{}",alignment_count,alignable_bases,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
         //}
         ret
-
     }
 }
-
-
 
 /// We want to be extra confident in the alignments around our 'tags'.
 /// This filters out reads where we have mismatches and gaps around the
@@ -275,47 +243,56 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
         let mut ret = true;
         let mut count_down_check = usize::MAX;
 
-        read.aligned_read.read_aligned.iter().zip(read.aligned_read.reference_aligned.iter()).for_each(|(read_base, reference_base)| {
-            // we're at the end of the countdown window - check the mating proportion
-            if count_down_check == 0 {
-                count_down_check = usize::MAX;
-                let lookback_length = min(pushed_binary_comp.len(),self.flanking_window_size);
-                let sum: u32 = pushed_binary_comp[pushed_binary_comp.len() - lookback_length..pushed_binary_comp.len()].iter().sum();
-                let matching_prop = sum as f64 / lookback_length as f64;
-                pushed_binary_comp.clear();
-                if matching_prop < self.min_flanking_indentity {
-                    ret = false;
+        read.aligned_read
+            .read_aligned
+            .iter()
+            .zip(read.aligned_read.reference_aligned.iter())
+            .for_each(|(read_base, reference_base)| {
+                // we're at the end of the countdown window - check the mating proportion
+                if count_down_check == 0 {
+                    count_down_check = usize::MAX;
+                    let lookback_length = min(pushed_binary_comp.len(), self.flanking_window_size);
+                    let sum: u32 = pushed_binary_comp
+                        [pushed_binary_comp.len() - lookback_length..pushed_binary_comp.len()]
+                        .iter()
+                        .sum();
+                    let matching_prop = sum as f64 / lookback_length as f64;
+                    pushed_binary_comp.clear();
+                    if matching_prop < self.min_flanking_indentity {
+                        ret = false;
+                    }
                 }
-            }
                 //
-            else if *reference_base > 58 && reference_base != &FASTA_N {
-                count_down_check -= 1;
-                if read_base == reference_base {
-                    pushed_binary_comp.push(1)
-                } else {
-                    pushed_binary_comp.push(0)
+                else if *reference_base > 58 && reference_base != &FASTA_N {
+                    count_down_check -= 1;
+                    if read_base == reference_base {
+                        pushed_binary_comp.push(1)
+                    } else {
+                        pushed_binary_comp.push(0)
+                    }
                 }
-            }
                 // lookback case for start of Ns
-            else if *reference_base < 59 && pushed_binary_comp.len() > 0 {
-                let lookback_length = min(pushed_binary_comp.len(),self.flanking_window_size);
-                let sum: u32 = pushed_binary_comp[pushed_binary_comp.len() - lookback_length..pushed_binary_comp.len()].iter().sum();
-                let matching_prop = sum as f64 / lookback_length as f64;
-                pushed_binary_comp.clear();
-                if matching_prop < self.min_flanking_indentity {
-                    ret = false;
+                else if *reference_base < 59 && pushed_binary_comp.len() > 0 {
+                    let lookback_length = min(pushed_binary_comp.len(), self.flanking_window_size);
+                    let sum: u32 = pushed_binary_comp
+                        [pushed_binary_comp.len() - lookback_length..pushed_binary_comp.len()]
+                        .iter()
+                        .sum();
+                    let matching_prop = sum as f64 / lookback_length as f64;
+                    pushed_binary_comp.clear();
+                    if matching_prop < self.min_flanking_indentity {
+                        ret = false;
+                    }
+                } else if reference_base == &FASTA_N && pushed_binary_comp.len() == 0 {
+                    count_down_check = self.flanking_window_size;
                 }
-            }
-            else if reference_base == &FASTA_N && pushed_binary_comp.len() == 0 {
-                count_down_check = self.flanking_window_size;
-            }
-        });
+            });
         //println!("aligning {}\n{}\n{}",ret,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
         ret
     }
 }
 
-#[derive(Default,Copy,Clone,Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 struct BamReadFiltering {
     total_reads: usize,
     unmapped_flag_reads: usize,
@@ -323,16 +300,24 @@ struct BamReadFiltering {
     failed_alignment_filters: usize,
     failed_alignment_creation: usize,
     duplicate_reads: usize,
-    invalid_tags: usize, 
+    invalid_tags: usize,
 }
 
 impl BamReadFiltering {
     pub fn passing_reads(&self) -> usize {
-        self.total_reads - self.unmapped_flag_reads - self.secondary_flag_reads - self.failed_alignment_filters - self.duplicate_reads - self.invalid_tags
+        self.total_reads
+            - self.unmapped_flag_reads
+            - self.secondary_flag_reads
+            - self.failed_alignment_filters
+            - self.duplicate_reads
+            - self.invalid_tags
     }
 
-    pub fn results(&self, filters_counts: &HashMap<String,u64>) {
-        let filter_summary = filters_counts.iter().map(|x| format!("Name: {} failed {}",x.0.clone(),x.1)).join(", ");
+    pub fn results(&self, filters_counts: &HashMap<String, u64>) {
+        let filter_summary = filters_counts
+            .iter()
+            .map(|x| format!("Name: {} failed {}", x.0.clone(), x.1))
+            .join(", ");
         info!(
             "Total reads processed: {}, Unmapped: {}, Secondary: {}, [Failed: {}, Failed alignment filters: {}, Duplicate: {}, Invalid_tags: {}, Passing: {} filter summary {}",
             self.total_reads,
@@ -360,7 +345,6 @@ pub fn sort_reads_from_bam_file(
     read_structure: &SequenceLayout,
     temp_directory: &mut InstanceLivedTempDir,
 ) -> SortedReadsFromBam {
-
     let aligned_temp = temp_directory.temp_file("bam.reads.sorted.sharded");
 
     let mut reader = bam::io::reader::Builder::default()
@@ -371,11 +355,25 @@ pub fn sort_reads_from_bam_file(
 
     let mut read_stats = BamReadFiltering::default();
 
-    let filters : Vec<(String, &dyn AlignmentFilter)> = vec![("FlankingDegenerateBaseFilter".to_string(),&FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.80, flanking_window_size: 10}),
-                                                             ("AlignmentCheck".to_string(),&AlignmentCheck{ min_aligned_bases: 45, min_aligned_identical_proportion: 0.8})];
-    let mut filter_counts: HashMap<String,u64> = HashMap::default();
-    filter_counts.insert("FlankingDegenerateBaseFilter".to_string(),0);
-    filter_counts.insert("AlignmentCheck".to_string(),0);
+    let filters: Vec<(String, &dyn AlignmentFilter)> = vec![
+        (
+            "FlankingDegenerateBaseFilter".to_string(),
+            &FlankingDegenerateBaseFilter {
+                min_flanking_indentity: 0.80,
+                flanking_window_size: 10,
+            },
+        ),
+        (
+            "AlignmentCheck".to_string(),
+            &AlignmentCheck {
+                min_aligned_bases: 45,
+                min_aligned_identical_proportion: 0.8,
+            },
+        ),
+    ];
+    let mut filter_counts: HashMap<String, u64> = HashMap::default();
+    filter_counts.insert("FlankingDegenerateBaseFilter".to_string(), 0);
+    filter_counts.insert("AlignmentCheck".to_string(), 0);
 
     let index = bai::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();
@@ -414,24 +412,39 @@ pub fn sort_reads_from_bam_file(
             let record = result.unwrap();
 
             if !record.flags().is_secondary() && !record.flags().is_unmapped() {
-                let read = create_sorted_read_container(reference_name, &reference_manager, &mut read_stats, &reference_sequence_id, &reference_sequence, reference_config, &record);
-
+                let read = create_sorted_read_container(
+                    reference_name,
+                    &reference_manager,
+                    &mut read_stats,
+                    &reference_sequence_id,
+                    &reference_sequence,
+                    reference_config,
+                    &record,
+                );
 
                 match read {
                     Some(x) => {
-                        let survives_filtering = filters.iter().map(|t| {
-                            let x = t.1.keep(&x);
-                            if !x {
-                                filter_counts.insert(t.0.clone(),filter_counts.get(&t.0).unwrap_or(&0) + 1);
-                            }
-                            x
-                        }).filter(|b| !*b).count() == 0;
+                        let survives_filtering = filters
+                            .iter()
+                            .map(|t| {
+                                let x = t.1.keep(&x);
+                                if !x {
+                                    filter_counts.insert(
+                                        t.0.clone(),
+                                        filter_counts.get(&t.0).unwrap_or(&0) + 1,
+                                    );
+                                }
+                                x
+                            })
+                            .filter(|b| !*b)
+                            .count()
+                            == 0;
                         if survives_filtering {
                             sender.send(x).unwrap();
                         } else {
                             read_stats.failed_alignment_filters += 1;
                         }
-                    },
+                    }
                     None => {
                         read_stats.failed_alignment_creation += 1;
                     }
@@ -447,16 +460,15 @@ pub fn sort_reads_from_bam_file(
         }
         sender.finished().unwrap();
         sharded_output.finish().unwrap();
-
     }
     read_stats.results(&filter_counts);
     if read_stats.passing_reads() > 0 {
-        SortedReadsFromBam{
+        SortedReadsFromBam {
             bam: Some(ShardReader::open(aligned_temp).unwrap()),
             read_stats,
         }
     } else {
-        SortedReadsFromBam{
+        SortedReadsFromBam {
             bam: None,
             read_stats,
         }
@@ -466,13 +478,15 @@ pub fn sort_reads_from_bam_file(
 /// create a read container from the read and reference sequence,
 /// returning Some(read) if successful, or None if we couldn't
 /// extract the tag
-fn create_sorted_read_container(reference_name: &String,
-                                reference_manager: &&ReferenceManager,
-                                _read_stats: &mut BamReadFiltering,
-                                reference_sequence_id: &&usize,
-                                reference_sequence: &Vec<u8>,
-                                reference_config: &ReferenceRecord, record: &Record) -> Option<SortingReadSetContainer> {
-
+fn create_sorted_read_container(
+    reference_name: &String,
+    reference_manager: &&ReferenceManager,
+    _read_stats: &mut BamReadFiltering,
+    reference_sequence_id: &&usize,
+    reference_sequence: &Vec<u8>,
+    reference_config: &ReferenceRecord,
+    record: &Record,
+) -> Option<SortingReadSetContainer> {
     let seq: Vec<u8> = record.sequence().iter().collect();
     let start_pos = record.alignment_start().unwrap().unwrap().get();
     let cigar = record.cigar();
@@ -480,8 +494,13 @@ fn create_sorted_read_container(reference_name: &String,
     let read_qual = record.quality_scores().iter().collect();
     let ref_slice = reference_sequence.as_slice();
 
-    let aligned_read =
-        recover_soft_clipped_align_sequences(&seq, start_pos, &cigar.iter().map(|x| x.unwrap()).collect(), &SoftClipResolution::Realign, ref_slice);
+    let aligned_read = recover_soft_clipped_align_sequences(
+        &seq,
+        start_pos,
+        &cigar.iter().map(|x| x.unwrap()).collect(),
+        &SoftClipResolution::Realign,
+        ref_slice,
+    );
 
     let stretched_alignment = stretch_sequence_to_alignment(
         &aligned_read.aligned_ref,
@@ -492,8 +511,7 @@ fn create_sorted_read_container(reference_name: &String,
             .sequence,
     );
 
-    let extracted_tags =
-        extract_tagged_sequences(&aligned_read.aligned_read, &stretched_alignment);
+    let extracted_tags = extract_tagged_sequences(&aligned_read.aligned_read, &stretched_alignment);
 
     let (valid_tags_extracted, read_tags_ordered) =
         extract_tag_sequences(reference_config, extracted_tags);
@@ -519,14 +537,45 @@ fn create_sorted_read_container(reference_name: &String,
                 bounding_box: None,
             },
         })
-
     } else {
         None
     }
 }
 
-fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, KnownList> {
-    let mut ret: HashMap<String, KnownList> = HashMap::new();
+fn create_input_set(filename: &str, reverse_comp: &bool) -> Vec<Vec<u8>> {
+    let raw_reader = BufReader::new(
+        File::open(filename).expect(&format!("Unable to open input file {}", filename)),
+    );
+    let mut input_set = Vec::new();
+    for line in raw_reader.lines() {
+        let mut bytes = line.unwrap().into_bytes();
+        if *reverse_comp {
+            bytes = reverse_complement(&bytes);
+        }
+        input_set.push(bytes);
+    }
+    input_set
+}
+
+pub fn extract_known_list(
+    umi_type: &UMIConfiguration,
+    _starting_nmer_size: &usize,
+) -> Vec<Vec<u8>> {
+    let filename = umi_type.file.clone().unwrap();
+    let filename = filename.as_str();
+
+    info!(
+        "Reading known list from file {}; large files may take a long time",
+        filename
+    );
+
+    let rev_comp = umi_type.reverse_complement_sequences.unwrap_or(false);
+
+    create_input_set(filename, &rev_comp)
+}
+
+fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, Vec<Vec<u8>>> {
+    let mut ret: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
 
     read_structure
         .references
@@ -539,7 +588,7 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, K
                     None => {}
                     Some(x) => {
                         if !ret.contains_key(x.as_str()) {
-                            let known_lookup = KnownList::new(config, &8);
+                            let known_lookup = extract_known_list(config, &8);
                             ret.insert(x.clone(), known_lookup);
                         }
                     }
@@ -571,15 +620,16 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, K
 ///
 /// # Examples
 ///
-pub fn sort_degenerate_level(
+pub fn sort_level(
     temp_directory: &mut InstanceLivedTempDir,
     reader: &ShardReader<SortingReadSetContainer>,
     tag: &UMIConfiguration,
     iteration: &usize,
     read_count: &usize,
+    known_sequence_lists : &HashMap<String, Vec<Vec<u8>>>,
 ) -> (usize, ShardReader<SortingReadSetContainer>) {
-
-    info!("Sorting degenerate level {}", tag.symbol);
+    
+    info!("Sorting level {}", tag.symbol);
 
     let mut all_read_count: usize = 0;
     let mut output_reads: usize = 0;
@@ -603,52 +653,61 @@ pub fn sort_degenerate_level(
     };
     info!("Starting to sort degenerate level {}", tag.symbol);
 
-    let mut current_sorting_bin: Option<DegenerateBuffer> = None;
+    let mut current_sorting_bin: Option<SequenceCorrector> = None;
 
-    reader.iter_range(&Range::all()).unwrap().for_each(|current_read| {
-        all_read_count += 1;
-        if all_read_count % 10000 == 0 {
-            bar.as_mut().map(|b| b.set_position(all_read_count as u64));
-        }
-        let mut current_read = current_read.unwrap();
-        let next_last_read = current_read.clone();
-
-        match current_sorting_bin.as_mut() {
-            None => {
-                let mut bin = DegenerateBuffer::new(
-                    temp_directory.temp_file(format!("{}.fasta", tag.order).as_str()),
-                    &maximum_reads_per_bin,
-                    tag.clone(),
-                );
-                bin.push(current_read);
-                current_sorting_bin = Some(bin);
+    let known_sequence_list = match tag.file.as_ref() {
+        None => {None}
+        Some(x) => {known_sequence_lists.get(x)}
+    };
+    
+    reader
+        .iter_range(&Range::all())
+        .unwrap()
+        .for_each(|current_read| {
+            all_read_count += 1;
+            if all_read_count % 10000 == 0 {
+                bar.as_mut().map(|b| b.set_position(all_read_count as u64));
             }
+            let mut current_read = current_read.unwrap();
+            let next_last_read = current_read.clone();
 
-            Some(bin) => {
-                let reads_equal = last_read.as_ref().unwrap().cmp(&mut current_read) == Ordering::Equal;
+            match current_sorting_bin.as_mut() {
+                None => {
+                    let mut bin = SequenceCorrector::new(
+                        temp_directory.temp_file(format!("{}.fasta", tag.order).as_str()),
+                        &maximum_reads_per_bin,
+                        tag.clone(),
+                        known_sequence_list,
+                    );
+                    bin.push(current_read);
+                    current_sorting_bin = Some(bin);
+                }
 
-                match reads_equal {
-                    true => {
-                        // add the current read to the bin
-                        bin.push(current_read);
-                    }
-                    false => {
-                        // write the previous bin, and add the current read to the next bin
-                        output_reads += bin.close_and_write_to_shard_writer(&mut sender);
-                        bin.push(current_read);
+                Some(bin) => {
+                    let reads_equal =
+                        last_read.as_ref().unwrap().cmp(&mut current_read) == Ordering::Equal;
+
+                    match reads_equal {
+                        true => {
+                            // add the current read to the bin
+                            bin.push(current_read);
+                        }
+                        false => {
+                            // write the previous bin, and add the current read to the next bin
+                            output_reads += bin.close_and_write_to_shard_writer(&mut sender);
+                            bin.push(current_read);
+                        }
                     }
                 }
-            }
-        };
+            };
 
-        last_read = Some(next_last_read);
-    });
+            last_read = Some(next_last_read);
+        });
 
     match current_sorting_bin {
         None => {}
         Some(mut bin) => {
             output_reads += bin.close_and_write_to_shard_writer(&mut sender);
-
         }
     }
 
@@ -665,115 +724,13 @@ pub fn sort_degenerate_level(
     (output_reads, ShardReader::open(aligned_temp).unwrap())
 }
 
-pub fn sort_known_level(
-    temp_directory: &mut InstanceLivedTempDir,
-    reader: &ShardReader<SortingReadSetContainer>,
-    tag: &UMIConfiguration,
-    read_count: &usize,
-    known_lookup_obj: &mut HashMap<String, KnownList>,
-) -> (usize, ShardReader<SortingReadSetContainer>) {
-    info!("Sorting known level {}", tag.symbol);
-
-    info!(
-        "Loading the known lookup table for tag {}, this can take some time",
-        tag.symbol
-    );
-    let known_lookup = known_lookup_obj
-        .get_mut(&tag.file.as_ref().unwrap().clone())
-        .expect(
-            format!(
-                "Unable to find pre-cached lookup table {}",
-                &tag.file.as_ref().clone().unwrap()
-            )
-            .as_str(),
-        );
-    let mut processed_reads = 0;
-    let mut dropped_reads = 0;
-    let mut collided_reads = 0;
-    let mut sent_reads = 0;
-
-    info!("Sorting {} reads", read_count);
-    let mut bar: Option<ProgressBar> = match *read_count > 100000 {
-        true => Some(ProgressBar::new(read_count.clone() as u64)),
-        false => Some(ProgressBar::new(read_count.clone() as u64)),
-    };
-
-    // create a new output
-    let aligned_temp = temp_directory.temp_file(&*(tag.order.to_string() + ".sorted.sharded"));
-
-    // scoping required here to ensure proper handing of the senders
-    {
-        let mut sharded_output: ShardWriter<SortingReadSetContainer> =
-            ShardWriter::new(&aligned_temp, 32, 256, 1 << 16).unwrap();
-        let mut sender = sharded_output.get_sender();
-
-        reader.iter_range(&Range::all()).unwrap().for_each(|x| {
-            processed_reads += 1;
-            if processed_reads % 20000 == 0 {
-                bar.as_mut().map(|b| b.set_position(processed_reads as u64));
-            }
-            let mut sorting_read_set_container = x.unwrap();
-            assert_eq!(
-                sorting_read_set_container.ordered_sorting_keys.len(),
-                tag.order
-            );
-
-            let next_key = sorting_read_set_container
-                .ordered_unsorted_keys
-                .pop_front()
-                .unwrap();
-            assert_eq!(next_key.0, tag.symbol);
-
-            let corrected_hits =
-            known_lookup.correct_to_known_list(&next_key.1,  &(tag.max_distance as u32));
-            match (corrected_hits.hits.len(), corrected_hits.distance) {
-                (x, _) if x < 1 => {
-                    dropped_reads += 1;
-                }
-                (x, _) if x > 1 => {
-                    collided_reads += 1;
-                    dropped_reads += 1;
-                }
-                (_x, y) if y > (tag.max_distance as u32)=> {
-                    dropped_reads += 1;
-                }
-                (_x, _y) => {
-                    sent_reads += 1;
-                    sorting_read_set_container
-                        .ordered_sorting_keys
-                        .push((next_key.0, corrected_hits.hits.get(0).unwrap().clone()));
-                    sender.send(sorting_read_set_container).unwrap();
-                }
-            };
-        });
-
-        info!(
-            "Dropped {} reads (of which {} were collided reads), {} total reads, sent reads: {}",
-            dropped_reads, collided_reads, processed_reads, sent_reads
-        );
-        sender.finished().unwrap();
-        sharded_output.finish().unwrap();
-    }
-    bar.as_mut().map(|b| b.set_position(processed_reads as u64));
-
-    info!(
-        "For known tag {} we processed {} reads",
-        &tag.symbol, processed_reads
-    );
-
-    (
-        processed_reads - dropped_reads,
-        ShardReader::open(aligned_temp).unwrap(),
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
-    use ::{FASTA_A, FASTA_T};
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::utils::read_utils::fake_reads;
+    use std::collections::VecDeque;
+    use {FASTA_A, FASTA_T};
 
     pub fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
         let mut consensus = Vec::new();
@@ -818,16 +775,25 @@ mod tests {
 
     #[test]
     fn test_alignment_check() {
-        let alignment_check = AlignmentCheck{ min_aligned_bases: 10, min_aligned_identical_proportion: 0.8 };
+        let alignment_check = AlignmentCheck {
+            min_aligned_bases: 10,
+            min_aligned_identical_proportion: 0.8,
+        };
 
-        let fake_read_alignment = SortingReadSetContainer{
+        let fake_read_alignment = SortingReadSetContainer {
             ordered_sorting_keys: vec![],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
                 read_name: "".to_string(),
-                reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
-                read_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                reference_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
+                read_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
                 read_quals: None,
                 cigar_string: vec![],
                 path: vec![],
@@ -845,16 +811,25 @@ mod tests {
 
     //#[test]
     fn test_flanking_degenerate_base_filter() {
-        let alignment_check = FlankingDegenerateBaseFilter{ min_flanking_indentity: 0.9, flanking_window_size: 3 };
+        let alignment_check = FlankingDegenerateBaseFilter {
+            min_flanking_indentity: 0.9,
+            flanking_window_size: 3,
+        };
 
-        let fake_read_alignment = SortingReadSetContainer{
+        let fake_read_alignment = SortingReadSetContainer {
             ordered_sorting_keys: vec![],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
                 read_name: "".to_string(),
-                reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_N,FASTA_N,FASTA_N,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
-                read_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                reference_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N, FASTA_N, FASTA_N, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
+                read_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
                 read_quals: None,
                 cigar_string: vec![],
                 path: vec![],
@@ -867,14 +842,20 @@ mod tests {
 
         assert!(alignment_check.keep(&fake_read_alignment));
 
-        let fake_read_alignment = SortingReadSetContainer{
+        let fake_read_alignment = SortingReadSetContainer {
             ordered_sorting_keys: vec![],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
                 read_name: "".to_string(),
-                reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
-                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A, FASTA_T,  FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                reference_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N, FASTA_N, FASTA_N, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
+                read_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_T, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
                 read_quals: None,
                 cigar_string: vec![],
                 path: vec![],
@@ -887,14 +868,20 @@ mod tests {
 
         //assert!(!alignment_check.keep(&fake_read_alignment));
 
-        let fake_read_alignment = SortingReadSetContainer{
+        let fake_read_alignment = SortingReadSetContainer {
             ordered_sorting_keys: vec![],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
                 read_name: "".to_string(),
-                reference_aligned: vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
-                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,  FASTA_T,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                reference_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N, FASTA_N, FASTA_N, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
+                read_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_T,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
                 read_quals: None,
                 cigar_string: vec![],
                 path: vec![],
@@ -908,14 +895,20 @@ mod tests {
         assert!(!alignment_check.keep(&fake_read_alignment));
 
         assert!(!alignment_check.keep(&fake_read_alignment));
-        let fake_read_alignment = SortingReadSetContainer{
+        let fake_read_alignment = SortingReadSetContainer {
             ordered_sorting_keys: vec![],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
                 read_name: "".to_string(),
-                reference_aligned: vec![FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A],
-                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,  FASTA_T,FASTA_A,FASTA_A,FASTA_A,FASTA_A,],
+                reference_aligned: vec![
+                    FASTA_N, FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
+                    FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
+                read_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_T, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                ],
                 read_quals: None,
                 cigar_string: vec![],
                 path: vec![],
@@ -928,16 +921,23 @@ mod tests {
 
         assert!(!alignment_check.keep(&fake_read_alignment));
 
-
         assert!(!alignment_check.keep(&fake_read_alignment));
-        let fake_read_alignment = SortingReadSetContainer{
+        let fake_read_alignment = SortingReadSetContainer {
             ordered_sorting_keys: vec![],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
                 read_name: "".to_string(),
-                reference_aligned: vec![FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N],
-                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_T,  FASTA_A,FASTA_A,FASTA_A],
+                reference_aligned: vec![
+                    FASTA_N, FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
+                    FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
+                    FASTA_N, FASTA_N,
+                ],
+                read_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_T, FASTA_A,
+                    FASTA_A, FASTA_A,
+                ],
                 read_quals: None,
                 cigar_string: vec![],
                 path: vec![],
@@ -950,16 +950,23 @@ mod tests {
 
         assert!(!alignment_check.keep(&fake_read_alignment));
 
-
         assert!(!alignment_check.keep(&fake_read_alignment));
-        let fake_read_alignment = SortingReadSetContainer{
+        let fake_read_alignment = SortingReadSetContainer {
             ordered_sorting_keys: vec![],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
                 read_name: "".to_string(),
-                reference_aligned: vec![FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_N,FASTA_N,FASTA_N],
-                read_aligned:      vec![FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A,FASTA_A,FASTA_A,  FASTA_A,FASTA_A,FASTA_A],
+                reference_aligned: vec![
+                    FASTA_N, FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
+                    FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
+                    FASTA_N, FASTA_N,
+                ],
+                read_aligned: vec![
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
+                    FASTA_A, FASTA_A,
+                ],
                 read_quals: None,
                 cigar_string: vec![],
                 path: vec![],
@@ -971,8 +978,6 @@ mod tests {
         };
 
         assert!(alignment_check.keep(&fake_read_alignment));
-
-
     }
     #[test]
     fn test_consensus() {
@@ -1043,7 +1048,7 @@ mod tests {
             bounding_box: None,
         };
 
-        let mut tbb = DegenerateBuffer::new(
+        let mut tbb = SequenceCorrector::new(
             PathBuf::from("test_data/consensus_test.fastq"),
             &1000,
             UMIConfiguration {
@@ -1089,7 +1094,11 @@ mod tests {
         let correction = tbb.correct_list();
 
         correction.iter().for_each(|x| {
-            println!("{} -> {}",String::from_utf8(x.0.clone()).unwrap(),String::from_utf8(x.1.clone()).unwrap());
+            println!(
+                "{} -> {}",
+                String::from_utf8(x.0.clone()).unwrap(),
+                String::from_utf8(x.1.clone()).unwrap()
+            );
             assert_eq!(
                 String::from_utf8(x.1.clone()).unwrap(),
                 String::from_utf8("TGGTATGCTGGG".as_bytes().to_vec()).unwrap()

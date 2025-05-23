@@ -72,11 +72,6 @@ pub mod sequence_lookup;
 
 const FASTA_UNSET: u8 = b'-';
 const FASTA_N: u8 = b'N';
-const FASTA_A: u8 = b'A';
-const FASTA_C: u8 = b'C';
-const FASTA_G: u8 = b'G';
-const FASTA_T: u8 = b'T';
-
 
 
 mod read_strategies {
@@ -94,8 +89,7 @@ mod alignment {
 mod umis {
     pub mod sequence_clustering;
     pub mod bronkerbosch;
-    pub mod known_list;
-    pub mod degenerate_tags;
+    pub mod correct_tags;
 }
 mod calling {
 //    pub mod bam_file_to_cell_list;

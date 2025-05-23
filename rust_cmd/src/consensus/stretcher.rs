@@ -293,7 +293,7 @@ impl AlignmentCandidate {
 
             match (existing_ref_base, incoming_ref_base) {
                 // we're in an insertion on both references -- we're not going to concern ourselves with resolving multiple paths and just record insertion bases
-                (ReferenceStatus::Insertion { base, counts }, b'-') => {
+                (ReferenceStatus::Insertion { base: _, counts  }, b'-') => {
                     counts.update(*incoming_read_base, Some(*incoming_read_qual));
                     //println!("step1 {} {:?}", *incoming_read_base as char, counts);
 
@@ -301,13 +301,13 @@ impl AlignmentCandidate {
                     existing_index += 1;
                 }
                 // an existing insertion to the reference but the new read isn't an insertion -- just skip over it
-                (ReferenceStatus::Insertion { base, counts }, new_ref) => {
+                (ReferenceStatus::Insertion { base: _, counts: _ }, new_ref) => {
                     //println!("step2b");
                     // just move past it
                     existing_index += 1;
                 }
                 // we have a new insertion in the reference we haven't seen before
-                (ReferenceStatus::Original { base, original_position, counts }, b'-') => {
+                (ReferenceStatus::Original { base: _, original_position: _, counts: _ }, b'-') => {
                     //println!("step2");
                     // we're going to add an insertion -- we have to choose if we're going to left or right align them (we choose right)
                     self.reference.insert(existing_index, ReferenceStatus::Insertion { base: *incoming_read_base, counts: NucCounts::new_from(*incoming_read_base, *incoming_read_qual) });

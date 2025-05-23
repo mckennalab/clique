@@ -102,7 +102,26 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         let unique_kmers = ReferenceManager::unique_kmers(&references, &kmer_size, &kmer_spacing);
         let references = references.into_iter().enumerate().collect::<HashMap<usize,Reference>>();
         let reference_name_to_ref = references.iter().map(|(i,r)| (r.name.clone(),*i)).collect();
-        ReferenceManager{ references, reference_name_to_ref, unique_kmers, kmer_size: kmer_size.clone(), kmer_skip: kmer_spacing.clone(), longest_ref }
+        let rm = ReferenceManager{ references, reference_name_to_ref, unique_kmers, kmer_size: kmer_size.clone(), kmer_skip: kmer_spacing.clone(), longest_ref };
+
+        // validate the references
+        let validated_references = rm
+            .references
+            .iter()
+            .map(|rf| {
+                let reference_config = yaml_input
+                    .references
+                    .get(String::from_utf8(rf.1.name.clone()).unwrap().as_str())
+                    .unwrap();
+                SequenceLayout::validate_reference_sequence(
+                    &rf.1.sequence,
+                    &reference_config.umi_configurations,
+                )
+            })
+            .all(|x| x == true);
+        assert!(validated_references, "The reference sequences do not match the capture groups specified in the read structure file.");
+        
+        rm
     }
 
     pub fn from_fa_file(fasta_file: &String, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
