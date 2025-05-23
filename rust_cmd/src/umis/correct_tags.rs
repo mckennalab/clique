@@ -139,7 +139,7 @@ impl SequenceCorrector {
                 match self.tag.sort_type {
                     UMISortType::KnownTag => {
                         let mut trie = Trie::new(max_length);
-                        let mut file = File::create("output.txt").unwrap(); // overwrites if file exists
+                        //let mut file = File::create("output.txt").unwrap(); // overwrites if file exists
 
                         self.known_tags.as_ref().unwrap().iter().for_each(|x| {trie.insert(x.as_bytes(),None,&self.tag.max_distance);});
 
@@ -167,11 +167,11 @@ impl SequenceCorrector {
                                         matched += 1;
                                         nostart += sorted_tags[x].1;
                                         knowns.insert(sorted_tags[x].0.clone(),rt.0[0].0.clone());
-                                        writeln!(file, "{}\ttrue\t1\thit\t{}\t{}",u8s(&sorted_tags[x].0),u8s(&rt.0[0].0),sorted_tags[x].1).unwrap();
+                                        //writeln!(file, "{}\ttrue\t1\thit\t{}\t{}",u8s(&sorted_tags[x].0),u8s(&rt.0[0].0),sorted_tags[x].1).unwrap();
                                     }
                                     0 => {
                                         unmatched += 1;
-                                        writeln!(file, "{}\tfalse\t0\tzero\tNA\t{}",u8s(&sorted_tags[x].0),sorted_tags[x].1).unwrap();
+                                        //writeln!(file, "{}\tfalse\t0\tzero\tNA\t{}",u8s(&sorted_tags[x].0),sorted_tags[x].1).unwrap();
                                     }
                                     x => {
                                         multimatched += 1;
@@ -192,9 +192,9 @@ impl SequenceCorrector {
                                             matched += 1;
                                             nostart += sorted_tags[x].1;
                                             knowns.insert(sorted_tags[x].0.clone(),rt.0[min_index].0.clone());
-                                            writeln!(file, "{}\ttrue\t{}\tmulti\tNA\t{}",u8s(&sorted_tags[x].0),x,sorted_tags[x].1).unwrap();
+                                            //writeln!(file, "{}\ttrue\t{}\tmulti\tNA\t{}",u8s(&sorted_tags[x].0),x,sorted_tags[x].1).unwrap();
                                         } else {
-                                            writeln!(file, "{}\tfalse\t{}\tmulti\tNA\t{}", u8s(&sorted_tags[x].0), x, sorted_tags[x].1).unwrap();
+                                            //writeln!(file, "{}\tfalse\t{}\tmulti\tNA\t{}", u8s(&sorted_tags[x].0), x, sorted_tags[x].1).unwrap();
                                         }
                                     }
                                 }
