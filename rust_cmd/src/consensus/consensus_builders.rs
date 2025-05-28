@@ -485,20 +485,20 @@ pub fn prob_to_phred(prob: &f64) -> u8 {
 }
 
 pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], reference_base: &u8, reference_prob : &f64) -> [f64; 5] {
-    let base_id = match *reference_base {
-        b'A' | b'a' => { 0 }
-        b'C' | b'c' => { 1 }
-        b'G' | b'g' => { 2 }
-        b'T' | b't' => { 3 }
-        b'-' => { 4 }
+    let mut allele_props = [((1.0_f64 - reference_prob)/4.0).log2(); 5];
+    match *reference_base {
+        b'A' | b'a' => { allele_props[0] = (*reference_prob).log2(); }
+        b'C' | b'c' => { allele_props[1] = (*reference_prob).log2(); }
+        b'G' | b'g' => { allele_props[2] = (*reference_prob).log2(); }
+        b'T' | b't' => { allele_props[3] = (*reference_prob).log2(); }
+        b'-' => { allele_props[4] = (*reference_prob).log2(); }
         _ => {
             debug!("unaccounted for quality score");
-            5
         }
     };
 
-    let mut allele_props = [((1.0_f64 - reference_prob)/4.0).log2(); 5];
-    allele_props[base_id] = (*reference_prob).log2();
+    
+    
 
 
     assert_eq!(bases.len(), scores.len());
