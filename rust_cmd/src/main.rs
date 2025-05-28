@@ -72,6 +72,10 @@ pub mod sequence_lookup;
 
 const FASTA_UNSET: u8 = b'-';
 const FASTA_N: u8 = b'N';
+const FASTA_A: u8 = b'A';
+const FASTA_G: u8 = b'G';
+const FASTA_C: u8 = b'C';
+const FASTA_T: u8 = b'T';
 
 
 mod read_strategies {

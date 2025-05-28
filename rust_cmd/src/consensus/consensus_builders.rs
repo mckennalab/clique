@@ -21,7 +21,9 @@ use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
 use ::{FASTA_N, FASTA_UNSET};
 use alignment::alignment_matrix::AlignmentResult;
+use utils::read_utils::{strip_gaps, u8s};
 
+const PHRED_OFFSET: u8 = 32;
 
 pub enum MergeStrategy {
     STRICT_CONSENSUS,
@@ -350,6 +352,9 @@ pub fn create_poa_consensus(
     let mut base_sequences = Vec::new();
     let mut quals_sequences = Vec::new();
 
+    let reference = strip_gaps(&sequences.get(0).unwrap().aligned_read.reference_aligned);
+    base_sequences.push(reference);
+
     sequences
         .iter().take(*downsample_to)
         .for_each(|n| {
@@ -362,7 +367,6 @@ pub fn create_poa_consensus(
 
     poa_consensus(&base_sequences, &quals_sequences)
 }
-
 
 fn poa_consensus(base_sequences: &Vec<Vec<u8>>, qual_sequences: &Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
     let mut eng = AlignmentEngine::new(AlignmentType::kNW, 5, -4, -3, -1, -3, -1);
@@ -386,47 +390,62 @@ fn poa_consensus(base_sequences: &Vec<Vec<u8>>, qual_sequences: &Vec<Vec<u8>>) -
     let alignment = graph.multiple_sequence_alignment(false).into_iter().map(|x| x.to_str().unwrap().to_owned().into_bytes()).collect::<Vec<Vec<u8>>>();
 
     calculate_conc_qual_score(&alignment, qual_sequences)
-
-    //graph.consensus().to_str().unwrap().to_owned().into_bytes()
 }
 
 pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
+    assert_eq!(alignments.len() -1, quality_scores.len());
+
     // create a consensus as we go
+    //alignments.iter().enumerate().for_each(|(index,align)| {
+    //    let qual = quality_scores[index+1].iter().map(|x| *x + 33 as u8).collect::<Vec<u8>>();
+     //   println!("align {} {}",u8s(align),u8s(&qual));
+    //});
+
+
     let mut conc = Vec::new();
     let mut final_quals = Vec::new();
 
     let mut sequence_indexes = vec![0_usize; alignments.len()];
-    assert_eq!(alignments.len(), quality_scores.len());
+
     let ln = alignments.get(0).unwrap().len();
+
+    let reference = alignments.get(0).unwrap();
 
     (0..ln).for_each(|index| {
         let mut bases = Vec::new();
         let mut quals = Vec::new();
-        alignments.iter().enumerate().for_each(|(sequence_index, x)| {
+        &alignments[1..alignments.len()].iter().enumerate().for_each(|(sequence_index, x)| {
             assert_eq!(ln, x.len());
 
-            let base = x.get(index).unwrap();
-            let qual = quality_scores.get(sequence_index).unwrap();
-            let qual = qual.get(*sequence_indexes.get(sequence_index).unwrap());
-            let qual = qual.unwrap();
+            let base = x[index];
+            let qual= match base {
+                b'-' => 20,
+                _ => quality_scores[sequence_index][sequence_indexes[sequence_index]]
+            };
 
             sequence_indexes[sequence_index] = sequence_index + match base {
                 b'-' => { 0 }
                 _ => { 1 }
             };
-            bases.push(*base);
-            quals.push(*qual);
+            bases.push(base);
+            quals.push(qual);
         });
+        let qualstr = quals.iter().map(|x| *x + 33 as u8).collect::<Vec<u8>>();
+        println!("build {} {} {}",u8s(&bases),u8s(&qualstr),reference[index] as char);
 
-        let qual_scores = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &0.75, &true);
+        let qual_scores = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &reference[index], &0.99);
+
         let index_of_max: usize = qual_scores
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(index, _)| index).unwrap();
 
-        if index_of_max < 4 {
+
+        if index_of_max < 5 {
             let prob = prob_to_phred(&qual_scores[index_of_max]);
+            println!("qual {} prob: {} phred {} max: {}", qual_scores[index_of_max], prob, (prob + 33) as char,index_of_max);
+
             final_quals.push(prob);
 
             match index_of_max {
@@ -442,53 +461,51 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
     (conc, final_quals)
 }
 
-pub fn phred_to_error_prob(phred: &u8, floor_zero_at_33: &bool) -> f64 {
-    let phred =
-        match (phred < &33_u8) && *floor_zero_at_33 {
-            true => 33_u8,
-            false => *phred,
-        };
-
-
-    assert!(phred >= 33 && phred <= 98, "{}", format!("Unable to format phred {}", phred)); // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
-    // TODO: we dont deal with phred + 64 format data -- at some point there will be legacy data that comes through; we should at least document this
-    (10.0_f64).pow((phred.to_f64().unwrap() - 32.99999999999999999) / (-10.0)) // 32.9999 to avoid Inf powers
+pub fn phred_to_error_prob(phred: &u8) -> f64 {
+    (10.0_f64).pow((phred.to_f64().unwrap()) / (-10.0)) // 32.9999 to avoid Inf powers
 }
 
 pub fn prob_to_phred(prob: &f64) -> u8 {
     // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
     assert!(prob >= &0.0_f64 && prob <= &1.0_f64, "{}", format!("Unable to format prob {}", prob));
     if prob < &0.00000001_f64 {
-        return 33_u8;
+        return 0_u8;
     }
 
     // TODO: we dont deal with phred + 64 format data
-    let ret = 33.0 + ((-10.0) * (1.00000000001 - prob).log10()); // again to prevent zero getting in, we subtract from 1 + epsilon
-    //println!("prob {} ret {}",prob, ret);
-    assert!(ret >= 0.0_f64 && ret <= 256.0_f64, "{}", format!("Unable to format phred {}", ret));
-
+    let ret = ((-10.0) * (1.00000000001 - prob).log10()); // again to prevent zero getting in, we subtract from 1 + epsilon
     let ret = ret.round().to_u8().unwrap();
-    let ret = if ret > 40 { // cap PHRED at 40; Noodles doesn't like higher TODO: fix this
-        40_u8
+    let ret = if ret > 90 { // cap PHRED at 40; Noodles doesn't like higher TODO: fix this
+        90_u8
     } else {
         ret as u8
     };
-    assert!(ret >= 33_u8 && ret <= 40_u8);
+    //assert!(ret >= 0 && ret <= 40_u8);
     ret
 }
 
-pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], error_prior: &f64, phred_floor_at_33: &bool) -> [f64; 5] {
-    // setup the priors
-    let mut allele_props = [
-        (error_prior / 3.0).log2(),
-        (error_prior / 3.0).log2(),
-        (error_prior / 3.0).log2(),
-        (error_prior / 3.0).log2(),
-        (error_prior / 3.0).log2()];
+pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], reference_base: &u8, reference_prob : &f64) -> [f64; 5] {
+    let base_id = match *reference_base {
+        b'A' | b'a' => { 0 }
+        b'C' | b'c' => { 1 }
+        b'G' | b'g' => { 2 }
+        b'T' | b't' => { 3 }
+        b'-' => { 4 }
+        _ => {
+            debug!("unaccounted for quality score");
+            5
+        }
+    };
+
+    let mut allele_props = [((1.0_f64 - reference_prob)/4.0).log2(); 5];
+    allele_props[base_id] = (*reference_prob).log2();
+
 
     assert_eq!(bases.len(), scores.len());
 
-    bases.iter().zip(scores.iter()).for_each(|(base_set, qual_set)| {
+    bases.iter().zip(scores.iter()).enumerate().for_each(|(index,(base_set, qual_set))| {
+
+
         assert_eq!(base_set.len(), qual_set.len());
         for i in 0..base_set.len() {
             let base = base_set[i];
@@ -508,16 +525,19 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], error_prior
             if base_id < 5 {
                 (0..5).for_each(|i| {
                     if i == base_id {
-                        allele_props[i] = allele_props[i] + (1.0 - phred_to_error_prob(&qs, phred_floor_at_33)).log2();
-                        //println!("MT id {} new prop {} {} {}", i, allele_props[i],&qs,phred_to_error_prob(&qs, phred_floor_at_33));
+                        allele_props[i] = allele_props[i] + (1.0 - phred_to_error_prob(&qs)).log2();
+                        //println!("MT id {} new prop {} {} {}", i, allele_props[i],&qs,phred_to_error_prob(&qs));
                     } else {
-                        allele_props[i] = allele_props[i] + (phred_to_error_prob(&qs, phred_floor_at_33) / 3.0_f64).log2();
+                        allele_props[i] = allele_props[i] + (phred_to_error_prob(&qs) / 3.0_f64).log2();
                         //println!("NM id {} new prop {}", i, allele_props[i]);
                     }
                 });
             }
+            //println!();
         };
     });
+    //println!("combined : {:?} -- {:?}",allele_props,allele_props.iter().map(|x| 2.0_f64.pow(x)));
+    //println!("combined 3: {:?}",calculate_qual_scores(&mut allele_props));
     calculate_qual_scores(&mut allele_props)
 }
 
@@ -556,53 +576,72 @@ mod tests {
 
     #[test]
     fn test_consensus_string() {
-        let quals = vec![vec![b'I'; 8], vec![b'I'; 8], vec![b'I'; 7]];
+        let quals = vec![
+            vec![b'I' - PHRED_OFFSET; 8],
+            vec![b'I' - PHRED_OFFSET; 8],
+            vec![b'I' - PHRED_OFFSET; 7]];
 
+        let reference = "ACGTACGT\0".as_bytes().to_vec();
         let read1 = "ACGTACGT\0".as_bytes().to_vec();
         let read2 = "ACGTACGT\0".as_bytes().to_vec();
         let read3 = "ACGTAC-T\0".as_bytes().to_vec();
-        let vec_of_reads = vec![read1, read2, read3];
+        let vec_of_reads = vec![reference, read1, read2, read3];
         let result = poa_consensus(&vec_of_reads, &quals);
         assert_eq!(result.0, "ACGTACGT".as_bytes().to_vec());
 
-        let quals = vec![vec![b'I'; 8], vec![b'I'; 7], vec![b'I'; 7]];
+        let quals = vec![
+            vec![b'I' - PHRED_OFFSET; 8],
+            vec![b'I' - PHRED_OFFSET; 7],
+            vec![b'I' - PHRED_OFFSET; 7]];
 
-        let read1 = "ACGTACGT\0".as_bytes().to_vec();
+        let reference = "ACGTACGT\0".as_bytes().to_vec();
+        let read1 = "ACGTAC-T\0".as_bytes().to_vec();
         let read2 = "ACGTAC-T\0".as_bytes().to_vec();
         let read3 = "ACGTAC-T\0".as_bytes().to_vec();
-        let vec_of_reads = vec![read1, read2, read3];
+        let vec_of_reads = vec![reference, read1, read2, read3];
         let result = poa_consensus(&vec_of_reads, &quals);
-        assert_eq!(result.0, "ACGTACT".as_bytes().to_vec());
+        assert_eq!(result.0, "ACGTAC-T".as_bytes().to_vec());
 
-        let quals = vec![vec![b'I'; 8], vec![b'I'; 12], vec![b'I'; 7]];
+        let quals = vec![
+            vec![b'I' - PHRED_OFFSET; 8],
+            vec![b'I' - PHRED_OFFSET; 12],
+            vec![b'I' - PHRED_OFFSET; 7]];
 
+        let reference = "ACGTACGT\0".as_bytes().to_vec();
         let read1 = "ACGTACGT\0".as_bytes().to_vec();       //      ACGTACGT
         let read2 = "AAAAAACGTAC-T\0".as_bytes().to_vec();  // AAAAAACGTAC-T
         let read3 = "ACGTAC-T\0".as_bytes().to_vec();       //      ACGTAC-T
-        let vec_of_reads = vec![read1, read2, read3];
+        let vec_of_reads = vec![reference, read1, read2, read3];
         let result = poa_consensus(&vec_of_reads, &quals);
-        assert_eq!(result.0, "ACGTACT".as_bytes().to_vec());
+        println!("result {}",u8s(&result.0));
+        assert_eq!(result.0, "-----ACGTACGT".as_bytes().to_vec());
 
-        let quals = vec![vec![b'5'; 11], vec![b'5'; 15], vec![b'5'; 7]];
+        let quals = vec![
+            vec![b'5' - PHRED_OFFSET; 11],
+            vec![b'5' - PHRED_OFFSET; 15],
+            vec![b'5' - PHRED_OFFSET; 7]];
 
+        let reference = "ACGTACGT\0".as_bytes().to_vec();
         let read1 = "ACGTACGTTTT\0".as_bytes().to_vec();      //      ACGTACGTTTT
         let read2 = "AAAAAACGTACTTTT\0".as_bytes().to_vec();  // AAAAAACGTAC-TTTT
         let read3 = "ACGTACT\0".as_bytes().to_vec();          //      ACGTAC-T
-        let vec_of_reads = vec![read1, read2, read3];
+        let vec_of_reads = vec![reference, read1, read2, read3];
         let result = poa_consensus(&vec_of_reads, &quals);
-        assert_eq!(result.0, "ACGTACTTTT".as_bytes().to_vec());
-        assert_eq!(result.1, [40, 40, 40, 40, 40, 40, 40, 40, 40, 40]); // we max out at Q40
+        println!("result {}",u8s(&result.0));
+
+        assert_eq!(result.0, "-----ACGTACGTTTT".as_bytes().to_vec());
+        assert_eq!(result.1, [50, 50, 50, 50, 50, 90, 90, 90, 90, 90, 90, 4, 3, 3, 3, 90]); // we max out at Q40
 
         // "     ACGTACGTTTT\0".as_bytes().to_vec();
         // "AAAAAACGTAC TTTT\0".as_bytes().to_vec();
-        // "     ACGTAC T\0".as_bytes().to_vec();
+        // "     ACGTAC T\0".as_bytes().to_vec();*/
     }
 
     #[test]
     fn test_phred_to_prob() {
-        assert_eq!(0.0001, phred_to_error_prob(&b'I', &true));
-        assert_eq!(1.0, phred_to_error_prob(&b'!', &true));
-        assert_eq!(0.1, phred_to_error_prob(&b'+', &true));
+        assert_eq!(0.0001, phred_to_error_prob(&(b'I' - 33)));
+        assert_eq!(1.0, phred_to_error_prob(&(b'!' - 33)));
+        assert_eq!(0.1, phred_to_error_prob(&(b'+' - 33)));
     }
 
     //fn within_delta(x: &f64,y: &f64, delta: f64) -> bool {
@@ -611,17 +650,17 @@ mod tests {
     #[test]
     fn test_combine_qual_scores() {
         let bases = Vec::from(&[b'A', b'A', b'A', b'A']);
-        let quals = Vec::from(&[b'I', b'I', b'I', b'I']);
+        let quals = Vec::from(&[b'I' - PHRED_OFFSET, b'I'- PHRED_OFFSET, b'I'- PHRED_OFFSET, b'I'- PHRED_OFFSET]);
 
         // rounding to 1
-        assert_eq!(1.0, combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &0.1_f64, &true)[0]); // we're ~ 1.0, fully confident it's an 'A'
+        assert_eq!(1.0, combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &b'A', &0.1_f64)[0]); // we're ~ 1.0, fully confident it's an 'A'
 
         let bases = Vec::from(&[b'A', b'C', b'G', b'T']);
 
         // recover the priors
-        let qual_combined = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &0.1_f64, &true);
-        println!("qual combined {} {} {} {} {}", qual_combined[0], qual_combined[1], qual_combined[2], qual_combined[3], qual_combined[4]);
+        let qual_combined = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &b'A', &0.99_f64);
+        //println!("qual combined {} {} {} {} {}", qual_combined[0], qual_combined[1], qual_combined[2], qual_combined[3], qual_combined[4]);
 
-        assert!((0.25 - qual_combined[1]).abs() < 0.0001);
+        assert!((0.9924811371413187 - qual_combined[0]).abs() < 0.0001);
     }
 }

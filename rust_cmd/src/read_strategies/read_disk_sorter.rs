@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn test_ordinal_nature() {
         let srsc1 = SortingReadSetContainer{
-            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A])],
+            ordered_sorting_keys: vec![('*', vec![b'A', b'A',])],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),

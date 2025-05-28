@@ -20,6 +20,8 @@ const DEFAULT_QUAL_FOR_UNKNOWN_QUAL: u8 = 32u8;
 
 #[derive(Clone, Serialize, Deserialize, Hash)]
 struct NucCounts {
+    pub ref_base: u8, 
+    
     pub a: usize,
     pub c: usize,
     pub g: usize,
@@ -59,8 +61,9 @@ impl fmt::Display for NucCounts {
 }
 
 impl NucCounts {
-    pub fn new() -> NucCounts {
+    pub fn new(ref_base: &u8) -> NucCounts {
         NucCounts {
+            ref_base: *ref_base,
             a: 0,
             c: 0,
             g: 0,
@@ -75,8 +78,8 @@ impl NucCounts {
         }
     }
 
-    pub fn new_from(base: u8, qual: u8) -> NucCounts {
-        let mut new_nc = NucCounts::new();
+    pub fn new_from(ref_base: &u8, base: u8, qual: u8) -> NucCounts {
+        let mut new_nc = NucCounts::new(ref_base);
         new_nc.update(base, Some(qual));
         new_nc
     }
@@ -152,7 +155,7 @@ impl NucCounts {
 
             let mut quals = vec![self.a_qual.as_slice(), self.c_qual.as_slice(), self.g_qual.as_slice(), self.t_qual.as_slice(), self.n_qual.as_slice()];
 
-            let mut allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &0.75, &true);
+            let mut allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &self.ref_base, &0.75);
             let qual_normalized = calculate_qual_scores(&mut allele_props);
             let index_of_max: usize = qual_normalized
                 .iter()
@@ -263,7 +266,7 @@ impl AlignmentCandidate {
             reference: reference.iter().enumerate().
                 map(|(index, x)| {
                     //println!("adding ref base {:?}", *x as char);
-                    ReferenceStatus::Original { base: *x, original_position: index, counts: NucCounts::new() }
+                    ReferenceStatus::Original { base: *x, original_position: index, counts: NucCounts::new(x) }
                 }).collect(),
             read_names: Vec::new(),
             reference_name: String::from_utf8(reference_name.to_vec()).unwrap(),
@@ -310,7 +313,7 @@ impl AlignmentCandidate {
                 (ReferenceStatus::Original { base: _, original_position: _, counts: _ }, b'-') => {
                     //println!("step2");
                     // we're going to add an insertion -- we have to choose if we're going to left or right align them (we choose right)
-                    self.reference.insert(existing_index, ReferenceStatus::Insertion { base: *incoming_read_base, counts: NucCounts::new_from(*incoming_read_base, *incoming_read_qual) });
+                    self.reference.insert(existing_index, ReferenceStatus::Insertion { base: *incoming_read_base, counts: NucCounts::new_from(&b'-', *incoming_read_base, *incoming_read_qual) });
                     incoming_ref_index += 1;
                     existing_index += 1;
                     if *incoming_read_base != b'-' {

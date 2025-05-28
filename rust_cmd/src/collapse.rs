@@ -730,7 +730,8 @@ mod tests {
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::utils::read_utils::fake_reads;
     use std::collections::VecDeque;
-    use {FASTA_A, FASTA_T};
+    const FASTA_A: u8 = b'A';
+    const FASTA_T: u8 = b'T';
 
     pub fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
         let mut consensus = Vec::new();
@@ -1064,6 +1065,7 @@ mod tests {
                 max_gaps: Some(1),
                 minimum_collapsing_difference: Some(10.0),
             },
+            None,
         );
 
         // real example we hit

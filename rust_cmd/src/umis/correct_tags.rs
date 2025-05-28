@@ -29,7 +29,11 @@ pub struct SequenceCorrector {
 }
 
 impl SequenceCorrector {
-    pub fn new(output_file: PathBuf, max_size: &usize, tag: UMIConfiguration, known_tags: Option<&Vec<Vec<u8>>>) -> SequenceCorrector {
+    pub fn new(output_file: PathBuf,
+               max_size: &usize,
+               tag: UMIConfiguration,
+               known_tags: Option<&Vec<Vec<u8>>>) -> SequenceCorrector {
+
         SequenceCorrector {
             buffer: VecDeque::new(),
             max_buffer_size: *max_size,
@@ -237,7 +241,7 @@ impl SequenceCorrector {
         let mut buffered_reads = 0;
         let mut unbuffered_reads = 0;
 
-        info!("Correcting reads...");
+        //info!("Correcting reads...");
 
         let final_correction = self.correct_list();
         let mut hit_count = 0;
@@ -289,7 +293,7 @@ impl SequenceCorrector {
         self.shard_writer = None;
         self.buffer.clear();
         self.hash_map.clear();
-        println!("COUNTS {} {} {} {}",read_count,buffered_reads,unbuffered_reads,hit_count);
+        //println!("COUNTS {} {} {} {}",read_count,buffered_reads,unbuffered_reads,hit_count);
         read_count
     }
 }
@@ -310,6 +314,7 @@ mod tests {
     use read_strategies::sequence_layout::UMISortType;
     use super::*;
     use tempfile::NamedTempFile;
+    use alignment::alignment_matrix::AlignmentResult;
 
     #[test]
     fn test_tag_buffer_corrects() {
@@ -388,7 +393,7 @@ mod tests {
     }
 
     fn create_tag_buffer_with_set_anchor_seq_count(count: &usize, path: &PathBuf, config: &UMIConfiguration) -> SequenceCorrector {
-        let mut tag_buffer = crate::umis::correct_tags::SequenceCorrector::new(path.clone(), &5000, config.clone());
+        let mut tag_buffer = SequenceCorrector::new(path.clone(), &5000, config.clone(),None);
 
         for i in 0..*count {
             tag_buffer.push(create_fake_read_set_container(&"read1".to_string(), &"AAAAATTTTT".to_string(), &config));
