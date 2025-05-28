@@ -352,7 +352,8 @@ pub fn create_poa_consensus(
     let mut base_sequences = Vec::new();
     let mut quals_sequences = Vec::new();
 
-    let reference = strip_gaps(&sequences.get(0).unwrap().aligned_read.reference_aligned);
+    let mut reference = strip_gaps(&sequences.get(0).unwrap().aligned_read.reference_aligned);
+    reference.push(b'\0');
     base_sequences.push(reference);
 
     sequences
@@ -394,13 +395,6 @@ fn poa_consensus(base_sequences: &Vec<Vec<u8>>, qual_sequences: &Vec<Vec<u8>>) -
 
 pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
     assert_eq!(alignments.len() -1, quality_scores.len());
-
-    // create a consensus as we go
-    //alignments.iter().enumerate().for_each(|(index,align)| {
-    //    let qual = quality_scores[index+1].iter().map(|x| *x + 33 as u8).collect::<Vec<u8>>();
-     //   println!("align {} {}",u8s(align),u8s(&qual));
-    //});
-
 
     let mut conc = Vec::new();
     let mut final_quals = Vec::new();
@@ -497,10 +491,6 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], reference_b
         }
     };
 
-    
-    
-
-
     assert_eq!(bases.len(), scores.len());
 
     bases.iter().zip(scores.iter()).enumerate().for_each(|(index,(base_set, qual_set))| {
@@ -554,6 +544,368 @@ pub fn calculate_qual_scores(allele_props: &mut [f64; 5]) -> [f64; 5] {
 mod tests {
     use super::*;
     use rust_htslib::bam::record::Cigar;
+    use std::collections::VecDeque;
+    use crate::alignment::alignment_matrix::AlignmentResult;
+    use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
+
+    fn create_test_alignment_result(
+        reference_name: String,
+        read_name: String,
+        reference_aligned: Vec<u8>,
+        read_aligned: Vec<u8>,
+        read_quals: Option<Vec<u8>>,
+        score: f64,
+    ) -> AlignmentResult {
+        AlignmentResult {
+            reference_name,
+            read_name,
+            reference_aligned,
+            read_aligned,
+            read_quals,
+            cigar_string: vec![],
+            path: vec![],
+            score,
+            reference_start: 0,
+            read_start: 0,
+            bounding_box: None,
+        }
+    }
+
+    fn create_test_sorting_read(alignment: AlignmentResult) -> SortingReadSetContainer {
+        SortingReadSetContainer {
+            ordered_sorting_keys: vec![('*', vec![b'A', b'A'])],
+            ordered_unsorted_keys: VecDeque::new(),
+            aligned_read: alignment,
+        }
+    }
+
+    #[test]
+    fn test_create_poa_consensus_basic() {
+        let mut reads = VecDeque::new();
+        
+        let alignment1 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read1".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        let alignment2 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read2".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        reads.push_back(create_test_sorting_read(alignment1));
+        reads.push_back(create_test_sorting_read(alignment2));
+        
+        let max_reads = 10;
+        let result = create_poa_consensus(&reads, &max_reads);
+        
+        assert!(!result.0.is_empty());
+        assert!(!result.1.is_empty());
+    }
+
+    #[test]
+    fn test_create_poa_consensus_with_gaps() {
+        let mut reads = VecDeque::new();
+        
+        let alignment1 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read1".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        let alignment2 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read2".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGT----ACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 12]),
+            90.0,
+        );
+        
+        reads.push_back(create_test_sorting_read(alignment1));
+        reads.push_back(create_test_sorting_read(alignment2));
+        
+        let max_reads = 10;
+        let result = create_poa_consensus(&reads, &max_reads);
+        
+        assert!(!result.0.is_empty());
+        assert!(!result.1.is_empty());
+    }
+
+    #[test]
+    fn test_create_poa_consensus_with_mismatches() {
+        let mut reads = VecDeque::new();
+        
+        let alignment1 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read1".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        let alignment2 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read2".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"TCGTACGTACGTACGA".to_vec(), // Mismatches at positions 0 and 15
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            90.0,
+        );
+        
+        let alignment3 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read3".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        reads.push_back(create_test_sorting_read(alignment1));
+        reads.push_back(create_test_sorting_read(alignment2));
+        reads.push_back(create_test_sorting_read(alignment3));
+        
+        let max_reads = 10;
+        let result = create_poa_consensus(&reads, &max_reads);
+        
+        assert!(!result.0.is_empty());
+        assert!(!result.1.is_empty());
+        // Consensus should favor the majority sequence (2 vs 1)
+    }
+
+    #[test]
+    fn test_create_poa_consensus_with_downsampling() {
+        let mut reads = VecDeque::new();
+        
+        // Create more reads than the downsample limit
+        for i in 0..15 {
+            let alignment = create_test_alignment_result(
+                "test_ref".to_string(),
+                format!("read{}", i),
+                b"ACGTACGTACGTACGT".to_vec(),
+                b"ACGTACGTACGTACGT".to_vec(),
+                Some(vec![b'I' - PHRED_OFFSET; 16]),
+                100.0,
+            );
+            reads.push_back(create_test_sorting_read(alignment));
+        }
+        
+        let max_reads = 5; // Downsample to 5 reads
+        let result = create_poa_consensus(&reads, &max_reads);
+        
+        assert!(!result.0.is_empty());
+        assert!(!result.1.is_empty());
+        // The algorithm should only use the first 5 reads due to downsampling
+    }
+
+    #[test]
+    fn test_create_poa_consensus_single_read() {
+        let mut reads = VecDeque::new();
+        
+        let alignment = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read1".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        reads.push_back(create_test_sorting_read(alignment));
+        
+        let max_reads = 10;
+        let result = create_poa_consensus(&reads, &max_reads);
+        
+        assert!(!result.0.is_empty());
+        assert!(!result.1.is_empty());
+        // Should handle single read case
+    }
+
+    #[test]
+    fn test_create_poa_consensus_complex_gaps() {
+        let mut reads = VecDeque::new();
+        
+        let alignment1 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read1".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        let alignment2 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read2".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"AC--AC--ACGTACGT".to_vec(), // Multiple gaps
+            Some(vec![b'I' - PHRED_OFFSET; 12]),
+            90.0,
+        );
+        
+        let alignment3 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read3".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTAC--ACGT".to_vec(), // Different gap pattern
+            Some(vec![b'I' - PHRED_OFFSET; 14]),
+            95.0,
+        );
+        
+        reads.push_back(create_test_sorting_read(alignment1));
+        reads.push_back(create_test_sorting_read(alignment2));
+        reads.push_back(create_test_sorting_read(alignment3));
+        
+        let max_reads = 10;
+        let result = create_poa_consensus(&reads, &max_reads);
+        
+        assert!(!result.0.is_empty());
+        assert!(!result.1.is_empty());
+        // Should handle complex gap patterns
+    }
+
+    #[test]
+    fn test_poa_consensus_direct() {
+        let quals = vec![
+            vec![b'I' - PHRED_OFFSET; 8],
+            vec![b'I' - PHRED_OFFSET; 8]];
+
+        let reference = "ACGTACGT\0".as_bytes().to_vec();
+        let read1 = "ACGTACGT\0".as_bytes().to_vec();
+        let read2 = "ACGTACGT\0".as_bytes().to_vec();
+        let vec_of_reads = vec![reference, read1, read2];
+        let result = poa_consensus(&vec_of_reads, &quals);
+        
+        assert_eq!(result.0, "ACGTACGT".as_bytes().to_vec());
+        assert_eq!(result.1.len(), 8);
+        assert!(result.1.iter().all(|&q| q > 0)); // All quality scores should be positive
+    }
+
+    #[test]
+    fn test_poa_consensus_with_disagreement() {
+        let quals = vec![
+            vec![b'I' - PHRED_OFFSET; 8],
+            vec![b'I' - PHRED_OFFSET; 8]];
+
+        let reference = "ACGTACGT\0".as_bytes().to_vec();
+        let read1 = "TCGTACGA\0".as_bytes().to_vec(); // Different first and last base
+        let read2 = "ACGTACGT\0".as_bytes().to_vec();
+        let vec_of_reads = vec![reference, read1, read2];
+        let result = poa_consensus(&vec_of_reads, &quals);
+        
+        assert!(!result.0.is_empty());
+        assert_eq!(result.1.len(), result.0.len());
+        // Should handle disagreements and pick consensus
+    }
+
+    #[test]
+    fn test_get_reference_alignment_rate() {
+        let reference = b"ACGTACGT";
+        let read_perfect = b"ACGTACGT";
+        let rate_perfect = get_reference_alignment_rate(reference, read_perfect);
+        assert_eq!(rate_perfect, 1.0);
+        
+        let read_half_match = b"ACGTTTTT";
+        let rate_half = get_reference_alignment_rate(reference, read_half_match);
+        assert_eq!(rate_half, 0.625); // 5 matches out of 8: positions 0,1,2,3,7
+        
+        let read_some_match = b"AAAAAAAA"; // Matches at positions 0,4: A vs A
+        let rate_some = get_reference_alignment_rate(reference, read_some_match);
+        assert_eq!(rate_some, 0.25); // 2 matches out of 8
+        
+        // Test with gaps and Ns - gaps are skipped in calculation
+        let reference_with_gap = b"ACG-TACGT";
+        let read_with_gap = b"ACG-TACGT";
+        let rate_gap = get_reference_alignment_rate(reference_with_gap, read_with_gap);
+        assert_eq!(rate_gap, 1.0);
+        
+        // Test mixed case
+        let reference_mixed = b"ACGTACGT";
+        let read_mixed = b"ACGTTTCG"; // 4 matches out of 8: positions 0,1,2,3
+        let rate_mixed = get_reference_alignment_rate(reference_mixed, read_mixed);
+        assert_eq!(rate_mixed, 0.5);
+    }
+
+    #[test]
+    fn test_consensus_with_downsampling() {
+        let mut reads = VecDeque::new();
+        
+        // Create more reads than the downsample limit
+        for i in 0..15 {
+            let alignment = create_test_alignment_result(
+                "test_ref".to_string(),
+                format!("read{}", i),
+                b"ACGTACGTACGTACGT".to_vec(),
+                b"ACGTACGTACGTACGT".to_vec(),
+                Some(vec![b'I' - PHRED_OFFSET; 16]),
+                100.0,
+            );
+            reads.push_back(create_test_sorting_read(alignment));
+        }
+        
+        let max_reads = 5; // Downsample to 5 reads
+        let result = create_poa_consensus(&reads, &max_reads);
+        
+        assert!(!result.0.is_empty());
+        assert!(!result.1.is_empty());
+        // The algorithm should only use the first 5 reads due to downsampling
+    }
+
+    #[test]
+    fn test_consensus_with_mismatches() {
+        let mut reads = VecDeque::new();
+        
+        let alignment1 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read1".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        let alignment2 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read2".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"TCGTACGTACGTACGA".to_vec(), // Mismatches at positions 0 and 15
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            90.0,
+        );
+        
+        let alignment3 = create_test_alignment_result(
+            "test_ref".to_string(),
+            "read3".to_string(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            b"ACGTACGTACGTACGT".to_vec(),
+            Some(vec![b'I' - PHRED_OFFSET; 16]),
+            100.0,
+        );
+        
+        reads.push_back(create_test_sorting_read(alignment1));
+        reads.push_back(create_test_sorting_read(alignment2));
+        reads.push_back(create_test_sorting_read(alignment3));
+        
+        let max_reads = 10;
+        let result = create_poa_consensus(&reads, &max_reads);
+        
+        assert!(!result.0.is_empty());
+        assert!(!result.1.is_empty());
+        // Consensus should favor the majority sequence (2 vs 1)
+    }
 
     #[test]
     fn test_cigar_string() {
@@ -569,9 +921,6 @@ mod tests {
             Cigar::Match(8),
         ]);
         assert_eq!(cigar, true_cigar);
-        // CGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAG-----------------------------------------------------------------------------------------------------------------------------------------------------------------GTAGGAGCCGTTACCAGGATGA------AGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAACAAGCTAACGGTGCAGGATCTTGGGTTTCTGTCTCTTATTCACATCTGACGCTGCCGACGACGAGGTATAAGTGTAGATATCGGTGGTCGCCGTATCATT
-        // AAACCCAAGATCCTGCACCGTTAGCTTGCGTACGCTAGACATTGTGCCGCATCGATTGTAGTGACAATAGGAAATGACGGCTATACAAGGTAGGAGCCGTTACCAGGATGAAGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAACAAGCTAACGGTGCAGGATCTTGGGTTTCTGTCTCTTATTCACATCTGACGCTGCCGACGACGAGGTATAAGTGTAGATATCGGTGGTCGCCGTATCATTACAAAAGTGGGTGGGGGGGGGGGGGGGGC
-        // CGTACGCTAGACATTGTGCCGCATC22222222222222TAGGAAATGACGGCTATACAAGGCATCGCGGTGTCTCGTCAATACACCTTACGGAGGCATTGGATGATAATGTCGCAAGGAGGTCTCAAGATTCTGTACCACACGTCGGCACGCGATTGAACCAATGGACAGAGGACAGGATACGTAGGATCACCAACTAGGTCATTAGGTGGAAGGTGATACGTAGGAGCCGTTACCAGGATGAACGATGAGGTTATTAGGGGATCCGCTTTAAGGCCGGTCCTAGCAANNNNNNNNNNNNNNNNNNNNNNNNNNNNCTGTCTCTTATACACATCTGACGCTGCCGACGANNNNNNNNNNGTGTAGATCTCGGTGGTCGCCGTATCATT
     }
 
     #[test]
