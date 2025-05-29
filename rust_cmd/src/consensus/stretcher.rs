@@ -378,7 +378,7 @@ impl AlignmentCandidate {
                     match base_qual.0 {
                         b'-' => {panic!("Can't insert a deletion")}
                         _ => {
-                            cigar_tokens.push(AlignmentTag::MatchMismatch(1));
+                            cigar_tokens.push(AlignmentTag::Ins(1));
                             resulting_alignmented_qual.push(base_qual.1.unwrap() + 33);
                         }
                     }

@@ -1,3 +1,26 @@
+//! # Call Events Module
+//!
+//! This module contains functionality for processing BAM files to extract and analyze
+//! genetic events from aligned sequencing reads. It provides tools for:
+//!
+//! - Extracting alignment information from BAM records
+//! - Parsing CIGAR strings to identify insertions, deletions, and mismatches
+//! - Mapping events to target regions within reference sequences
+//! - Extracting custom BAM tags for read metadata
+//! - Generating event summaries for downstream analysis
+//!
+//! The primary entry point is the `BamCallingParser` struct, which processes
+//! BAM files according to a sequence layout configuration and outputs
+//! tabular data describing the events found in each read.
+//!
+//! ## Key Components
+//!
+//! - `ExtractorTags`: Enum for custom BAM tags containing read metadata
+//! - `BaseModifications`: Enum representing nucleotide substitutions
+//! - `FullAlignment`: Enum representing alignment events (matches, mismatches, indels)
+//! - `TargetRange`: Struct representing genomic regions of interest
+//! - `BamCallingParser`: Main parser for processing BAM files
+
 use std::cmp::{min};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -13,7 +36,11 @@ use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout};
 use crate::reference::fasta_reference::ReferenceManager;
 
 
-// Derive the Clone and PartialEq traits for the ExtractorTags enum
+/// Custom BAM tags used to store metadata about sequencing reads.
+///
+/// These tags contain information about read counts, alignment scores,
+/// barcode sequences, and target regions. The tags are stored in BAM
+/// auxiliary fields and extracted during processing.
 #[derive(Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum ExtractorTags {
@@ -47,18 +74,34 @@ pub enum ExtractorTags {
     TARGET { reference_name: String, target_offset_in_reference: usize},
 }
 
+/// A pair linking an extractor tag with its string value.
 #[derive(Clone, PartialEq)]
 struct ExtractorPair {
     extractor: ExtractorTags,
     value: String,
 }
 
+/// State tracking for target extraction operations.
 #[allow(dead_code)]
 pub struct TargetExtractorState {
     current_target_id: usize,
 }
 
 impl ExtractorTags {
+    /// Extracts and parses a custom BAM tag based on its two-byte identifier.
+    ///
+    /// This function matches two-byte tag identifiers against known patterns and
+    /// constructs the appropriate `ExtractorTags` variant. It handles read counts,
+    /// alignment scores, barcode sequences, and target region tags.
+    ///
+    /// # Arguments
+    /// * `tag` - Two-byte tag identifier from BAM auxiliary field
+    /// * `value` - String value associated with the tag
+    /// * `reference_name` - Name of the reference sequence
+    /// * `sequence_layout` - Layout configuration for validation
+    ///
+    /// # Returns
+    /// `Some(ExtractorTags)` if the tag is recognized, `None` otherwise
     pub fn extract_matching_tag(tag: &[u8; 2], value: &String, reference_name: &String, sequence_layout: &SequenceLayout) -> Option<ExtractorTags> {
         //println!("tag {} {} value {}",char::from(tag[0]).as_ascii().unwrap(),char::from(tag[1]).as_ascii().unwrap(),value);
         match tag {
@@ -103,6 +146,11 @@ impl ExtractorTags {
 
 }
 
+/// Represents all possible nucleotide substitutions (from -> to).
+///
+/// Each variant represents a specific base change, where the first letter
+/// is the reference base and the second letter is the observed base.
+/// For example, `AC` represents A in the reference changed to C in the read.
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
 enum BaseModifications {
     AC,
@@ -128,6 +176,9 @@ enum BaseModifications {
 }
 
 impl BaseModifications {
+    /// Returns the target nucleotide for this base modification.
+    ///
+    /// For a modification like `AC` (A->C), this returns `C` (the target base).
     pub fn modified_base(&self) -> u8 {
         match self {
             BaseModifications::AC => b'C',
@@ -153,6 +204,17 @@ impl BaseModifications {
         }
     }
 
+    /// Creates a `BaseModifications` variant from reference and observed bases.
+    ///
+    /// # Arguments
+    /// * `base1` - The reference nucleotide
+    /// * `base2` - The observed nucleotide in the read
+    ///
+    /// # Returns
+    /// The corresponding `BaseModifications` variant
+    ///
+    /// # Panics
+    /// Panics if either base is not a valid nucleotide (A, C, G, T, N)
     pub fn from_modified_bases(base1: u8, base2: u8) -> BaseModifications {
         match (base1.to_ascii_uppercase(), base2.to_ascii_uppercase()) {
             (b'A', b'C') => BaseModifications::AC,
@@ -175,12 +237,20 @@ impl BaseModifications {
             (b'N', b'C') => BaseModifications::NC,
             (b'N', b'G') => BaseModifications::NG,
             (b'N', b'T') => BaseModifications::NT,
-            (b1, b2) => panic!("Unable to convert bases {} and {}", b1, b2)
+            (b1, b2) => panic!("Unable to convert bases {} and {}", b1 as char, b2 as char)
         }
     }
 }
 
 
+/// Represents different types of alignment events between a read and reference.
+///
+/// Each variant contains the reference position and additional information
+/// about the event type:
+/// - `Insertion`: Extra bases in the read not present in reference
+/// - `Deletion`: Bases missing from the read that are present in reference  
+/// - `Match`: Exact sequence match between read and reference
+/// - `Mismatch`: Sequence differences between read and reference
 #[derive(PartialEq, Debug, Eq, Hash, Clone)]
 enum FullAlignment {
     Insertion(usize, Vec<u8>),
@@ -190,6 +260,7 @@ enum FullAlignment {
 }
 
 impl FullAlignment {
+    /// Returns the genomic range (start, end) covered by this alignment event.
     pub fn to_range(&self) -> (usize, usize) {
         match self {
             FullAlignment::Insertion(x, y) => (*x as usize, *x as usize + y.len()),
@@ -200,6 +271,13 @@ impl FullAlignment {
     }
 
 
+    /// Encodes the alignment event as a string for output.
+    ///
+    /// Returns a formatted string describing the event, or `None` for matches
+    /// which are typically not reported. Format examples:
+    /// - Insertion: "4I+10+ACGT" (4 bases inserted at position 10: ACGT)
+    /// - Deletion: "5D+15" (5 bases deleted starting at position 15)
+    /// - Mismatch: "2S+20+CG" (2 substitutions at position 20: to CG)
     pub fn to_encoding(&self) -> Option<String> {
         match self {
             FullAlignment::Insertion(x, y) => {
@@ -218,54 +296,25 @@ impl FullAlignment {
     }
 }
 
+/// A reference sequence with its name and nucleotide sequence.
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct Reference {
     name: String,
     sequence: String,
 }
 
-/// Compares two nucleotide sequences and breaks them up into sections of matches and mismatches.
+/// Compares two nucleotide sequences and identifies contiguous regions of matches and mismatches.
 ///
-/// This function iterates over two nucleotide sequences represented as byte vectors, comparing
-/// each base of the `reference` sequence with the corresponding base in the `sequence`. It
-/// categorizes each section into either a match or a mismatch, based on the comparison. The
-/// function takes into account an offset for the reference sequence to properly align the
-/// sequences for comparison.
+/// This function performs a base-by-base comparison between reference and read sequences,
+/// grouping consecutive matches and mismatches into separate alignment events.
 ///
-/// # Parameters
-/// - `reference`: A `Vec<u8>` representing the reference sequence of nucleotides.
-/// - `sequence`: A slice of u8 (`&[u8]`) representing the sequence of nucleotides to compare
-///   against the reference.
-/// - `reference_offset`: A reference to a u32 value representing the offset at which the comparison
-///   of the `reference` sequence starts.
+/// # Arguments
+/// * `reference` - Reference sequence as bytes
+/// * `sequence` - Read sequence as bytes to compare against reference
+/// * `reference_offset` - Starting position in the reference coordinate system
 ///
 /// # Returns
-/// A `Vec<FullAlignment>` where each `FullAlignment` is either a `Match` or `Mismatch`.
-/// `Match` contains the starting position and length of the match, while `Mismatch` contains
-/// the starting position and the mismatched sequence as a `Vec<u8>`.
-///
-/// # Examples
-/// ```
-/// enum FullAlignment {
-///     Match(u32, u32),       // Start position and length of the match
-///     Mismatch(u32, Vec<u8>) // Start position and mismatched sequence
-/// }
-///
-/// fn main() {
-///     let reference = vec![65, 67, 71, 84, 65, 67, 71, 84]; // ACGTACGT
-///     let sequence = [65, 67, 71, 84, 84, 71, 67, 116];     // ACGTTGCt
-///     let reference_offset = 0;
-///     let alignments = breakup_nucleotide_sequences(&reference, &sequence, &reference_offset);
-///
-///     for alignment in alignments {
-///         match alignment {
-///             FullAlignment::Match(start, len) => println!("Match at {}: Length {}", start, len),
-///             FullAlignment::Mismatch(start, seq) => println!("Mismatch at {}: {:?}", start, seq),
-///         }
-///     }
-/// }
-/// ```
-/// Note: Ensure the `FullAlignment` enum is defined in your code as it is used in the function's return type.
+/// Vector of `FullAlignment` events representing matches and mismatches
 fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_offset: &usize) -> Vec<FullAlignment> {
     let mut return_sections = Vec::new();
     let mut current_section = Vec::new();
@@ -313,42 +362,30 @@ fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_off
     return_sections
 }
 
-/// Extracts and returns a vector of `FullAlignment` elements from given reference and read sequences based on the CIGAR string.
+/// Extracts alignment events from a CIGAR string and sequence data.
 ///
-/// This function processes a CIGAR string to align a read sequence against a reference sequence starting from a specified position. It supports matches, insertions, and deletions but panics on unsupported CIGAR operations like reference skips, soft clips, hard clips, pads, equals, and diffs.
+/// This function processes CIGAR operations to generate detailed alignment events
+/// including matches, mismatches, insertions, and deletions. It handles soft clipping
+/// at read ends by optionally realigning those regions.
 ///
-/// # Parameters
-/// - `ref_start`: A reference to a `u32` indicating the start position on the reference sequence where the alignment should begin.
-/// - `reference_sequence`: A reference to a vector of `u8` bytes representing the reference DNA sequence.
-/// - `read_seq`: A reference to a vector of `u8` bytes representing the read DNA sequence to be aligned.
-/// - `cigar`: A reference to a `CigarStringView` which contains the CIGAR operations that describe how the read sequence aligns to the reference sequence.
+/// # Arguments
+/// * `ref_start` - Starting position on the reference sequence
+/// * `reference_sequence` - Reference DNA sequence as bytes
+/// * `read_seq` - Read DNA sequence as bytes
+/// * `cigar` - CIGAR string describing the alignment
+/// * `realign_soft_clipped_ends` - Whether to realign soft-clipped regions
 ///
 /// # Returns
-/// Returns a vector of `FullAlignment` enumerations that describe the full alignment between the reference and read sequences. This vector may contain elements representing matches, insertions, and deletions according to the CIGAR string.
+/// Vector of `FullAlignment` events describing the complete alignment
 ///
 /// # Panics
-/// The function panics if it encounters unsupported CIGAR operations (`RefSkip`, `SoftClip`, `HardClip`, `Pad`, `Equal`, `Diff`). It is designed to work with a subset of CIGAR operations that represent simple alignments.
-///
-/// # Examples
-/// ```
-/// // Example usage of `extract_read_cigar_elements`
-/// let ref_start = 0;
-/// let reference_sequence = b"ACGTACGT".to_vec();
-/// let read_seq = b"ACGTTACGT".to_vec();
-/// let cigar = CigarStringView::from_string("8M1I".to_string()).unwrap(); // Simplified example; actual initialization may vary
-///
-/// let alignments = extract_read_cigar_elements(&ref_start, &reference_sequence, &read_seq, &cigar);
-/// // Process `alignments` as needed
-/// ```
-///
-/// # Notes
-/// - The function asserts that the entire reference sequence is aligned by the end of the process, which might not always be the case in real-world scenarios. This assertion should be adjusted according to the specific requirements of the alignment algorithm being implemented.
+/// Panics on unsupported CIGAR operations (RefSkip, HardClip, Pad, Equal, Diff)
 fn extract_read_cigar_elements(ref_start: &usize, reference_sequence: &Vec<u8>, read_seq: &Vec<u8>, cigar: &CigarStringView, realign_soft_clipped_ends: &bool) -> Vec<FullAlignment> {
-    let mut ref_pos: usize = *ref_start;
+    let mut ref_pos: usize = if *ref_start == 0 {0} else {*ref_start - 1}; // positions are 1-based, offsets needed here are 0-based
     let mut read_pos: usize = 0;
     let mut alignments = Vec::new();
 
-    println!("red read {} {} ref_pos {}", String::from_utf8(reference_sequence.to_vec()).unwrap(), String::from_utf8(read_seq.to_vec()).unwrap(),ref_pos);
+    println!("red read {} {} ref_pos {} cigar {:?}", String::from_utf8(reference_sequence.to_vec()).unwrap(), String::from_utf8(read_seq.to_vec()).unwrap(),ref_pos,cigar);
 
     cigar.iter().enumerate().for_each(|(index,x)| {
         println!("x {} read pos {} ref pos {}",x.to_string(),read_pos, ref_pos);
@@ -366,6 +403,7 @@ fn extract_read_cigar_elements(ref_start: &usize, reference_sequence: &Vec<u8>, 
             }
             Cigar::Del(ln) => {
                 alignments.push(FullAlignment::Deletion(ref_pos, *ln));
+                println!("del {} {} {} {}", String::from_utf8(reference_sequence.to_vec()).unwrap(), String::from_utf8(read_seq.to_vec()).unwrap(),ref_pos, ref_pos + *ln as usize);
                 ref_pos += *ln as usize;
             }
             Cigar::SoftClip(ln) if index == 0 => {
@@ -413,11 +451,17 @@ fn extract_read_cigar_elements(ref_start: &usize, reference_sequence: &Vec<u8>, 
             }
         }
     });
-    assert_eq!(reference_sequence.len(), ref_pos);
+    assert_eq!(reference_sequence.len(), ref_pos); // make sure we used up the whole reference
 
     alignments
 }
-
+/// Computes the reverse complement of a DNA sequence.
+///
+/// # Arguments
+/// * `dna` - Input DNA sequence string
+///
+/// # Returns
+/// Reverse complement sequence with A<->T and C<->G swaps
 fn reverse_complement(dna: &str) -> String {
     dna.chars()
         .rev() // Reverse the sequence
@@ -431,6 +475,11 @@ fn reverse_complement(dna: &str) -> String {
         .collect()
 }
 
+/// Represents a genomic range of interest for event analysis.
+///
+/// Target ranges define regions where we want to detect and report
+/// alignment events. The orientation indicates whether the target
+/// is on the forward (true) or reverse (false) strand.
 #[derive(PartialEq, PartialOrd, Ord, Debug, Eq, Hash, Clone, Copy)]
 struct TargetRange {
     start: usize,
@@ -439,9 +488,18 @@ struct TargetRange {
 }
 
 impl TargetRange {
+    /// Creates a new target range with the specified coordinates and orientation.
     pub fn new(start: &usize, end: &usize, orientation: &bool) -> TargetRange {
         TargetRange { start: *start, end: *end, orientation: *orientation }
     }
+    /// Checks if this target range intersects with the given coordinates.
+    ///
+    /// # Arguments
+    /// * `start` - Start position to check for intersection
+    /// * `end` - End position to check for intersection
+    ///
+    /// # Returns
+    /// `true` if the ranges overlap, `false` otherwise
     pub fn intersect_position(&self, start: usize, end: usize) -> bool {
         if start < self.start {
             end > self.start && start < self.end
@@ -450,12 +508,17 @@ impl TargetRange {
         }
     }
 
+    /// Checks if this target range intersects with another target range.
     #[allow(dead_code)]
     pub fn intersect(&self, other: &TargetRange) -> bool {
         self.intersect_position(other.start, other.end)
     }
 }
 
+/// Maps target sequences to their positions within a reference sequence.
+///
+/// This structure contains the reference sequence, target sequences,
+/// and a mapping from target indices to their genomic positions.
 #[allow(dead_code)]
 struct TargetPositions {
     reference: String,
@@ -464,6 +527,10 @@ struct TargetPositions {
 }
 
 impl TargetPositions {
+    /// Creates target positions from a sequence layout record.
+    ///
+    /// This function finds all occurrences of target sequences within the
+    /// reference, including both forward and reverse complement matches.
     pub fn from_sequence_layout_entry(record: &ReferenceRecord) -> TargetPositions {
         //println!("Targets {}", record.targets.join(","));
         TargetPositions {
@@ -473,6 +540,14 @@ impl TargetPositions {
         }
     }
 
+    /// Validates and maps target sequences to their positions in the reference.
+    ///
+    /// # Arguments
+    /// * `reference` - The reference sequence to search within
+    /// * `targets` - Vector of target sequences to locate
+    ///
+    /// # Returns
+    /// HashMap mapping target indices to their genomic positions
     fn validate_target_positions(reference: &str, targets: &Vec<String>) -> HashMap<usize, Vec<TargetRange>> {
         let mut target_locations: HashMap<usize, Vec<TargetRange>> = HashMap::new();
 
@@ -488,6 +563,11 @@ impl TargetPositions {
     }
 }
 
+/// Main parser for processing BAM files and extracting alignment events.
+///
+/// This parser reads BAM files, extracts alignment information, and maps
+/// events to target regions defined in the sequence layout. It outputs
+/// tabular data describing the events found in each read.
 #[allow(dead_code)]
 pub struct BamCallingParser<'a, 's, 't> {
     sequence_layout: SequenceLayout,
@@ -497,6 +577,13 @@ pub struct BamCallingParser<'a, 's, 't> {
 }
 
 impl BamCallingParser<'_, '_, '_> {
+    /// Creates a new BAM calling parser from a sequence layout configuration.
+    ///
+    /// # Arguments
+    /// * `sequence_layout_design` - Configuration defining references and targets
+    ///
+    /// # Returns
+    /// Configured parser ready to process BAM files
     pub fn new(sequence_layout_design: &SequenceLayout) -> BamCallingParser {
         let rm = ReferenceManager::from_yaml_input(sequence_layout_design, 12, 6);
 
@@ -524,6 +611,14 @@ impl BamCallingParser<'_, '_, '_> {
         }
     }
 
+    /// Extracts custom tags from a BAM record.
+    ///
+    /// # Arguments
+    /// * `bam_entry` - BAM record to extract tags from
+    /// * `reference` - Reference sequence name
+    ///
+    /// # Returns
+    /// Vector of extracted tags found in the BAM record
     fn extraction_tags(&self, bam_entry: &Record, reference: &String) -> Vec<ExtractorTags> {
         let mut extractors = Vec::new();
 
@@ -612,7 +707,25 @@ impl BamCallingParser<'_, '_, '_> {
     }
 
 
-    //fn process_alignment(reference: &str, query: &str, cigar: &str) -> Vec<String> {}
+    fn convert_reference_sequence(seq: &[u8])-> Vec<u8> {
+        seq.iter().map(|x| {match *x {
+            b'A' | b'a' | b'C' | b'c' | b'G' | b'g' |b'T' | b't' => {*x}
+            _ => b'N'
+        }}).collect()
+    }
+
+    /// Processes a BAM file and outputs event analysis to a TSV file.
+    ///
+    /// This is the main entry point for BAM processing. It reads each record,
+    /// extracts alignment events, maps them to target regions, and outputs
+    /// a summary table.
+    ///
+    /// # Arguments
+    /// * `bam_file` - Path to input BAM file
+    /// * `output_file` - Path to output TSV file
+    ///
+    /// # Returns
+    /// `Result<(), std::io::Error>` indicating success or failure
     pub fn output_bam_file_entries(&self, bam_file: &str, output_file: &str) -> std::io::Result<()> {
         let mut bam = bam::Reader::from_path(bam_file).unwrap();
         let header = bam::Header::from_template(bam.header());
@@ -643,7 +756,7 @@ impl BamCallingParser<'_, '_, '_> {
 
                     let reference = self.reference_manager.reference_name_to_ref.get(ref_name).expect("Unable to find reference");
                     let ref_name = String::from_utf8(self.reference_manager.references.get(reference).unwrap().name.clone()).unwrap();
-                    let reference_sequence = self.reference_manager.references.get(reference).unwrap().sequence.clone();
+                    let reference_sequence = BamCallingParser::convert_reference_sequence(self.reference_manager.references.get(reference).unwrap().sequence.as_slice());
                     let alignment_start = record.reference_start() as usize;
 
                     println!("read name {} start {}",String::from_utf8(record.name().to_vec()).unwrap(),alignment_start);
