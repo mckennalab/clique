@@ -250,7 +250,7 @@ fn create_sam_read(
 
         match consensus_reads {
             None => {
-                None
+                panic!("Unable to create consensus for reads: {:?}", buffered_reads);
             }
             Some(con) => {
                 //println!("New alignment: \n{}\n{}\n{:?}", FastaBase::string(&new_alignment.read_aligned),FastaBase::string(&new_alignment.reference_aligned),simplify_cigar_string(&new_alignment.cigar_string));
