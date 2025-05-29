@@ -289,8 +289,9 @@ impl AlignmentCandidate {
         while existing_index < existing_ref_size && incoming_ref_index < alignment.reference_aligned.len() {
             let incoming_ref_base = &alignment.reference_aligned[incoming_ref_index];
             let incoming_read_base = &alignment.read_aligned[incoming_ref_index];
+            
             let incoming_read_qual = if incoming_read_base == &b'-' { &b'+' } else { &(read_qual[incoming_read_qual_index] + 32)};
-
+            println!("incoming read qual {} {}  {}", *incoming_read_qual as char, *incoming_read_base as char,(read_qual[incoming_read_qual_index] + 32));
             let existing_ref_base = &mut self.reference.get_mut(existing_index).unwrap();
             //println!("Loop: {:?} and {}, pos {} and {}, max is {} and {}", *existing_ref_base, *incoming_ref_base as char, existing_index, incoming_ref_index, existing_ref_size, alignment.read_aligned.len());
 
