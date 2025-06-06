@@ -23,6 +23,7 @@
 
 use std::cmp::{min};
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::fs::File;
 use bio::bio_types::genome::AbstractInterval;
 use bio::bio_types::sequence::{SequenceRead};
@@ -31,9 +32,12 @@ use rust_htslib::bam;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{Read, Record};
 use rust_htslib::bam::record::{Aux, Cigar, CigarStringView};
-use std::io::Write;
+use read_strategies::sequence_layout::UMIConfiguration;
 use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout};
 use crate::reference::fasta_reference::ReferenceManager;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::io::{BufWriter, Write};
 
 
 /// Custom BAM tags used to store metadata about sequencing reads.
@@ -66,12 +70,27 @@ pub enum ExtractorTags {
 
     // BARCODE represents a extracted barcode sequence with a reference name and nucleotide value, both of type String
     // Reference name starts with 'b' and ends in 0-9
-    BARCODE { reference_name: String, value: String },
+    BARCODE { reference_name: String, value: String, tag: String },
 
     // TARGET represents a CRISPR / editing target with a reference name, wild-type sequence, and editor type
     // Reference name starts with 'e-z' and ends in 0-9
     // 'a-z' are extracted tags
     TARGET { reference_name: String, target_offset_in_reference: usize},
+}
+
+impl fmt::Display for ExtractorTags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExtractorTags::AC { value } => {write!(f, "AC({})", value)}
+            ExtractorTags::AD { value } => {write!(f, "AD({})", value)}
+            ExtractorTags::AN { value } => {write!(f, "AN({})", value)}
+            ExtractorTags::AR { value } => {write!(f, "AR({})", value)}
+            ExtractorTags::AS { value } => {write!(f, "AS({})", value)}
+            ExtractorTags::BARCODE { reference_name, value, tag } => {write!(f, "{},{}", tag, value)}
+            ExtractorTags::TARGET { reference_name, target_offset_in_reference } => {write!(f, "TARGET({},{})", reference_name, target_offset_in_reference)}
+        }
+
+    }
 }
 
 /// A pair linking an extractor tag with its string value.
@@ -112,29 +131,35 @@ impl ExtractorTags {
             &[b'a', b'c'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
             &[b'a', b'd'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
             &[b'a', b'n'] => { Some(ExtractorTags::AC{value: value.parse::<u64>().expect("Unable to parse integer from rc tag")})},
-            &[b'a', b'r'] => { None}, // TODO process read names
+            &[b'a', b'r'] => { None }, // TODO process read names
             &[b'a', b's'] => { Some(ExtractorTags::AS{value: value.parse::<f64>().expect("Unable to parse integer from rc tag")})},
             &[x, _y] if x == b'b' => {
-                // make sure the reference is in the lookup table
-                assert!(sequence_layout.references.contains_key(reference_name));
-                Some(ExtractorTags::BARCODE{
-                    reference_name: reference_name.clone(),
-                    value: value.clone(),
-                })
+                panic!("not sure what to do with this tag")
             },
+            
             &[x, y] if x >= b'e' && x <= b'z' => {
-
                 assert!(y >= b'0' && y <= b'9');
                 let second_offset : usize = (y as usize) - 48; // 48 = '0' in ASCII
                 let target_offset = second_offset * ((x as usize) - 101); // 101 = 'e' in ASCII
-
+                let full_offset = target_offset + second_offset;
+                
                 // make sure the reference is in the lookup table
                 assert!(sequence_layout.references.contains_key(reference_name));
-                let _ref_obj = sequence_layout.references.get(reference_name).unwrap();
-
-                Some(ExtractorTags::TARGET{
+                let ref_obj = sequence_layout.references.get(reference_name).unwrap();
+                
+                // now get the barcode name
+                let mut umi_hit : Option<(String,UMIConfiguration)> = None; 
+                ref_obj.umi_configurations.iter().for_each(|(umi_name,umi_details)| {
+                    if umi_details.order == full_offset {
+                        umi_hit = Some((umi_name.clone(),umi_details.clone()));
+                    }
+                });
+                if umi_hit.is_none() {panic!("Unable to find UMI configuration for offset {}",full_offset);}
+                
+                Some(ExtractorTags::BARCODE{
                     reference_name: reference_name.clone(),
-                    target_offset_in_reference: target_offset,
+                    value: value.clone(),
+                    tag: format!("{}{}",tag[0] as char, tag[1] as char),
                 })
             },
             _ => {
@@ -321,7 +346,7 @@ fn breakup_nucleotide_sequences(reference: &[u8], sequence: &[u8], reference_off
     let mut in_match = false;
     let mut segment_length = 0;
 
-    println!("{} {} ", String::from_utf8(reference.to_vec()).unwrap(), String::from_utf8(sequence.to_vec()).unwrap());
+    //println!("{} {} ", String::from_utf8(reference.to_vec()).unwrap(), String::from_utf8(sequence.to_vec()).unwrap());
 
     for (position, (reference_base, read_base)) in reference.iter().zip(sequence.iter()).enumerate() {
         let section_start = reference_offset + (position as usize) - (current_section.len() as usize);
@@ -385,10 +410,10 @@ fn extract_read_cigar_elements(ref_start: &usize, reference_sequence: &Vec<u8>, 
     let mut read_pos: usize = 0;
     let mut alignments = Vec::new();
 
-    println!("red read {} {} ref_pos {} cigar {:?}", String::from_utf8(reference_sequence.to_vec()).unwrap(), String::from_utf8(read_seq.to_vec()).unwrap(),ref_pos,cigar);
+    //println!("red read {} {} ref_pos {} cigar {:?}", String::from_utf8(reference_sequence.to_vec()).unwrap(), String::from_utf8(read_seq.to_vec()).unwrap(),ref_pos,cigar);
 
     cigar.iter().enumerate().for_each(|(index,x)| {
-        println!("x {} read pos {} ref pos {}",x.to_string(),read_pos, ref_pos);
+        //println!("x {} read pos {} ref pos {}",x.to_string(),read_pos, ref_pos);
         match x {
             Cigar::Match(ln) => {
                 let ref_seq = &reference_sequence[(ref_pos as usize)..((ref_pos + *ln as usize) as usize)];
@@ -403,7 +428,7 @@ fn extract_read_cigar_elements(ref_start: &usize, reference_sequence: &Vec<u8>, 
             }
             Cigar::Del(ln) => {
                 alignments.push(FullAlignment::Deletion(ref_pos, *ln));
-                println!("del {} {} {} {}", String::from_utf8(reference_sequence.to_vec()).unwrap(), String::from_utf8(read_seq.to_vec()).unwrap(),ref_pos, ref_pos + *ln as usize);
+                //println!("del {} {} {} {}", String::from_utf8(reference_sequence.to_vec()).unwrap(), String::from_utf8(read_seq.to_vec()).unwrap(),ref_pos, ref_pos + *ln as usize);
                 ref_pos += *ln as usize;
             }
             Cigar::SoftClip(ln) if index == 0 => {
@@ -480,8 +505,9 @@ fn reverse_complement(dna: &str) -> String {
 /// Target ranges define regions where we want to detect and report
 /// alignment events. The orientation indicates whether the target
 /// is on the forward (true) or reverse (false) strand.
-#[derive(PartialEq, PartialOrd, Ord, Debug, Eq, Hash, Clone, Copy)]
+#[derive(PartialEq, PartialOrd, Ord, Debug, Eq, Hash, Clone)]
 struct TargetRange {
+    name: String,
     start: usize,
     end: usize,
     orientation: bool,
@@ -489,8 +515,8 @@ struct TargetRange {
 
 impl TargetRange {
     /// Creates a new target range with the specified coordinates and orientation.
-    pub fn new(start: &usize, end: &usize, orientation: &bool) -> TargetRange {
-        TargetRange { start: *start, end: *end, orientation: *orientation }
+    pub fn new(name: &String, start: &usize, end: &usize, orientation: &bool) -> TargetRange {
+        TargetRange { name: name.clone(), start: *start, end: *end, orientation: *orientation }
     }
     /// Checks if this target range intersects with the given coordinates.
     ///
@@ -552,13 +578,16 @@ impl TargetPositions {
         let mut target_locations: HashMap<usize, Vec<TargetRange>> = HashMap::new();
 
         targets.iter().enumerate().for_each(|(index, target)| {
-            let mut target_indices: Vec<TargetRange> = reference.match_indices(target).into_iter().map(|(pos, _str)| TargetRange::new(&pos, &(pos + target.len()), &true)).collect();
-            let mut target_rev: Vec<TargetRange> = reference.match_indices(&reverse_complement(target.as_str())).into_iter().map(|(pos, _str)| TargetRange::new(&pos, &(pos + target.len()), &true)).collect();
-            target_indices.append(&mut target_rev);
+            //println!("{}\n {:?}\n", index, target.clone());
+            let mut target_indices: Vec<TargetRange> = reference.match_indices(target).into_iter().map(|(pos, str)| TargetRange::new(&str.to_string(), &pos, &(pos + target.len()), &true)).collect();
+            //println!("{}\n {:?}\n", reference, target_indices.clone());
+            //let mut target_rev: Vec<TargetRange> = reference.match_indices(&reverse_complement(target.as_str())).into_iter().map(|(pos, str)| TargetRange::new(&str.to_string(), &pos, &(pos + target.len()), &true)).collect();
+            //target_indices.append(&mut target_rev);
             target_indices.sort();
             target_locations.insert(index.clone(), target_indices);
         });
 
+        println!("{}\n {:?}\n", reference, target_locations.clone());
         target_locations
     }
 }
@@ -574,6 +603,7 @@ pub struct BamCallingParser<'a, 's, 't> {
     reference_manager: ReferenceManager<'a, 's, 't>,
     target_positions: HashMap<String, TargetPositions>,
     ordered_target_ranges: HashMap<String, Vec<(TargetRange, String)>>, // keep a ordered list of target ranges for simplicity
+    references: Option<Vec<String>>,
 }
 
 impl BamCallingParser<'_, '_, '_> {
@@ -584,30 +614,49 @@ impl BamCallingParser<'_, '_, '_> {
     ///
     /// # Returns
     /// Configured parser ready to process BAM files
-    pub fn new(sequence_layout_design: &SequenceLayout) -> BamCallingParser {
+    pub fn new(sequence_layout_design: &SequenceLayout, references: Option<String>) -> BamCallingParser {
         let rm = ReferenceManager::from_yaml_input(sequence_layout_design, 12, 6);
 
+        let references: Option<Vec<String>> = match references {
+            None => {None}
+            Some(x) => {
+                Some(x.split(",").map(|x| {
+                    assert!(sequence_layout_design.references.contains_key(x));
+                    x.to_string()
+                }).collect())    
+            }
+        };
+        
         let mut ordered_target_ranges = HashMap::new();
-        let target_positions = sequence_layout_design.references.iter().map(|(name, reference)| {
-            let mut ordered_targets: Vec<(TargetRange, String)> = Vec::new();
+        let mut target_positions = HashMap::default();
+        sequence_layout_design.references.iter().for_each(|(name, reference)| {
+            if references.is_none() || !references.as_ref().unwrap().contains(&name) {
+                let mut ordered_targets: Vec<(TargetRange, String)> = Vec::new();
 
-            let positions = TargetPositions::from_sequence_layout_entry(reference);
-            positions.targets.iter().enumerate().for_each(|(index, target_name)| {
-                positions.positions.get(&index).unwrap().iter().for_each(|target_pos| ordered_targets.push((target_pos.clone(), target_name.clone())));
-            });
+                let individual_target_positions = TargetPositions::from_sequence_layout_entry(reference);
 
-            ordered_targets.sort();
-            ordered_target_ranges.insert(name.clone(), ordered_targets);
+                individual_target_positions.targets.iter().enumerate().for_each(|(index, target_name)| {
+                    println!("{}\n {:?}\n", index, target_name.clone());
 
-            (name.clone(), positions)
-        }).collect();
+                    individual_target_positions.positions.get(&index).unwrap().iter().for_each(|target_pos| ordered_targets.push((target_pos.clone(), target_name.clone())));
+                });
 
+                ordered_targets.sort_by_key(|k| k.0.start);
+                println!("{}\n {:?}\n", name, ordered_targets.clone());
 
+                ordered_target_ranges.insert(name.clone(), ordered_targets);
+                target_positions.insert(name.clone(), individual_target_positions);
+            }
+        });
+
+        ordered_target_ranges.iter().for_each(|(x,y)| {println!("{} {:?}", x, y);});
+        
         BamCallingParser {
             sequence_layout: sequence_layout_design.clone(),
             reference_manager: rm,
             target_positions,
             ordered_target_ranges,
+            references,
         }
     }
 
@@ -693,17 +742,16 @@ impl BamCallingParser<'_, '_, '_> {
     /// encoding using `to_encoding`. If no valid encoding is found, an uppercase empty string
     /// is used, which is converted to "NONE" if the entire string for a target is empty.
     fn target_overlaps(reference_targets: &Vec<(TargetRange, String)>, full_alignment_tokens: &Vec<FullAlignment>) -> Vec<String> {
-        let target_overlap = reference_targets.iter().map(|(target_pos, _name)| {
-            full_alignment_tokens.iter().filter(|tk| {
+       reference_targets.iter().map(|(target_pos, name)| {
+            let events = full_alignment_tokens.iter().filter(|tk| {
                 let range = tk.to_range();
                 match tk {
                     FullAlignment::Match(_, _) => false,
                     _ => target_pos.intersect_position(range.0, range.1),
                 }
-            }).map(|tk| { tk.to_encoding().unwrap_or("".to_ascii_uppercase()) }).into_iter().collect::<Vec<String>>().join(",")
-        }).collect::<Vec<String>>();
-
-        target_overlap.into_iter().map(|st| if st == "" { "NONE".to_ascii_uppercase() } else { st }).collect()
+            }).map(|tk| { tk.to_encoding().unwrap_or("".to_ascii_uppercase()) }).into_iter().collect::<Vec<String>>().join(",");
+            format!("{}={}",name.clone(), events)
+        }).collect::<Vec<String>>()
     }
 
 
@@ -730,15 +778,12 @@ impl BamCallingParser<'_, '_, '_> {
         let mut bam = bam::Reader::from_path(bam_file).unwrap();
         let header = bam::Header::from_template(bam.header());
 
-        for (key, records) in header.to_hashmap() {
-            for record in records {
-                //println!("@{}\tSN:{}\tLN:{}", key, record["SN"], record["LN"]);
-                println!("@{}\tSN:{:?}", key, record);
-            }
-        }
-
+        
         let mut file = File::create(output_file)?;
-        write!(file, "read\tref\talignment_start\ttarget_outcomes\n").expect("Unable to write to output file");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut writer = BufWriter::new(encoder);
+        
+        write!(writer, "read\treference\ttags\ttarget_outcomes\n").expect("Unable to write to output file");
 
         let mut read_count = 0;
 
@@ -759,13 +804,8 @@ impl BamCallingParser<'_, '_, '_> {
                     let reference_sequence = BamCallingParser::convert_reference_sequence(self.reference_manager.references.get(reference).unwrap().sequence.as_slice());
                     let alignment_start = record.reference_start() as usize;
 
-                    println!("read name {} start {}",String::from_utf8(record.name().to_vec()).unwrap(),alignment_start);
-
-                    // TODO output extractor tags
                     let extractor_tokens = self.extraction_tags(&record, &ref_name);
-                    let _token_output : Vec<(String,Option<&ExtractorTags>)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id))).into_iter().collect::<Vec<(String,Option<&ExtractorTags>)>>();
-
-                    println!("read name {} start {}",String::from_utf8(record.name().to_vec()).unwrap(),alignment_start);
+                    let token_output : Vec<(String,Option<&ExtractorTags>)> = extractor_id_to_name.iter().map(|(id,name)| (name.clone(),extractor_tokens.get(*id))).into_iter().collect::<Vec<(String,Option<&ExtractorTags>)>>();
 
                     let cigar_tokens = extract_read_cigar_elements(&alignment_start, &reference_sequence, &record.seq().as_bytes(), &record.cigar(), &true);
 
@@ -774,7 +814,18 @@ impl BamCallingParser<'_, '_, '_> {
 
                     let target_output = BamCallingParser::target_overlaps(&reference_targets, &cigar_tokens);
 
-                    write!(file, "{}\t{}\t{}\t{}\n", String::from_utf8(record.name().to_vec()).unwrap(), ref_name, alignment_start, target_output.join(",")).expect("Unable to write to output file");
+                    let token_string = token_output.iter().map(|(x,y)| {
+                        match y {
+                            None => {
+                                format!("{}=>{}",x,"NONE")
+                            }
+                            Some(yy) => {
+                                format!("{}",yy)
+                            }
+                        }
+
+                    }).collect::<Vec<String>>().join(";");
+                    write!(writer, "{}\t{}\t{}\t{}\n", String::from_utf8(record.name().to_vec()).unwrap(), ref_name, token_string, target_output.join(",")).expect("Unable to write to output file");
                 }
                 Err(_x) => {
                     panic!("Underlying BAM file error!")
@@ -793,7 +844,7 @@ mod tests {
 
     #[test]
     fn event_target_intersections() {
-        let target_positions: Vec<(TargetRange,String)> = vec![(TargetRange::new(&25, &50, &true),"Range1".to_ascii_uppercase()),(TargetRange::new(&75, &100, &true),"Range2".to_ascii_uppercase())];
+        let target_positions: Vec<(TargetRange,String)> = vec![(TargetRange::new(&"Target1".to_string(),&25, &50, &true),"Range1".to_ascii_uppercase()),(TargetRange::new(&"Target2".to_string(),&75, &100, &true),"Range2".to_ascii_uppercase())];
         let full_alignment_tokens: Vec<FullAlignment> = vec![FullAlignment::Mismatch(28, vec![BaseModifications::AG,BaseModifications::AC])];
         let overlap = BamCallingParser::target_overlaps(&target_positions,&full_alignment_tokens);
 
@@ -813,20 +864,20 @@ mod tests {
 
     #[test]
     fn target_intersections() {
-        let target_pos1 = TargetRange::new(&0, &20, &true);
-        let target_pos2 = TargetRange::new(&19, &39, &true);
+        let target_pos1 = TargetRange::new(&"Target1".to_string(), &0, &20, &true);
+        let target_pos2 = TargetRange::new(&"Target2".to_string(),&19, &39, &true);
         assert!(target_pos1.intersect(&target_pos2));
         assert!(target_pos2.intersect(&target_pos1));
 
-        let target_pos2 = TargetRange::new(&20, &40, &true);
+        let target_pos2 = TargetRange::new(&"Target2".to_string(),&20, &40, &true);
         assert!(!target_pos1.intersect(&target_pos2));
         assert!(!target_pos2.intersect(&target_pos1));
 
-        let target_pos1 = TargetRange::new(&80, &100, &true);
+        let target_pos1 = TargetRange::new(&"Target1".to_string(),&80, &100, &true);
         assert!(!target_pos1.intersect(&target_pos2));
         assert!(!target_pos2.intersect(&target_pos1));
 
-        let target_pos1 = TargetRange::new(&10, &100, &true);
+        let target_pos1 = TargetRange::new(&"Target1".to_string(),&10, &100, &true);
         assert!(target_pos1.intersect(&target_pos2));
         assert!(target_pos2.intersect(&target_pos1));
     }

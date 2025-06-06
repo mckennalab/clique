@@ -195,6 +195,9 @@ enum Cmd {
 
         #[clap(long)]
         output: String,
+        
+        #[clap(long)]
+        references: Option<String>,
     },
 }
 
@@ -274,10 +277,11 @@ fn main() {
             read_structure,
             bam,
             output,
+            references,
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
 
-            let parser = BamCallingParser::new(&my_yaml);
+            let parser = BamCallingParser::new(&my_yaml, references.clone());
 
             parser.output_bam_file_entries(bam.as_str(), output.as_str() ).expect("Unable to process events");
 
