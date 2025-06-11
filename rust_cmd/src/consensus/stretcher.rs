@@ -412,6 +412,7 @@ impl AlignmentCandidate {
 // ###########################################################################################################"#########################################
 #[cfg(test)]
 mod tests {
+    use utils::read_utils::u8s;
     use super::*;
 
     fn create_alignment_result(read_bases: &str, ref_bases: &str) -> AlignmentResult {

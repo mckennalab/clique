@@ -730,6 +730,8 @@ mod tests {
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::utils::read_utils::fake_reads;
     use std::collections::VecDeque;
+    use read_strategies::sequence_layout::UMISortType;
+
     const FASTA_A: u8 = b'A';
     const FASTA_T: u8 = b'T';
 

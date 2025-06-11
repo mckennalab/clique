@@ -342,17 +342,16 @@ impl UnifiedRead {
     fn decision_tree(&mut self) {
         match (self.read_pattern, &self.read_structure.merge) {
             ((true, true, false, false), Some(MergeStrategy::Align)) => {
-                // TODO: this part is broken = see merge by concat above
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
-                self.seq = Some(
-                    merge_reads_by_alignment(
-                        &self.underlying_reads.read_one,
-                        &self.underlying_reads.read_two.as_ref().unwrap(),
-                        DEFAULT_ALIGNMENT_AFFINE_SCORING.as_ref(),
-                        &self.read_structure,
-                    )
-                    .read_bases,
+                let alignment = merge_reads_by_alignment(
+                    &self.underlying_reads.read_one,
+                    &self.underlying_reads.read_two.as_ref().unwrap(),
+                    DEFAULT_ALIGNMENT_AFFINE_SCORING.as_ref(),
+                    &self.read_structure,
                 );
+                
+                self.seq = Some(alignment.read_bases.clone());
+                self.quals = Some(alignment.read_quals);
 
             }
             ((true, true, false, false), Some(strat))
@@ -475,7 +474,7 @@ pub fn merge_fasta_bases_by_alignment(
     read2_quals: &Vec<u8>,
     merge_initial_scoring: &AffineScoring,
 ) -> MergedSequence {
-    let results = align_two_strings(
+    let mut results = align_two_strings(
         &read1_seq,
         &read2_seq,
         None, // TODO: fix with quality scores
@@ -485,7 +484,7 @@ pub fn merge_fasta_bases_by_alignment(
         read2_name,
         None,
     );
-
+    
     alignment_rate_and_consensus(
         &results.reference_aligned,
         read1_quals,

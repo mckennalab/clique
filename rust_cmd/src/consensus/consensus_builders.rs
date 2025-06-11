@@ -374,8 +374,6 @@ fn poa_consensus(base_sequences: &Vec<Vec<u8>>, qual_sequences: &Vec<Vec<u8>>) -
 
     for seq in base_sequences {
         assert!(!seq.is_empty());
-
-
         let aln = eng.align(seq.as_slice(), &graph);
         graph.add_alignment(&aln, seq.as_slice(), 1);
     }
@@ -397,7 +395,7 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
 
     let reference = alignments.get(0).unwrap();
 
-    (0..ln).for_each(|index| {
+    (0..ln-1).for_each(|index| {
         let mut bases = Vec::new();
         let mut quals = Vec::new();
         &alignments[1..alignments.len()].iter().enumerate().for_each(|(sequence_index, x)| {
@@ -417,20 +415,20 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
             quals.push(qual);
         });
         let qualstr = quals.iter().map(|x| *x + 33 as u8).collect::<Vec<u8>>();
-        println!("build {} {} {}",u8s(&bases),u8s(&qualstr),reference[index] as char);
+        //println!("build {} {} {}",u8s(&bases),u8s(&qualstr),reference[index] as char);
 
         let qual_scores = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &reference[index], &0.99);
-
         let index_of_max: usize = qual_scores
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(index, _)| index).unwrap();
 
+        //println!("qual scores {:?} {}", qual_scores,index_of_max);
 
         if index_of_max < 5 {
             let prob = prob_to_phred(&qual_scores[index_of_max]);
-            println!("qual {} prob: {} phred {} max: {}", qual_scores[index_of_max], prob, (prob + 33) as char,index_of_max);
+            //println!("qual {} prob: {} phred {} max: {}", qual_scores[index_of_max], prob, (prob + 33) as char,index_of_max);
 
             final_quals.push(prob);
 
@@ -443,7 +441,9 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
                 _ => panic!("Unknown index"),
             };
         }
+        //println!("conc {}", u8s(&conc));
     });
+    //println!("conc {}", u8s(&conc));
     (conc, final_quals)
 }
 
@@ -780,7 +780,7 @@ mod tests {
         let read2 = "ACGTACGT\0".as_bytes().to_vec();
         let vec_of_reads = vec![reference, read1, read2];
         let result = poa_consensus(&vec_of_reads, &quals);
-        
+        println!("{:?}", u8s(&result.0));
         assert_eq!(result.0, "ACGTACGT".as_bytes().to_vec());
         assert_eq!(result.1.len(), 8);
         assert!(result.1.iter().all(|&q| q > 0)); // All quality scores should be positive
