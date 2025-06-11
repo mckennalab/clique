@@ -7,9 +7,8 @@ use crate::read_strategies::sequence_layout::{
 };
 use crate::utils::read_utils::combine_phred_scores;
 use bio::io::fastq::Record;
-use needletail::Sequence;
 use FASTA_UNSET;
-use utils::read_utils::{reverse_complement, u8s};
+use utils::read_utils::reverse_complement;
 
 /// Merges two DNA sequences (read1 and read2) into a single sequence, filling the gap with undefined bases, based on the given reference length.
 ///

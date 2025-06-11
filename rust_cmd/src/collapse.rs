@@ -5,7 +5,7 @@ use crate::extractor::{
 };
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::{
-    ReferenceRecord, SequenceLayout, UMIConfiguration, UMISortType,
+    ReferenceRecord, SequenceLayout, UMIConfiguration,
 };
 use crate::reference::fasta_reference::ReferenceManager;
 
@@ -30,7 +30,7 @@ use crate::umis::correct_tags::SequenceCorrector;
 use consensus::consensus_builders::MergeStrategy;
 use noodles_sam::alignment::record::QualityScores;
 use petgraph::visit::Walker;
-use utils::read_utils::{reverse_complement, u8s};
+use utils::read_utils::reverse_complement;
 use FASTA_N;
 
 pub fn collapse(
@@ -43,7 +43,7 @@ pub fn collapse(
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
 
-    let mut known_level_lookups = get_known_level_lookups(read_structure);
+    let known_level_lookups = get_known_level_lookups(read_structure);
 
     let mut writer = BamFileAlignmentWriter::new(&PathBuf::from(final_output), &rm);
 

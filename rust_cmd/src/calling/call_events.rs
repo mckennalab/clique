@@ -779,9 +779,36 @@ impl BamCallingParser<'_, '_, '_> {
         let header = bam::Header::from_template(bam.header());
 
         
-        let mut file = File::create(output_file)?;
+        let file = File::create(output_file)?;
         let encoder = GzEncoder::new(file, Compression::default());
         let mut writer = BufWriter::new(encoder);
+        
+        // create the header, looking over each reference and pulling the target sequences. We then assign each unique reference + target an id
+        let mut reference_tags: HashMap<String,usize> = HashMap::default();
+        let mut reference_id = 0;
+        let mut target_tags: HashMap<String,usize> = HashMap::default();
+        let mut target_id = 0;
+        
+        self.sequence_layout.references.iter().for_each(|(reference, ref_obj)| {
+            if reference_tags.contains_key(reference) {
+                panic!("two identical references in your yaml file");
+            }
+            reference_tags.insert(reference.clone(), reference_id);
+            write!(writer, "##REF:{}={}",reference.clone(),reference_id).expect("Unable to write to output file");
+            reference_id += 1;
+            
+
+            ref_obj.targets.iter().for_each(|target| {
+                let ref_and_target = reference.to_string() + "_" + target.as_str();
+                if !target_tags.contains_key(&ref_and_target) {
+                    panic!("two identical target + reference combos in your yaml file");
+                }
+                target_tags.insert(ref_and_target.clone(), target_id);
+                write!(writer, "##TARGET:{}={}",ref_and_target,target_id).expect("Unable to write to output file");
+                target_id += 1;
+            })
+        });
+        
         
         write!(writer, "read\treference\ttags\ttarget_outcomes\n").expect("Unable to write to output file");
 
@@ -801,6 +828,7 @@ impl BamCallingParser<'_, '_, '_> {
 
                     let reference = self.reference_manager.reference_name_to_ref.get(ref_name).expect("Unable to find reference");
                     let ref_name = String::from_utf8(self.reference_manager.references.get(reference).unwrap().name.clone()).unwrap();
+                    let ref_id = reference_tags.get(&ref_name).unwrap().clone();
                     let reference_sequence = BamCallingParser::convert_reference_sequence(self.reference_manager.references.get(reference).unwrap().sequence.as_slice());
                     let alignment_start = record.reference_start() as usize;
 
@@ -825,7 +853,7 @@ impl BamCallingParser<'_, '_, '_> {
                         }
 
                     }).collect::<Vec<String>>().join(";");
-                    write!(writer, "{}\t{}\t{}\t{}\n", String::from_utf8(record.name().to_vec()).unwrap(), ref_name, token_string, target_output.join(",")).expect("Unable to write to output file");
+                    write!(writer, "{}\t{}\t{}\t{}\n", String::from_utf8(record.name().to_vec()).unwrap(), ref_id, token_string, target_output.join(",")).expect("Unable to write to output file");
                 }
                 Err(_x) => {
                     panic!("Underlying BAM file error!")

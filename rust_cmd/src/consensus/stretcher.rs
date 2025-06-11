@@ -1,9 +1,7 @@
 use std::fmt;
-use itertools::enumerate;
 use serde::{Deserialize, Serialize};
 use alignment::alignment_matrix::AlignmentTag;
 use alignment_functions::simplify_cigar_string;
-use utils::read_utils::u8s;
 use crate::alignment::alignment_matrix::AlignmentResult;
 use crate::consensus::consensus_builders::{calculate_qual_scores, combine_qual_scores, prob_to_phred};
 
@@ -151,9 +149,9 @@ impl NucCounts {
             let t_slice = vec![b'T'; self.t];
             let n_slice = vec![b'N'; self.n];
 
-            let mut bases = vec![a_slice.as_slice(), c_slice.as_slice(), g_slice.as_slice(), t_slice.as_slice(), n_slice.as_slice()];
+            let bases = vec![a_slice.as_slice(), c_slice.as_slice(), g_slice.as_slice(), t_slice.as_slice(), n_slice.as_slice()];
 
-            let mut quals = vec![self.a_qual.as_slice(), self.c_qual.as_slice(), self.g_qual.as_slice(), self.t_qual.as_slice(), self.n_qual.as_slice()];
+            let quals = vec![self.a_qual.as_slice(), self.c_qual.as_slice(), self.g_qual.as_slice(), self.t_qual.as_slice(), self.n_qual.as_slice()];
 
             let mut allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &self.ref_base, &0.75);
             let qual_normalized = calculate_qual_scores(&mut allele_props);
@@ -324,7 +322,7 @@ impl AlignmentCandidate {
 
                 // this should not happen, where we're at the same position but we have different reference nucleotides; panic
                 (ReferenceStatus::Original { base, original_position, counts }, new_ref) if base != new_ref && *base != b'-' && *new_ref != b'-' => {
-                    return (Err(format!("Two mismatched reference nucleotides that are not gaps: {} and {}, pos {} and {}", *base as char, *new_ref as char, existing_index, incoming_ref_index)));
+                    return Err(format!("Two mismatched reference nucleotides that are not gaps: {} and {}, pos {} and {}", *base as char, *new_ref as char, existing_index, incoming_ref_index));
                 }
                 // easy -- two reference aligned bases -- make sure they agree and then add to the counts
                 (ReferenceStatus::Original { base, original_position, counts }, new_ref) if base == new_ref && *base != b'-' && *new_ref != b'-' => {
@@ -338,7 +336,7 @@ impl AlignmentCandidate {
                     }
                 }
                 (x, y) => {
-                    return (Err(format!("Unmanaged alignment merging issue for {} and {}", x, y)));
+                    return Err(format!("Unmanaged alignment merging issue for {} and {}", x, y));
                 }
             }
         };

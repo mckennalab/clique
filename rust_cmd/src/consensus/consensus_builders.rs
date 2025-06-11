@@ -20,7 +20,6 @@ use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
 use ::{FASTA_N, FASTA_UNSET};
-use alignment::alignment_matrix::AlignmentResult;
 use utils::read_utils::{strip_gaps, u8s};
 
 const PHRED_OFFSET: u8 = 32;
@@ -100,7 +99,7 @@ pub fn write_consensus_reads(
         });
     });
     if !buffered_reads.is_empty() {
-        let mut alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
+        let alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
             (reference_manager.longest_ref + 1) * 2,
             (reference_manager.longest_ref + 1) * 2,
             LocalAlignmentType::Affine,
@@ -376,19 +375,12 @@ fn poa_consensus(base_sequences: &Vec<Vec<u8>>, qual_sequences: &Vec<Vec<u8>>) -
     for seq in base_sequences {
         assert!(!seq.is_empty());
 
-        let cseq = CString::from_vec_with_nul(seq.clone()).unwrap_or_else(|_| {
-            panic!(
-                "CString::new failed from {}",
-                String::from_utf8(seq.clone()).unwrap()
-            )
-        });
-        let cqual = CString::new(vec![34u8; seq.len() - 1]).unwrap();
 
-        let aln = eng.align(cseq.as_c_str(), &graph);
-        graph.add_alignment(&aln, cseq.as_c_str(), &cqual);
+        let aln = eng.align(seq.as_slice(), &graph);
+        graph.add_alignment(&aln, seq.as_slice(), 1);
     }
 
-    let alignment = graph.multiple_sequence_alignment(false).into_iter().map(|x| x.to_str().unwrap().to_owned().into_bytes()).collect::<Vec<Vec<u8>>>();
+    let alignment = graph.multiple_sequence_alignment(false).into_iter().map(|x| x).collect::<Vec<Vec<u8>>>();
 
     calculate_conc_qual_score(&alignment, qual_sequences)
 }
@@ -467,7 +459,7 @@ pub fn prob_to_phred(prob: &f64) -> u8 {
     }
 
     // TODO: we dont deal with phred + 64 format data
-    let ret = ((-10.0) * (1.00000000001 - prob).log10()); // again to prevent zero getting in, we subtract from 1 + epsilon
+    let ret = (-10.0) * (1.00000000001 - prob).log10(); // again to prevent zero getting in, we subtract from 1 + epsilon
     let ret = ret.round().to_u8().unwrap();
     let ret = if ret > 90 { // cap PHRED at 40; Noodles doesn't like higher TODO: fix this
         90_u8

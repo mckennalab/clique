@@ -29,7 +29,6 @@ use crate::alignment_manager::simplify_cigar_string;
 use noodles_sam::alignment::record::cigar::Op as Op;
 use noodles_sam::alignment::record::Flags;
 use noodles_sam::alignment::record_buf::Cigar as CigarBuf;
-use utils;
 use utils::read_utils::{reverse_complement, u8s};
 
 pub const MAX_NEG_SCORE: f64 = -100000.0;

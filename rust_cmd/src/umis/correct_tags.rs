@@ -1,6 +1,4 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::File;
-use std::io::{self, Write};
 
 use std::hash::BuildHasherDefault;
 use std::path::PathBuf;
@@ -256,9 +254,9 @@ impl SequenceCorrector {
 
                         correction
                             .into_iter()
-                            .for_each(|(mut center, mut dist_graph)| {
-                                let mut connected_node = dist_graph.borrow_mut();
-                                let mut connected_node: &DistanceGraphNode =
+                            .for_each(|(center, dist_graph)| {
+                                let connected_node = dist_graph.borrow_mut();
+                                let connected_node: &DistanceGraphNode =
                                     connected_node.deref().to_owned();
                                 let string_name = connected_node.string.clone();
                                 knowns.insert(string_name.clone(), string_name.clone());
