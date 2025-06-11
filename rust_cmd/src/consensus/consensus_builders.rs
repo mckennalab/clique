@@ -461,8 +461,8 @@ pub fn prob_to_phred(prob: &f64) -> u8 {
     // TODO: we dont deal with phred + 64 format data
     let ret = (-10.0) * (1.00000000001 - prob).log10(); // again to prevent zero getting in, we subtract from 1 + epsilon
     let ret = ret.round().to_u8().unwrap();
-    let ret = if ret > 90 { // cap PHRED at 40; Noodles doesn't like higher TODO: fix this
-        90_u8
+    let ret = if ret > 50 { // cap PHRED at 40; Noodles doesn't like higher TODO: fix this
+        50_u8
     } else {
         ret as u8
     };
