@@ -385,7 +385,7 @@ impl SequenceCorrector {
         self.shard_writer = None;
         self.buffer.clear();
         self.hash_map.clear();
-        //println!("COUNTS {} {} {} {}",read_count,buffered_reads,unbuffered_reads,hit_count);
+        println!("COUNTS {} {} {} {}",read_count,buffered_reads,unbuffered_reads,hit_count);
         read_count
     }
 }
