@@ -133,9 +133,12 @@ impl SequenceCorrector {
                 // case 1 -- manually create the known list -- pad if too short
                 let mut kn = self.hash_map.iter().next().unwrap().0.clone();
                 if kn.len() < self.tag.length {
+                    println!("resize {} {}",self.tag.length,u8s(&kn));
                     kn.resize(self.tag.length, b'-');
+                    println!("22resize {} {}",self.tag.length,u8s(&kn));
                 }
                 knowns.insert(kn.clone(), kn);
+                
                 knowns
             }
             _ => {
@@ -385,7 +388,7 @@ impl SequenceCorrector {
         self.shard_writer = None;
         self.buffer.clear();
         self.hash_map.clear();
-        println!("COUNTS {} {} {} {}",read_count,buffered_reads,unbuffered_reads,hit_count);
+        println!("COUNTS {} {} {} {} {}",read_count,buffered_reads,unbuffered_reads,hit_count,self.hash_map.len());
         read_count
     }
 }
