@@ -312,10 +312,12 @@ impl SequenceCorrector {
             let corrected = match final_correction.get(&corrected_value) {
                 None => {
                     println!("Correcting reads...{:?}",final_correction);
-                    println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}",
+                    println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}",
                              &y.aligned_read.read_name,
                              u8s(&y.aligned_read.read_aligned),
-                             u8s(&y.aligned_read.reference_aligned),&self.tag,key_value,y.ordered_unsorted_keys);
+                             u8s(&y.aligned_read.reference_aligned),
+                             &self.tag,key_value,y.ordered_unsorted_keys,
+                             y.ordered_sorting_keys);
                     panic!(
                         "Unable to find match for key {} in corrected values ({}, {}, {})",
                         u8s(&corrected_value),
