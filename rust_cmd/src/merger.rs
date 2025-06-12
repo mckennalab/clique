@@ -634,6 +634,25 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn read_merger_real_from_palincode() { // had to change FF=FA=A//=/F=A=F to FF=FA=A//=/F=A=E to get the 'right' results
+        let read1_fwd = "TACCGGGTCATTCGCTCGCAAACGTGTTTTGCTAGGACCGGCCTTAAAGCGGATACTGGATGAGCCAAGTTCGAAGAGCGGCGGGCGATGTACCTGTCATCTTAGCTAAGATTACAGTACATGTCCAGGAAGTACTCGAGTACTTCCTGG".as_bytes();
+        let read1_qls = "FFAAFFFFFFAAA/A=A/AFFFAFAFFFFFFFFFF/FFFF/AFFFAFFFAFFFFFFFFFFFFF/FFFFAF=FFAF/=FAF/FFF/F/FF/AFF/F/F/FF/FFF=FA=A//=/F=A=EFF=/F=F=FFFFFAFFFF6FF/=F/A=FAF=/".as_bytes();
+        let read2_fwd = "AAGCAGTGGTATCAACGCAGAGTACATGGGCCAGGAAGTACTCGAGTACTTCCTGGACATGTCCTGTCATCTTAGCTAAGATGACAGGTACATCGCCAGCCGCTCTTCGAACTTGGCTCATCCAGTATCCGCTTTAAGGCCGGTCCTAGC".as_bytes();
+        let read2_qls = "FFA//FFFFFFFFFFF/FF/FFFFAFF/AFFFFFFFFFFFFFFFFFFFF=FFFFFFFFFFFFFFFFFFFAF=FFFF6FFFFAFFFFFFAAFF=FA=F/=FFFFFF6FF=FFFFF/FFFFFFFFFF/66/FFF66==F=FFFFFFFFF6FF".as_bytes();
+
+        let record1 = bio::io::fastq::Record::with_attrs("fakeRead", None, read1_fwd, read1_qls);
+        let record2 = bio::io::fastq::Record::with_attrs("fakeRead", None, read2_fwd, read2_qls);
+
+        let merged = merge_reads_by_alignment(&record1, &record2, &get_scoring_scheme(), &sld());
+        assert_eq!(
+            u8s(&merged.read_bases),
+            u8s(&"TACCGGGTCATTCGCTCGCAAACGTGTTTTGCTAGGACCGGCCTTAAAGCGGATACTGGATGAGCCAAGTTCGAAGAGCGGCGGGCGATGTACCTGTCATCTTAGCTAAGATGACAGGACATGTCCAGGAAGTACTCGAGTACTTCCTGGCCCATGTACTCTGCGTTGATACCACTGCTT".as_bytes().to_vec())
+
+        );
+    }
+
     #[test]
     fn read_merger_simple_no_merge() {
         let read1_fwd = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".as_bytes();

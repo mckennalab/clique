@@ -57,7 +57,10 @@ impl SequenceCorrector {
         assert!(self.tag.length >= self.tag.max_distance);
 
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
-        assert_eq!(key_value.0, self.tag.symbol);
+        if!(key_value.0 != self.tag.symbol) {
+            println!("Failed read: {}\n{}\n{}",&item.aligned_read.read_name,u8s(&item.aligned_read.read_aligned),u8s(&item.aligned_read.reference_aligned));
+            panic!("unable to process read");
+        }
 
         // we need to make a copy of the key value, because we're going to pop it off the front of the record when we correct it in a second pass
         item.ordered_unsorted_keys.push_front(key_value.clone());
