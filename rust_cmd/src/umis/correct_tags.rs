@@ -58,6 +58,7 @@ impl SequenceCorrector {
 
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
         if(key_value.0 != self.tag.symbol) {
+            
             println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{} {}",
                      &item.aligned_read.read_name,
                      u8s(&item.aligned_read.read_aligned),
@@ -310,6 +311,7 @@ impl SequenceCorrector {
             corrected_value.resize(self.tag.length, b'-');
             let corrected = match final_correction.get(&corrected_value) {
                 None => {
+                    println!("Correcting reads...{:?}",final_correction);
                     println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}",
                              &y.aligned_read.read_name,
                              u8s(&y.aligned_read.read_aligned),
