@@ -358,7 +358,7 @@ impl SequenceCorrector {
                     let corrected_value = strip_gaps(&key_value.1);
                     let corrected_value = pad_vec_to_size(strip_gaps(&corrected_value),self.tag.length);
                     
-                    match final_correction.get(&strip_gaps(&corrected_value)) {
+                    match final_correction.get(&corrected_value) {
                         None => {
                             // Unable to find match for key GCCTATCAACG in corrected values false -GCCTATCAACG
                             // GCCTA TCAAC G
