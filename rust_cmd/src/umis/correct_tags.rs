@@ -304,9 +304,11 @@ impl SequenceCorrector {
             let corrected = match final_correction.get(&corrected_value) {
                 None => {
                     panic!(
-                        "Unable to find match for key {} in corrected values ({})",
+                        "Unable to find match for key {} in corrected values ({}, {}, {})",
                         u8s(&corrected_value),
-                        u8s(&key_value.1)
+                        u8s(&key_value.1),
+                        final_correction.get(&corrected_value).is_some(),
+                        final_correction.get(&key_value.1).is_some(),
                     );
                 }
                 Some(x) => x.clone(),
