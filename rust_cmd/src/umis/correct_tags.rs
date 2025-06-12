@@ -303,7 +303,7 @@ impl SequenceCorrector {
             corrected_value.resize(self.tag.length, b'-');
             let corrected = match final_correction.get(&corrected_value) {
                 None => {
-                    println!("Failed read: {}\n{}\n{}",&y.aligned_read.read_name,u8s(&y.aligned_read.read_aligned),u8s(&y.aligned_read.reference_aligned));
+                    println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}",&y.aligned_read.read_name,u8s(&y.aligned_read.read_aligned),u8s(&y.aligned_read.reference_aligned),&self.tag,key_value);
                     panic!(
                         "Unable to find match for key {} in corrected values ({}, {}, {})",
                         u8s(&corrected_value),
