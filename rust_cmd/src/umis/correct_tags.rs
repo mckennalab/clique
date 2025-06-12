@@ -294,6 +294,7 @@ impl SequenceCorrector {
         let mut read_count: usize = 0;
         let mut buffered_reads = 0;
         let mut unbuffered_reads = 0;
+        println!("COUNTS2 {} {} {} {} -- {}",read_count,buffered_reads,unbuffered_reads,self.hash_map.len(),self.buffer.len());
 
         // only output status if we've looked at 30K or more outcomes
         if self.known_tags.is_some() && self.known_tags.as_ref().unwrap().len() > 30000 {
