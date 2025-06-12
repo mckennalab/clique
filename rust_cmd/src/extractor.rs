@@ -3,6 +3,7 @@ use nohash_hasher::NoHashHasher;
 use noodles_sam::alignment::record::cigar::op::*;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::BuildHasherDefault;
+use itertools::Itertools;
 use FASTA_UNSET;
 use utils::base_utils::is_valid_fasta_base;
 use utils::read_utils::u8s;
@@ -317,8 +318,8 @@ pub fn extract_tag_sequences(
     ets: BTreeMap<u8, String>,
 ) -> (bool, VecDeque<(char, Vec<u8>)>) {
     let mut invalid_read = false;
-    let queue = VecDeque::from(
-        reference_tags
+
+    let mut vec_tags =    reference_tags
             .umi_configurations
             .iter()
             .map(|(_umi_name, umi_obj)| {
@@ -347,10 +348,10 @@ pub fn extract_tag_sequences(
                         //println!("keeping reads {} {} level {}",gaps, e, umi_obj.max_gaps.unwrap_or(gaps));
                         //}
 
-                        Some((
+                        Some((umi_obj.order, (
                             umi_obj.symbol,
                             str
-                        ))
+                        )))
                     }
 
                     None => {
@@ -363,8 +364,10 @@ pub fn extract_tag_sequences(
             })
             .filter(|x| x.is_some())
             .map(|x| x.unwrap())
-            .collect::<Vec<(char, Vec<u8>)>>(),
-    );
+            .collect::<Vec<(usize,(char, Vec<u8>))>>();
+        vec_tags.sort_by(|x,y| x.0.cmp(&y.0));
+        let queue = VecDeque::from(vec_tags.into_iter().map(|(x,y)| y).collect::<Vec<(char, Vec<u8>)>>());
+
     (invalid_read, queue)
 }
 
