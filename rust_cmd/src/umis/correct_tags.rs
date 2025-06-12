@@ -364,7 +364,7 @@ impl SequenceCorrector {
                     //let corrected_value = strip_gaps(&corrected_value);
                     match final_correction.get(&strip_gaps(&corrected_value)) {
                         None => {
-                            //info!("Unable to find match for key {} in corrected values {} {}", u8s(&corrected_value), final_correction.contains_key(&corrected_value), u8s(&key_value.1));
+                            println!("Unable to find match for key {} in corrected values {} {}", u8s(&corrected_value), final_correction.contains_key(&corrected_value), u8s(&key_value.1));
                         }
                         Some(x) => {
                             hit_count += 1;
