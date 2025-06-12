@@ -361,9 +361,13 @@ impl SequenceCorrector {
                         .into_iter()
                         .filter(|x| *x != b'-')
                         .collect::<Vec<u8>>();
-                    //let corrected_value = strip_gaps(&corrected_value);
+                    let corrected_value2 = strip_gaps(&corrected_value);
                     match final_correction.get(&strip_gaps(&corrected_value)) {
                         None => {
+                            // Unable to find match for key GCCTATCAACG in corrected values false -GCCTATCAACG
+                            // GCCTA TCAAC G
+                            // -GCCTATCAACG
+                            println!("Correcting fail...{} {}",u8s(&corrected_value2), final_correction.contains_key(&corrected_value2));
                             println!("Unable to find match for key {} in corrected values {} {}", u8s(&corrected_value), final_correction.contains_key(&corrected_value), u8s(&key_value.1));
                         }
                         Some(x) => {
