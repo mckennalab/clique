@@ -58,6 +58,10 @@ impl SequenceCorrector {
 
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
         if!(key_value.0 != self.tag.symbol) {
+            println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}",
+                     &item.aligned_read.read_name,
+                     u8s(&item.aligned_read.read_aligned),
+                     u8s(&item.aligned_read.reference_aligned),&self.tag,key_value,item.ordered_unsorted_keys);
             println!("Failed read: {}\n{}\n{}",&item.aligned_read.read_name,u8s(&item.aligned_read.read_aligned),u8s(&item.aligned_read.reference_aligned));
             panic!("unable to process read");
         }
