@@ -58,7 +58,7 @@ impl SequenceCorrector {
 
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
         if(key_value.0 != self.tag.symbol) {
-            
+
             println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{} {}",
                      &item.aligned_read.read_name,
                      u8s(&item.aligned_read.read_aligned),
@@ -138,7 +138,7 @@ impl SequenceCorrector {
                     println!("22resize {} {}",self.tag.length,u8s(&kn));
                 }
                 knowns.insert(kn.clone(), kn);
-                
+
                 knowns
             }
             _ => {
@@ -355,9 +355,14 @@ impl SequenceCorrector {
                 .for_each(|current_read| {
                     let mut current_read: SortingReadSetContainer = current_read.unwrap();
                     let key_value = current_read.ordered_unsorted_keys.pop_front().unwrap();
-                    let corrected_value = strip_gaps(&key_value.1);
-                    let corrected_value = pad_vec_to_size(strip_gaps(&corrected_value),self.tag.length);
-                    
+                    let mut corrected_value: Vec<u8> = key_value
+                        .1
+                        .clone()
+                        .into_iter()
+                        .filter(|x| *x != b'-')
+                        .collect::<Vec<u8>>();
+                    corrected_value.resize(self.tag.length, b'-');
+
                     match final_correction.get(&corrected_value) {
                         None => {
                             // Unable to find match for key GCCTATCAACG in corrected values false -GCCTATCAACG
@@ -393,12 +398,7 @@ impl SequenceCorrector {
         read_count
     }
 }
-fn pad_vec_to_size(mut input: Vec<u8>, target_len: usize) -> Vec<u8> {
-    if input.len() < target_len {
-        input.resize(target_len, b'-');
-    }
-    input
-}
+
 trait ListCorrector {
     fn correct_list(
         &self,
