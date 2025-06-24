@@ -171,6 +171,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
                     //println!("Added read!")
                 },
                 Err(e) => {
+                    println!("samrecord {:?}",samrecord);
                     println!("Sequence: {} {:?}", u8s(&samrecord.name().unwrap().as_bytes().to_vec()),samrecord);
                     println!("Sequence: {} {}", u8s(&samrecord.quality_scores().clone().into()),u8s(&samrecord.sequence().clone().into()));
                     println!("error kind {} {}", e.kind().to_string(),e.to_string());

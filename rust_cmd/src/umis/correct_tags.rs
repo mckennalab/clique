@@ -198,7 +198,14 @@ impl SequenceCorrector {
                             if search_nodes.len() == 0 {
                                 search_nodes = trie.depth_links(&1);
                             }
-
+                            let mut corrected_value: Vec<u8> = sorted_tags[x].0.clone()
+                                .into_iter()
+                                .filter(|x| *x != b'-')
+                                .collect::<Vec<u8>>();
+                            corrected_value.resize(self.tag.length, b'-');
+                            let corrected_key = corrected_value.clone();
+                            
+                            
                             if start < sorted_tags[0].0.len() {
                                 let rt = trie.chained_search(
                                     start,
@@ -216,12 +223,13 @@ impl SequenceCorrector {
                                     1 => {
                                         matched += 1;
                                         nostart += sorted_tags[x].1;
-                                        knowns.insert(sorted_tags[x].0.clone(), rt.0[0].0.clone());
-                                        //writeln!(file, "{}\ttrue\t1\thit\t{}\t{}",u8s(&sorted_tags[x].0),u8s(&rt.0[0].0),sorted_tags[x].1).unwrap();
+                                        knowns.insert(corrected_value, rt.0[0].0.clone());
+                                        println!("{}\ttrue\t1\thit\t{}\t{}",u8s(&corrected_key),u8s(&rt.0[0].0),sorted_tags[x].1);
                                     }
                                     0 => {
                                         unmatched += 1;
-                                        //writeln!(file, "{}\tfalse\t0\tzero\tNA\t{}",u8s(&sorted_tags[x].0),sorted_tags[x].1).unwrap();
+                                        //knowns.insert(corrected_value, sorted_tags[x].0.clone()); // be yourself dude
+                                        println!("{}\tfalse\t0\tzero\tNA\t{}",u8s(&corrected_key),sorted_tags[x].1);
                                     }
                                     x => {
                                         multimatched += 1;
@@ -242,12 +250,12 @@ impl SequenceCorrector {
                                             matched += 1;
                                             nostart += sorted_tags[x].1;
                                             knowns.insert(
-                                                sorted_tags[x].0.clone(),
+                                                corrected_value,
                                                 rt.0[min_index].0.clone(),
                                             );
-                                            //writeln!(file, "{}\ttrue\t{}\tmulti\tNA\t{}",u8s(&sorted_tags[x].0),x,sorted_tags[x].1).unwrap();
+                                            println!("{}\ttrue\t{}\tmulti\tNA\t{}",u8s(&corrected_key),x,sorted_tags[x].1);
                                         } else {
-                                            //writeln!(file, "{}\tfalse\t{}\tmulti\tNA\t{}", u8s(&sorted_tags[x].0), x, sorted_tags[x].1).unwrap();
+                                            println!("{}\tfalse\t{}\tmulti\tNA\t{}", u8s(&corrected_key), x, sorted_tags[x].1);
                                         }
                                     }
                                 }
@@ -287,6 +295,42 @@ impl SequenceCorrector {
         }
     }
 
+    pub fn add_corrected(&self, final_correction: &FxHashMap<Vec<u8>,Vec<u8>>, mut y: SortingReadSetContainer, sender: &mut ShardSender<SortingReadSetContainer>) {
+        let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
+        let mut corrected_value: Vec<u8> = key_value
+            .1
+            .clone()
+            .into_iter()
+            .filter(|x| *x != b'-')
+            .collect::<Vec<u8>>();
+        corrected_value.resize(self.tag.length, b'-');
+        
+        let corrected = match (self.tag.sort_type,final_correction.get(&corrected_value)) {
+            (UMISortType::DegenerateTag,None) => {
+                panic!(
+                    "Unable to find match for key {} in corrected values ({}, {}, {})",
+                    u8s(&corrected_value),
+                    u8s(&key_value.1),
+                    final_correction.get(&corrected_value).is_some(),
+                    final_correction.get(&key_value.1).is_some(),
+                );
+            }
+            (UMISortType::KnownTag,None) => {
+                None
+            }
+            (_,Some(x)) => {
+                Some(x.clone())
+            }
+        };
+        match corrected {
+            Some(cv) => {
+                y.ordered_sorting_keys.push((key_value.0, cv));
+                sender.send(y).unwrap();
+            }
+            None => {}
+        }
+    }
+    
     pub fn close_and_write_to_shard_writer(
         &mut self,
         sender: &mut ShardSender<SortingReadSetContainer>,
@@ -294,48 +338,14 @@ impl SequenceCorrector {
         let mut read_count: usize = 0;
         let mut buffered_reads = 0;
         let mut unbuffered_reads = 0;
-        println!("COUNTS2 {} {} {} {} -- {}",read_count,buffered_reads,unbuffered_reads,self.hash_map.len(),self.buffer.len());
-
-        // only output status if we've looked at 30K or more outcomes
-        if self.known_tags.is_some() && self.known_tags.as_ref().unwrap().len() > 30000 {
-            info!("Correcting reads...");
-        }
-
+        
         let final_correction = self.correct_list();
+        
         let mut hit_count = 0;
         self.buffer.iter().for_each(|y| {
-            let mut y = y.clone();
-            let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
-            let mut corrected_value: Vec<u8> = key_value
-                .1
-                .clone()
-                .into_iter()
-                .filter(|x| *x != b'-')
-                .collect::<Vec<u8>>();
-            corrected_value.resize(self.tag.length, b'-');
-            let corrected = match final_correction.get(&corrected_value) {
-                None => {
-                    println!("Correcting reads...{:?}",final_correction);
-                    println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}",
-                             &y.aligned_read.read_name,
-                             u8s(&y.aligned_read.read_aligned),
-                             u8s(&y.aligned_read.reference_aligned),
-                             &self.tag,key_value,y.ordered_unsorted_keys,
-                             y.ordered_sorting_keys);
-                    panic!(
-                        "Unable to find match for key {} in corrected values ({}, {}, {})",
-                        u8s(&corrected_value),
-                        u8s(&key_value.1),
-                        final_correction.get(&corrected_value).is_some(),
-                        final_correction.get(&key_value.1).is_some(),
-                    );
-                }
-                Some(x) => x.clone(),
-            };
-            y.ordered_sorting_keys.push((key_value.0, corrected));
-            sender.send(y).unwrap();
+            self.add_corrected(&final_correction,y.clone(),sender);
             read_count += 1;
-            buffered_reads += 1;
+            unbuffered_reads += 1;
         });
 
         if self.shard_writer.is_some() {
@@ -353,32 +363,8 @@ impl SequenceCorrector {
                 .iter_range(&Range::all())
                 .unwrap()
                 .for_each(|current_read| {
-                    let mut current_read: SortingReadSetContainer = current_read.unwrap();
-                    let key_value = current_read.ordered_unsorted_keys.pop_front().unwrap();
-                    let mut corrected_value: Vec<u8> = key_value
-                        .1
-                        .clone()
-                        .into_iter()
-                        .filter(|x| *x != b'-')
-                        .collect::<Vec<u8>>();
-                    corrected_value.resize(self.tag.length, b'-');
-
-                    match final_correction.get(&corrected_value) {
-                        None => {
-                            // Unable to find match for key GCCTATCAACG in corrected values false -GCCTATCAACG
-                            // GCCTA TCAAC G
-                            // -GCCTATCAACG
-                            println!("Correcting fail...{} {} {}",u8s(&corrected_value), final_correction.contains_key(&corrected_value),final_correction.contains_key(&corrected_value));
-                            println!("Unable to find match for key {} in corrected values {} {}", u8s(&corrected_value), final_correction.contains_key(&corrected_value), u8s(&key_value.1));
-                        }
-                        Some(x) => {
-                            hit_count += 1;
-                            current_read
-                                .ordered_sorting_keys
-                                .push((key_value.0, x.clone()));
-                            sender.send(current_read).unwrap();
-                        }
-                    };
+                    let current_read: SortingReadSetContainer = current_read.unwrap();
+                    self.add_corrected(&final_correction,current_read,sender);
 
                     read_count += 1;
                     unbuffered_reads += 1;

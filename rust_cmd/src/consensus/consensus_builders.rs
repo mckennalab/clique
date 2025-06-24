@@ -453,6 +453,10 @@ pub fn phred_to_error_prob(phred: &u8) -> f64 {
 
 pub fn prob_to_phred(prob: &f64) -> u8 {
     // the upper bound is a bit arbitrary, but 33 + 93 = 126, the highest possible value reported by Illumina
+    if f64::is_nan(*prob) {
+        return 0;
+    }
+    
     assert!(prob >= &0.0_f64 && prob <= &1.0_f64, "{}", format!("Unable to format prob {}", prob));
     if prob < &0.00000001_f64 {
         return 0_u8;

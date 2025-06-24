@@ -359,7 +359,7 @@ pub fn sort_reads_from_bam_file(
         (
             "FlankingDegenerateBaseFilter".to_string(),
             &FlankingDegenerateBaseFilter {
-                min_flanking_indentity: 0.80,
+                min_flanking_indentity: 0.50,
                 flanking_window_size: 10,
             },
         ),
