@@ -36,6 +36,12 @@ pub fn strip_gaps(bases: &Vec<u8>) -> Vec<u8> {
     bases.iter().filter(|x| **x != b'-').map(|x|*x).collect()
 }
 
+pub fn pad_right(mut v: &Vec<u8>, target_len: usize, pad_byte: u8) -> Vec<u8> {
+    let mut vv = v.clone();
+    vv.resize(target_len, pad_byte);
+    vv
+}
+
 pub fn reverse_complement(dna: &[u8]) -> Vec<u8> {
     dna.iter()
         .rev()

@@ -4,17 +4,15 @@ use crate::extractor::{
     stretch_sequence_to_alignment, SoftClipResolution,
 };
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
-use crate::read_strategies::sequence_layout::{
-    ReferenceRecord, SequenceLayout, UMIConfiguration,
-};
+use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout, UMIConfiguration};
 use crate::reference::fasta_reference::ReferenceManager;
 
 use crate::InstanceLivedTempDir;
 use indicatif::ProgressBar;
 
+use noodles_bam as bam;
 use noodles_bam::{bai, Record};
 use noodles_sam::Header;
-use noodles_bam as bam;
 
 use itertools::Itertools;
 use shardio::{Range, ShardReader, ShardWriter};
@@ -29,7 +27,11 @@ use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::correct_tags::SequenceCorrector;
 use consensus::consensus_builders::MergeStrategy;
 use noodles_sam::alignment::record::QualityScores;
+use petgraph::matrix_graph::Nullable;
 use petgraph::visit::Walker;
+use read_strategies::sequence_layout::UMISortType;
+use rust_star::Trie;
+use umis::known_list::KnownList;
 use utils::read_utils::reverse_complement;
 use FASTA_N;
 
@@ -43,7 +45,7 @@ pub fn collapse(
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
 
-    let known_level_lookups = get_known_level_lookups(read_structure);
+    let mut known_level_lookups = get_known_level_lookups(read_structure);
 
     let mut writer = BamFileAlignmentWriter::new(&PathBuf::from(final_output), &rm);
 
@@ -70,8 +72,14 @@ pub fn collapse(
                     .get_sorted_umi_configurations(&ref_name)
                     .iter()
                     .for_each(|tag| {
-                        let ret =
-                            sort_level(temp_directory, &sorted_reads, &tag, &levels, &read_count, &known_level_lookups);
+                        let ret = sort_level(
+                            temp_directory,
+                            &sorted_reads,
+                            &tag,
+                            &levels,
+                            &read_count,
+                            &mut known_level_lookups,
+                        );
                         sorted_reads = ret.1;
                         read_count = ret.0;
 
@@ -574,8 +582,14 @@ pub fn extract_known_list(
     create_input_set(filename, &rev_comp)
 }
 
-fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, Vec<Vec<u8>>> {
-    let mut ret: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
+pub struct LookupCollection {
+    pub ret_trie: HashMap<String, Trie>,
+    pub ret_known_lookup: HashMap<String, KnownList>,
+}
+
+fn get_known_level_lookups(read_structure: &SequenceLayout) -> LookupCollection {
+    let mut ret_trie: HashMap<String, Trie> = HashMap::new();
+    let mut ret_known_lookup: HashMap<String, KnownList> = HashMap::new();
 
     read_structure
         .references
@@ -587,14 +601,31 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> HashMap<String, V
                 .for_each(|(_name, config)| match &config.file {
                     None => {}
                     Some(x) => {
-                        if !ret.contains_key(x.as_str()) {
+                        if config.levenshtein_distance.is_none() || config.levenshtein_distance.unwrap() == true {
                             let known_lookup = extract_known_list(config, &8);
-                            ret.insert(x.clone(), known_lookup);
+
+                            let mut trie = Trie::new(config.length);
+
+                            info!(
+                                "creating known lookup tree for file {}",
+                                config.file.clone().unwrap().clone()
+                            );
+                            known_lookup.iter().for_each(|sequence| {
+                                trie.insert(sequence, None, &config.max_distance);
+                            });
+                            debug!("creating kn");
+                            ret_trie.insert(x.clone(), (trie));
+                        } else {
+                            ret_known_lookup.insert(x.clone(), KnownList::new(config));
                         }
                     }
                 })
         });
-    ret
+
+    LookupCollection {
+        ret_trie,
+        ret_known_lookup,
+    }
 }
 
 /// Sorts the reads by the degenerate tag
@@ -626,9 +657,8 @@ pub fn sort_level(
     tag: &UMIConfiguration,
     iteration: &usize,
     read_count: &usize,
-    known_sequence_lists : &HashMap<String, Vec<Vec<u8>>>,
+    known_sequence_lists: &mut LookupCollection,
 ) -> (usize, ShardReader<SortingReadSetContainer>) {
-    
     info!("Sorting level {}", tag.symbol);
 
     let mut all_read_count: usize = 0;
@@ -655,11 +685,6 @@ pub fn sort_level(
 
     let mut current_sorting_bin: Option<SequenceCorrector> = None;
 
-    let known_sequence_list = match tag.file.as_ref() {
-        None => {None}
-        Some(x) => {known_sequence_lists.get(x)}
-    };
-    
     reader
         .iter_range(&Range::all())
         .unwrap()
@@ -677,7 +702,6 @@ pub fn sort_level(
                         temp_directory.temp_file(format!("{}.fasta", tag.order).as_str()),
                         &maximum_reads_per_bin,
                         tag.clone(),
-                        known_sequence_list,
                     );
                     bin.push(current_read);
                     current_sorting_bin = Some(bin);
@@ -694,7 +718,27 @@ pub fn sort_level(
                         }
                         false => {
                             // write the previous bin, and add the current read to the next bin
-                            output_reads += bin.close_and_write_to_shard_writer(&mut sender);
+                            match tag.sort_type {
+                                UMISortType::KnownTag => match tag.levenshtein_distance {
+                                    Some(true) => {
+                                        output_reads += bin.close_trie_known_list(
+                                            &mut sender,
+                                            tag,
+                                            known_sequence_lists,
+                                        );
+                                    }
+                                    None | Some(false) => {
+                                        output_reads += bin.close_hamming_known_list(
+                                            &mut sender,
+                                            tag,
+                                            known_sequence_lists,
+                                        );
+                                    }
+                                },
+                                UMISortType::DegenerateTag => {
+                                    output_reads += bin.close_degenerate_list(&mut sender);
+                                }
+                            }
                             bin.push(current_read);
                         }
                     }
@@ -706,9 +750,21 @@ pub fn sort_level(
 
     match current_sorting_bin {
         None => {}
-        Some(mut bin) => {
-            output_reads += bin.close_and_write_to_shard_writer(&mut sender);
-        }
+        Some(mut bin) => match tag.sort_type {
+            UMISortType::KnownTag => match tag.levenshtein_distance {
+                Some(true) => {
+                    output_reads +=
+                        bin.close_trie_known_list(&mut sender, tag, known_sequence_lists);
+                }
+                None | Some(false) => {
+                    output_reads +=
+                        bin.close_hamming_known_list(&mut sender, tag, known_sequence_lists);
+                }
+            },
+            UMISortType::DegenerateTag => {
+                output_reads += bin.close_degenerate_list(&mut sender);
+            }
+        },
     }
 
     // otherwise we spend too much time updating a progress bar, which is very silly
@@ -716,7 +772,13 @@ pub fn sort_level(
         bar.as_mut().map(|b| b.set_position(all_read_count as u64));
     }
 
-    info!("For degenerate tag {} (iteration {}) we processed {} reads, of which {} were passed to the next level", &tag.symbol, iteration, all_read_count, output_reads);
+    info!("For tag {} ({:?}, iteration {}) we processed {} reads, of which {} were passed to the next level",
+        &tag.symbol,
+        &tag.sort_type,
+        iteration,
+        all_read_count,
+        output_reads);
+
     sender.finished().unwrap();
 
     sharded_output.finish().unwrap();
@@ -729,8 +791,8 @@ mod tests {
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::utils::read_utils::fake_reads;
-    use std::collections::VecDeque;
     use read_strategies::sequence_layout::UMISortType;
+    use std::collections::VecDeque;
 
     const FASTA_A: u8 = b'A';
     const FASTA_T: u8 = b'T';
@@ -1066,8 +1128,8 @@ mod tests {
                 maximum_subsequences: None,
                 max_gaps: Some(1),
                 minimum_collapsing_difference: Some(10.0),
+                levenshtein_distance: None,
             },
-            None,
         );
 
         // real example we hit
@@ -1095,10 +1157,10 @@ mod tests {
         for _ in 0..10 {
             tbb.push(st2.clone());
         }
-        let correction = tbb.correct_list();
+        let correction = tbb.correct_degenerate_list();
 
         correction.iter().for_each(|x| {
-            println!(
+            debug!(
                 "{} -> {}",
                 String::from_utf8(x.0.clone()).unwrap(),
                 String::from_utf8(x.1.clone()).unwrap()

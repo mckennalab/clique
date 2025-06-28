@@ -4,9 +4,9 @@ use petgraph::graphmap::{GraphMap, NodeTrait};
 use petgraph::Undirected;
 
 /// Implementation according to "Algorithm 457: Finding All Cliques of an Undirected Graph"
-/// by Bronand Kerbosch; http://doi.acm.org/10.1145/362342.362367
+/// by Bron and Kerbosch; http://doi.acm.org/10.1145/362342.362367
 ///
-/// connected is a symmetrical bolean matrix, N the number of nodes in the graph,
+/// connected is a symmetrical boolean matrix, N the number of nodes in the graph,
 /// values of the diagonal should be true.
 #[allow(dead_code)]
 pub struct BronKerbosch<N: NodeTrait, E> {

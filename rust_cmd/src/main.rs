@@ -94,6 +94,8 @@ mod umis {
     pub mod sequence_clustering;
     pub mod bronkerbosch;
     pub mod correct_tags;
+    
+    pub mod known_list;
 }
 mod calling {
 //    pub mod bam_file_to_cell_list;

@@ -456,7 +456,7 @@ pub fn prob_to_phred(prob: &f64) -> u8 {
     if f64::is_nan(*prob) {
         return 0;
     }
-    
+
     assert!(prob >= &0.0_f64 && prob <= &1.0_f64, "{}", format!("Unable to format prob {}", prob));
     if prob < &0.00000001_f64 {
         return 0_u8;
@@ -975,7 +975,8 @@ mod tests {
         println!("result {}",u8s(&result.0));
 
         assert_eq!(result.0, "-----ACGTACGTTTT".as_bytes().to_vec());
-        assert_eq!(result.1, [50, 50, 50, 50, 50, 90, 90, 90, 90, 90, 90, 4, 3, 3, 3, 90]); // we max out at Q40
+        //assert_eq!(result.1, [50, 50, 50, 50, 50, 90, 90, 90, 90, 90, 90, 4, 3, 3, 3, 90]); // we max out at Q40
+        assert_eq!(result.1, [40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 4, 3, 3, 3, 40]); // we max out at Q40
 
         // "     ACGTACGTTTT\0".as_bytes().to_vec();
         // "AAAAAACGTAC TTTT\0".as_bytes().to_vec();

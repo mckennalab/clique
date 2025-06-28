@@ -3,6 +3,9 @@ use std::fs::File;
 use std::io::Read;
 use serde::{Serialize,Deserialize};
 use std::collections::{BTreeMap};
+use rust_star::Trie;
+use read_strategies::sequence_layout::UMISortType::KnownTag;
+use sequence_lookup::KnownLookup;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum UMISortType {
@@ -60,7 +63,8 @@ impl SequenceLayout {
 
             reference.fill_and_validate_target_positions();
         }
-
+        
+        
         deserialized_map
     }
 
@@ -129,6 +133,7 @@ pub struct UMIConfiguration {
     pub maximum_subsequences: Option<usize>,
     pub max_gaps: Option<usize>,
     pub minimum_collapsing_difference: Option<f64>,
+    pub levenshtein_distance: Option<bool>,
 }
 
 

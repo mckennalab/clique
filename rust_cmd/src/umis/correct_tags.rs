@@ -6,11 +6,13 @@ use std::path::PathBuf;
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
 use bstr::ByteSlice;
+use collapse::LookupCollection;
 use read_strategies::sequence_layout::UMISortType;
 use rust_star::{DistanceGraphNode, LinkedDistances, Trie};
 use rustc_hash::{FxHashMap, FxHasher};
 use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use std::ops::Deref;
+use umis::known_list::KnownList;
 use utils::read_utils::{strip_gaps, u8s};
 
 pub struct SequenceCorrector {
@@ -22,17 +24,11 @@ pub struct SequenceCorrector {
     output_file: PathBuf,
     tag: UMIConfiguration,
     hash_map: FxHashMap<Vec<u8>, usize>,
-    known_tags: Option<Vec<Vec<u8>>>,
     processed_sequences: usize,
 }
 
 impl SequenceCorrector {
-    pub fn new(
-        output_file: PathBuf,
-        max_size: &usize,
-        tag: UMIConfiguration,
-        known_tags: Option<&Vec<Vec<u8>>>,
-    ) -> SequenceCorrector {
+    pub fn new(output_file: PathBuf, max_size: &usize, tag: UMIConfiguration) -> SequenceCorrector {
         SequenceCorrector {
             buffer: VecDeque::new(),
             max_buffer_size: *max_size,
@@ -42,7 +38,6 @@ impl SequenceCorrector {
             output_file,
             tag,
             hash_map: FxHashMap::default(),
-            known_tags: known_tags.map(|x| x.clone()),
             processed_sequences: 0,
         }
     }
@@ -57,16 +52,24 @@ impl SequenceCorrector {
         assert!(self.tag.length >= self.tag.max_distance);
 
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
-        if(key_value.0 != self.tag.symbol) {
-
-            println!("Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{} {}",
-                     &item.aligned_read.read_name,
-                     u8s(&item.aligned_read.read_aligned),
-                     u8s(&item.aligned_read.reference_aligned),
-                     &self.tag,key_value,item.ordered_unsorted_keys,
-                     key_value.0,
-                     self.tag.symbol);
-            println!("Failed read: {}\n{}\n{}",&item.aligned_read.read_name,u8s(&item.aligned_read.read_aligned),u8s(&item.aligned_read.reference_aligned));
+        if (key_value.0 != self.tag.symbol) {
+            println!(
+                "Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{} {}",
+                &item.aligned_read.read_name,
+                u8s(&item.aligned_read.read_aligned),
+                u8s(&item.aligned_read.reference_aligned),
+                &self.tag,
+                key_value,
+                item.ordered_unsorted_keys,
+                key_value.0,
+                self.tag.symbol
+            );
+            println!(
+                "Failed read: {}\n{}\n{}",
+                &item.aligned_read.read_name,
+                u8s(&item.aligned_read.read_aligned),
+                u8s(&item.aligned_read.reference_aligned)
+            );
             panic!("unable to process read");
         }
 
@@ -116,26 +119,155 @@ impl SequenceCorrector {
         self.buffer.clear();
     }
 
-    /// This function 'corrects' a list of barcodes using our Starcode clone
-    pub fn correct_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
+    fn correct_known_list(&self, trie: &mut Trie) -> FxHashMap<Vec<u8>, Vec<u8>> {
         let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
         let mut unmatched = 0;
         let mut multimatched = 0;
         let mut nostart = 0;
         let mut matched = 0;
+
+        let mut sorted_tags: Vec<(Vec<u8>, usize)> = self
+            .hash_map
+            .iter()
+            .map(|(x, y)| (x.clone(), *y))
+            .collect::<Vec<(Vec<u8>, usize)>>();
+
+        sorted_tags.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut search_nodes = HashSet::default();
+
+        (0..sorted_tags.len()).for_each(|sorted_tag_index| {
+            let start = if sorted_tag_index >= 1 {
+                LinkedDistances::prefix_overlap_str(
+                    &sorted_tags[sorted_tag_index].0,
+                    &sorted_tags[sorted_tag_index - 1].0,
+                )
+            } else {
+                0
+            };
+            let mut future = if sorted_tag_index < sorted_tags.len() - 1 {
+                LinkedDistances::prefix_overlap_str(
+                    &sorted_tags[sorted_tag_index + 1].0,
+                    &sorted_tags[sorted_tag_index].0,
+                )
+            } else {
+                0
+            };
+
+            if search_nodes.len() == 0 {
+                search_nodes = trie.depth_links(&1);
+            }
+            let mut corrected_value: Vec<u8> = sorted_tags[sorted_tag_index]
+                .0
+                .clone()
+                .into_iter()
+                .filter(|x| *x != b'-')
+                .collect::<Vec<u8>>();
+            corrected_value.resize(self.tag.length, b'-');
+            let corrected_key = corrected_value.clone();
+
+            if start < sorted_tags[0].0.len() {
+                let rt = trie.chained_search(
+                    start,
+                    Some(future),
+                    &sorted_tags[sorted_tag_index].0,
+                    &self.tag.max_distance,
+                    &search_nodes,
+                );
+                search_nodes = rt.1;
+                if future < 1 {
+                    future = 1;
+                }
+
+                match rt.0.len() {
+                    1 => {
+                        matched += 1;
+                        nostart += sorted_tags[sorted_tag_index].1;
+                        knowns.insert(corrected_value, rt.0[0].0.clone());
+                        debug!(
+                            "{}\ttrue\t1\thit\t{}\t{}",
+                            u8s(&corrected_key),
+                            u8s(&rt.0[0].0),
+                            sorted_tags[sorted_tag_index].1
+                        );
+                    }
+                    0 => {
+                        unmatched += 1;
+                        //knowns.insert(corrected_value, sorted_tags[x].0.clone()); // be yourself dude
+                        debug!(
+                            "{}\tfalse\t0\tzero\tNA\t{}",
+                            u8s(&corrected_key),
+                            sorted_tags[sorted_tag_index].1
+                        );
+                    }
+                    match_count => {
+                        multimatched += 1;
+                        // is there a minimal hit?
+                        let mut min = usize::MAX;
+                        let mut min_index = 0;
+                        let mut min_count = 0;
+                        rt.0.iter().enumerate().for_each(|(index, (x, y))| {
+                            if *y < min {
+                                min = *y;
+                                min_index = index;
+                                min_count = 1;
+                            } else if *y == min {
+                                min_count += 1;
+                            }
+                        });
+                        if min_count == 1 {
+                            matched += 1;
+                            nostart += sorted_tags[sorted_tag_index].1;
+                            knowns.insert(corrected_value, rt.0[min_index].0.clone());
+                            debug!(
+                                "{}\ttrue\t{}\tmulti\tNA\t{}",
+                                u8s(&corrected_key),
+                                match_count,
+                                sorted_tags[sorted_tag_index].1
+                            );
+                        } else {
+                            debug!(
+                                "{}\tfalse\t{}\tmulti\tNA\t{}",
+                                u8s(&corrected_key),
+                                match_count,
+                                sorted_tags[sorted_tag_index].1
+                            );
+                        }
+                    }
+                }
+            } else {
+            }
+        });
+        debug!(
+            "matched {} Unmatched {} multimatched {} nostart {} total {} super total {}",
+            matched,
+            unmatched,
+            multimatched,
+            nostart,
+            self.hash_map.len(),
+            self.processed_sequences
+        );
+
+        knowns
+    }
+
+    /// This function 'corrects' a list of barcodes using our Starcode clone
+    pub fn correct_degenerate_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
         match self.hash_map.len() {
             0 => {
                 // case 0 -- no records, do nothing
-                knowns
+                FxHashMap::default()
             }
             1 => {
+                let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
+
                 // TODO: wrong for known list
                 // case 1 -- manually create the known list -- pad if too short
                 let mut kn = self.hash_map.iter().next().unwrap().0.clone();
                 if kn.len() < self.tag.length {
-                    println!("resize {} {}",self.tag.length,u8s(&kn));
+                    debug!("resize {} {}", self.tag.length, u8s(&kn));
                     kn.resize(self.tag.length, b'-');
-                    println!("22resize {} {}",self.tag.length,u8s(&kn));
+                    debug!("resized {} {}", self.tag.length, u8s(&kn));
                 }
                 knowns.insert(kn.clone(), kn);
 
@@ -159,143 +291,36 @@ impl SequenceCorrector {
                     })
                     .collect::<Vec<(Vec<u8>, usize)>>();
 
-                match self.tag.sort_type {
-                    UMISortType::KnownTag => {
-                        let mut trie = Trie::new(max_length);
-                        //let mut file = File::create("output.txt").unwrap(); // overwrites if file exists
+                let correction = LinkedDistances::cluster_string_vector_list(
+                    &max_length,
+                    tags,
+                    &self.tag.max_distance,
+                    &self.collapse_ratio,
+                );
+                let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
-                        self.known_tags.as_ref().unwrap().iter().for_each(|x| {
-                            trie.insert(x.as_bytes(), None, &self.tag.max_distance);
-                        });
-
-                        let mut sorted_tags: Vec<(Vec<u8>, usize)> = self
-                            .hash_map
-                            .iter()
-                            .map(|(x, y)| (x.clone(), *y))
-                            .collect::<Vec<(Vec<u8>, usize)>>();
-                        sorted_tags.sort_by(|a, b| a.0.cmp(&b.0));
-
-                        let mut search_nodes = HashSet::default();
-
-                        (0..sorted_tags.len()).for_each(|x| {
-                            let start = if x >= 1 {
-                                LinkedDistances::prefix_overlap_str(
-                                    &sorted_tags[x].0,
-                                    &sorted_tags[x - 1].0,
-                                )
-                            } else {
-                                0
-                            };
-                            let mut future = if x < sorted_tags.len() - 1 {
-                                LinkedDistances::prefix_overlap_str(
-                                    &sorted_tags[x + 1].0,
-                                    &sorted_tags[x].0,
-                                )
-                            } else {
-                                0
-                            };
-
-                            if search_nodes.len() == 0 {
-                                search_nodes = trie.depth_links(&1);
-                            }
-                            let mut corrected_value: Vec<u8> = sorted_tags[x].0.clone()
-                                .into_iter()
-                                .filter(|x| *x != b'-')
-                                .collect::<Vec<u8>>();
-                            corrected_value.resize(self.tag.length, b'-');
-                            let corrected_key = corrected_value.clone();
-                            
-                            
-                            if start < sorted_tags[0].0.len() {
-                                let rt = trie.chained_search(
-                                    start,
-                                    Some(future),
-                                    &sorted_tags[x].0,
-                                    &self.tag.max_distance,
-                                    &search_nodes,
-                                );
-                                search_nodes = rt.1;
-                                if future < 1 {
-                                    future = 1;
-                                }
-
-                                match rt.0.len() {
-                                    1 => {
-                                        matched += 1;
-                                        nostart += sorted_tags[x].1;
-                                        knowns.insert(corrected_value, rt.0[0].0.clone());
-                                        println!("{}\ttrue\t1\thit\t{}\t{}",u8s(&corrected_key),u8s(&rt.0[0].0),sorted_tags[x].1);
-                                    }
-                                    0 => {
-                                        unmatched += 1;
-                                        //knowns.insert(corrected_value, sorted_tags[x].0.clone()); // be yourself dude
-                                        println!("{}\tfalse\t0\tzero\tNA\t{}",u8s(&corrected_key),sorted_tags[x].1);
-                                    }
-                                    x => {
-                                        multimatched += 1;
-                                        // is there a minimal hit?
-                                        let mut min = usize::MAX;
-                                        let mut min_index = 0;
-                                        let mut min_count = 0;
-                                        rt.0.iter().enumerate().for_each(|(index, (x, y))| {
-                                            if *y < min {
-                                                min = *y;
-                                                min_index = index;
-                                                min_count = 1;
-                                            } else if *y == min {
-                                                min_count += 1;
-                                            }
-                                        });
-                                        if min_count == 1 {
-                                            matched += 1;
-                                            nostart += sorted_tags[x].1;
-                                            knowns.insert(
-                                                corrected_value,
-                                                rt.0[min_index].0.clone(),
-                                            );
-                                            println!("{}\ttrue\t{}\tmulti\tNA\t{}",u8s(&corrected_key),x,sorted_tags[x].1);
-                                        } else {
-                                            println!("{}\tfalse\t{}\tmulti\tNA\t{}", u8s(&corrected_key), x, sorted_tags[x].1);
-                                        }
-                                    }
-                                }
-                            } else {
-                            }
-                        });
-                        println!("matched {} Unmatched {} multimatched {} nostart {} total {} super total {}",matched,unmatched,multimatched,nostart, self.hash_map.len(), self.processed_sequences);
-
-                        knowns
-                    }
-                    UMISortType::DegenerateTag => {
-                        let correction = LinkedDistances::cluster_string_vector_list(
-                            &max_length,
-                            tags,
-                            &self.tag.max_distance,
-                            &self.collapse_ratio,
-                        );
-
-                        correction
-                            .into_iter()
-                            .for_each(|(center, dist_graph)| {
-                                let connected_node = dist_graph.borrow_mut();
-                                let connected_node: &DistanceGraphNode =
-                                    connected_node.deref().to_owned();
-                                let string_name = connected_node.string.clone();
-                                knowns.insert(string_name.clone(), string_name.clone());
-                                //println!("Known {} to known {}",u8s(&string_name),u8s(&string_name));
-                                connected_node.swallowed_links.iter().for_each(|(x, y)| {
-                                    knowns.insert(x.clone(), string_name.clone());
-                                    //println!("Unknown {} to known {}",u8s(&x),u8s(&string_name));
-                                });
-                            });
-                        knowns
-                    }
-                }
+                correction.into_iter().for_each(|(center, dist_graph)| {
+                    let connected_node = dist_graph.borrow_mut();
+                    let connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
+                    let string_name = connected_node.string.clone();
+                    knowns.insert(string_name.clone(), string_name.clone());
+                    //println!("Known {} to known {}",u8s(&string_name),u8s(&string_name));
+                    connected_node.swallowed_links.iter().for_each(|(x, y)| {
+                        knowns.insert(x.clone(), string_name.clone());
+                        //println!("Unknown {} to known {}",u8s(&x),u8s(&string_name));
+                    });
+                });
+                knowns
             }
         }
     }
 
-    pub fn add_corrected(&self, final_correction: &FxHashMap<Vec<u8>,Vec<u8>>, mut y: SortingReadSetContainer, sender: &mut ShardSender<SortingReadSetContainer>) {
+    pub fn add_corrected(
+        &self,
+        final_correction: &FxHashMap<Vec<u8>, Vec<u8>>,
+        mut y: SortingReadSetContainer,
+        sender: &mut ShardSender<SortingReadSetContainer>,
+    ) {
         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
         let mut corrected_value: Vec<u8> = key_value
             .1
@@ -304,9 +329,9 @@ impl SequenceCorrector {
             .filter(|x| *x != b'-')
             .collect::<Vec<u8>>();
         corrected_value.resize(self.tag.length, b'-');
-        
-        let corrected = match (self.tag.sort_type,final_correction.get(&corrected_value)) {
-            (UMISortType::DegenerateTag,None) => {
+
+        let corrected = match (self.tag.sort_type, final_correction.get(&corrected_value)) {
+            (UMISortType::DegenerateTag, None) => {
                 panic!(
                     "Unable to find match for key {} in corrected values ({}, {}, {})",
                     u8s(&corrected_value),
@@ -315,12 +340,8 @@ impl SequenceCorrector {
                     final_correction.get(&key_value.1).is_some(),
                 );
             }
-            (UMISortType::KnownTag,None) => {
-                None
-            }
-            (_,Some(x)) => {
-                Some(x.clone())
-            }
+            (UMISortType::KnownTag, None) => None,
+            (_, Some(x)) => Some(x.clone()),
         };
         match corrected {
             Some(cv) => {
@@ -330,20 +351,79 @@ impl SequenceCorrector {
             None => {}
         }
     }
-    
-    pub fn close_and_write_to_shard_writer(
+
+    pub fn close_degenerate_list(
         &mut self,
         sender: &mut ShardSender<SortingReadSetContainer>,
+    ) -> usize {
+        let final_correction = self.correct_degenerate_list();
+        self.close_and_write_to_shard_writer(sender, final_correction)
+    }
+
+    pub fn close_trie_known_list(
+        &mut self,
+        sender: &mut ShardSender<SortingReadSetContainer>,
+        tag: &UMIConfiguration,
+        lookup_collection: &mut LookupCollection,
+    ) -> usize {
+        
+        match tag.levenshtein_distance {
+            Some(true) => {
+                let mut trie = lookup_collection
+                    .ret_trie
+                    .get_mut(&tag.file.clone().unwrap().clone());
+                let mut trie = trie
+                    .as_mut()
+                    .unwrap();
+                let final_correction = self.correct_known_list(trie);
+                self.close_and_write_to_shard_writer(sender, final_correction)
+            }
+            None | Some(false) => {
+                panic!("Calling a trie when you should of called a known list")
+            }
+        }
+        
+    }
+
+    pub fn close_hamming_known_list(
+        &mut self,
+        sender: &mut ShardSender<SortingReadSetContainer>,
+        tag: &UMIConfiguration,
+        lookup_collection: &mut LookupCollection,
+    ) -> usize {
+        match tag.levenshtein_distance {
+            Some(false) => {
+                let mut kl = lookup_collection
+                    .ret_known_lookup
+                    .get_mut(&tag.file.clone().unwrap().clone());
+                let mut kl = kl
+                    .as_mut()
+                    .unwrap();
+                let final_correction = kl.correct_all(
+                    &(self.hash_map.iter().map(|(ky,vl)| ky.clone()).collect::<Vec<Vec<u8>>>()),
+                    &(self.tag.max_distance as u32),
+                );
+                self.close_and_write_to_shard_writer(sender, final_correction)
+            }
+            None | Some(true) => {
+                panic!("Calling a trie when you should of called a known list")
+            }
+        }
+        
+    }
+
+    fn close_and_write_to_shard_writer(
+        &mut self,
+        sender: &mut ShardSender<SortingReadSetContainer>,
+        final_correction: FxHashMap<Vec<u8>, Vec<u8>>,
     ) -> usize {
         let mut read_count: usize = 0;
         let mut buffered_reads = 0;
         let mut unbuffered_reads = 0;
-        
-        let final_correction = self.correct_list();
-        
+
         let mut hit_count = 0;
         self.buffer.iter().for_each(|y| {
-            self.add_corrected(&final_correction,y.clone(),sender);
+            self.add_corrected(&final_correction, y.clone(), sender);
             read_count += 1;
             unbuffered_reads += 1;
         });
@@ -364,15 +444,11 @@ impl SequenceCorrector {
                 .unwrap()
                 .for_each(|current_read| {
                     let current_read: SortingReadSetContainer = current_read.unwrap();
-                    self.add_corrected(&final_correction,current_read,sender);
+                    self.add_corrected(&final_correction, current_read, sender);
 
                     read_count += 1;
                     unbuffered_reads += 1;
                 });
-        }
-        // only output status if we've looked at 30K or more outcomes
-        if self.known_tags.is_some() && self.known_tags.as_ref().unwrap().len() > 30000 {
-            info!("Done correcting reads...");
         }
 
         // clear everything out
@@ -380,7 +456,14 @@ impl SequenceCorrector {
         self.shard_writer = None;
         self.buffer.clear();
         self.hash_map.clear();
-        println!("COUNTS {} {} {} {} {}",read_count,buffered_reads,unbuffered_reads,hit_count,self.hash_map.len());
+        debug!(
+            "COUNTS {} {} {} {} {}",
+            read_count,
+            buffered_reads,
+            unbuffered_reads,
+            hit_count,
+            self.hash_map.len()
+        );
         read_count
     }
 }
@@ -423,11 +506,12 @@ mod tests {
             maximum_subsequences: Some(5000),
             minimum_collapsing_difference: Some(5.0),
             max_gaps: None,
+            levenshtein_distance: None,
         };
 
         // above the threshold for merging
         let mut tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&10, &path, &config);
-        let list = tag_buffer.correct_list();
+        let list = tag_buffer.correct_degenerate_list();
         let minimum_thresh = 5.0;
 
         assert!(list.contains_key("AAAAATTTTT".as_bytes()));
@@ -456,7 +540,7 @@ mod tests {
 
         // below the threshold for merging
         let mut tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&3, &path, &config);
-        let list = tag_buffer.correct_list();
+        let list = tag_buffer.correct_degenerate_list();
 
         assert!(list.contains_key("AAAAATTTTT".as_bytes()));
         assert_eq!(
@@ -503,7 +587,7 @@ mod tests {
             &off_by_two_2.to_string(),
             &config,
         ));
-        let list = tag_buffer.correct_list();
+        let list = tag_buffer.correct_degenerate_list();
         list.iter()
             .for_each(|(x, y)| println!("x {} y {}", u8s(x), u8s(y)));
 
@@ -529,7 +613,7 @@ mod tests {
         path: &PathBuf,
         config: &UMIConfiguration,
     ) -> SequenceCorrector {
-        let mut tag_buffer = SequenceCorrector::new(path.clone(), &5000, config.clone(), None);
+        let mut tag_buffer = SequenceCorrector::new(path.clone(), &5000, config.clone());
 
         for i in 0..*count {
             tag_buffer.push(create_fake_read_set_container(

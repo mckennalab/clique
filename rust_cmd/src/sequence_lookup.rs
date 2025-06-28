@@ -69,6 +69,7 @@ mod tests {
             maximum_subsequences: None,
             max_gaps: Some(0),
             minimum_collapsing_difference: None,
+            levenshtein_distance: Some(false),
         };
 
         println!("loading file...");
@@ -137,6 +138,7 @@ mod tests {
             maximum_subsequences: None,
             max_gaps: Some(0),
             minimum_collapsing_difference: None,
+            levenshtein_distance: None,
         };
 
         let kf = KnownLookup::from(&configuration);
