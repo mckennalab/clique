@@ -75,8 +75,11 @@ impl<'a> BamFileAlignmentWriter<'a> {
         path: &PathBuf,
         reference_manager: &ReferenceManager<'a, 'a, 'a>,
     ) -> BamFileAlignmentWriter<'a> {
-
-        let reference_sequences : IndexMap<BString,Map<ReferenceSequence>> = reference_manager.references.iter().map(|(_k, v)| {
+        // Collect and sort by key
+        let mut sorted: Vec<_> = reference_manager.references.iter().collect();
+        sorted.sort_by_key(|&(k, _)| k);
+        
+        let reference_sequences : IndexMap<BString,Map<ReferenceSequence>> = sorted.iter().map(|(_k, v)| {
             (BString::from(v.name.clone()), 
             Map::<ReferenceSequence>::new(NonZeroUsize::try_from(v.sequence.len()).unwrap()))
         }).into_iter().collect();
@@ -155,7 +158,7 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
                 u8s(value),
             );
         });
-
+            
         let samrecord =
             read_set_container
                 .aligned_read

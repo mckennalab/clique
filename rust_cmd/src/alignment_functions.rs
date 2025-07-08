@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 
@@ -21,6 +21,7 @@ use crate::read_strategies::sequence_layout::{SequenceLayout};
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use itertools::Itertools;
 use FASTA_UNSET;
+use reference::fasta_reference::Reference;
 use utils::read_utils::{reverse_complement, u8s};
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::consensus::consensus_builders::SamReadyOutput;
@@ -99,7 +100,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
                                                          xx.seq(),
                                                          qual,
                                                          rm,
-                                                         &false,
+                                                         &true,
                                                          read_structure,
                                                          local_alignment.as_mut().unwrap(),
                                                          &my_aff_score,
@@ -125,7 +126,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
                                 debug!("Unable to create alignment for read {}",name);
                             }
                             Some(aln) => {
-                                let output = Arc::clone(&output);
+                                
                                 let mut read_count = read_count.lock().unwrap();
                                 *read_count += 1;
                                 if *read_count % 1000000 == 0 {
@@ -139,6 +140,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
 
                                 //let samrecord = aln.to_sam_record(&i32::try_from(*reference_record).ok().unwrap(), &empty_tags, None);
 
+                                let output = Arc::clone(&output);
                                 let arc_writer = output.clone();
                                 let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
                                 arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC1)");
@@ -479,9 +481,9 @@ pub fn align_to_reference_choices(read_name: &String,
         }
         x if x > 1 => {
             if *fast_lookup {
-                quick_alignment_search(read_name, read, qual_sequence, &rm, alignment_mat, my_aff_score)
+                quick_alignment_search(read_name, read, qual_sequence, &rm, alignment_mat, my_aff_score, &0.90) // TODO: parameterize this
             } else {
-                exhaustive_alignment_search(read_name, read, qual_sequence, &rm, alignment_mat, my_aff_score)
+                exhaustive_alignment_search(read_name, read, qual_sequence, &rm, alignment_mat, my_aff_score, None)
             }
         }
         x => { panic!("we dont know what to do with a reference count of {}", x) }
@@ -553,34 +555,47 @@ fn quick_alignment_search(read_name: &String,
                           qual_sequence: Option<Vec<u8>>,
                           rm: &ReferenceManager,
                           alignment_mat: &mut Alignment<Ix3>,
-                          my_aff_score: &AffineScoring) -> Option<AlignmentWithRef> {
+                          my_aff_score: &AffineScoring, match_threshold : &f64) -> Option<AlignmentWithRef> {
     let read_u8 = read;
     let read_kmers = ReferenceManager::sequence_to_kmers(&read_u8, &rm.kmer_size, &rm.kmer_skip);
 
     let max_ref = read_kmers.iter().map(|(kmer, _c)| {
         rm.unique_kmers.kmer_to_reference.get(kmer)
     }).flatten().counts();
-    let max_ref = max_ref.iter().max_by(|x, y| x.1.cmp(y.1));
+    
+    let count: f64  = max_ref.iter().map(|(x,y)|y).sum::<usize>() as f64;
+    let proportions = max_ref.iter().map(|(x,y)| (x,*y as f64/count)).collect::<Vec<(&&Reference,f64)>>();
+    let max_ref = proportions.iter().max_by(|x, y| x.1.total_cmp(&y.1));
 
     match max_ref {
         None => {
-            None
+            warn!("No reference found; moving to exhaustive_alignment_search");
+            exhaustive_alignment_search(read_name, read, qual_sequence, rm, alignment_mat, my_aff_score,None)
         }
         Some(x) => {
-            let ref_name = String::from_utf8(x.0.name.clone()).unwrap();
-            Some(AlignmentWithRef {
-                alignment: Some(align_two_strings_passed_matrix(
-                    &ref_name,
-                    read_name,
-                    &x.0.sequence,
-                    read,
-                    qual_sequence,
-                    my_aff_score,
-                    alignment_mat,
-                    &read.len())),
-                ref_name: x.0.name.clone(),
-                ref_sequence: x.0.sequence.clone(),
-            })
+            match x.1 {
+                prop if prop > *match_threshold=> {
+                    let ref_name = String::from_utf8(x.0.name.clone()).unwrap();
+                    Some(AlignmentWithRef {
+                        alignment: Some(align_two_strings_passed_matrix(
+                            &ref_name,
+                            read_name,
+                            &x.0.sequence,
+                            read,
+                            qual_sequence,
+                            my_aff_score,
+                            alignment_mat,
+                            &read.len())),
+                        ref_name: x.0.name.clone(),
+                        ref_sequence: x.0.sequence.clone(),
+                    })
+                },
+                _ => {
+                    let ref_names : HashSet<Vec<u8>> = proportions.iter().map(|(x,y)|x.name.clone()).into_iter().collect();
+                    exhaustive_alignment_search(read_name, read, qual_sequence, rm, alignment_mat, my_aff_score,Some(ref_names))
+                }
+            }
+
         }
     }
 }
@@ -590,14 +605,20 @@ fn exhaustive_alignment_search(read_name: &String,
                                qual_sequence: Option<Vec<u8>>,
                                rm: &ReferenceManager,
                                alignment_mat: &mut Alignment<Ix3>,
-                               my_aff_score: &AffineScoring) -> Option<AlignmentWithRef> {
+                               my_aff_score: &AffineScoring,
+                               reference_subset : Option<HashSet<Vec<u8>>>,
+) -> Option<AlignmentWithRef> {
     let references = &rm.references;
 
     let ranked_alignments = references.iter().map(|reference| {
-        let qual = qual_sequence.clone();
-        let lt = align_two_strings_passed_matrix(&String::from_utf8(reference.1.name.clone()).unwrap(), read_name, &reference.1.sequence, read, qual, my_aff_score, alignment_mat, &read.len());
+        if reference_subset.is_none() || reference_subset.as_ref().unwrap().contains(&reference.1.name) {
+            let qual = qual_sequence.clone();
+            let lt = align_two_strings_passed_matrix(&String::from_utf8(reference.1.name.clone()).unwrap(), read_name, &reference.1.sequence, read, qual, my_aff_score, alignment_mat, &read.len());
 
-        Some((lt, reference.1.sequence.clone(), reference.1.name.clone()))
+            Some((lt, reference.1.sequence.clone(), reference.1.name.clone()))
+        } else {
+            None
+        }
     }).filter(|x| x.is_some()).map(|c| c.unwrap());
 
     let ranked_alignments = ranked_alignments.into_iter().enumerate().max_by(|al, al2| {
@@ -771,6 +792,183 @@ mod tests {
     use crate::reference::fasta_reference::{ReferenceManager};
 
     #[test]
+    fn test_twist() {
+        let ref_location = &"./test_data/18guide1.fa".to_string();
+        let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
+
+        rm.references.iter().for_each(|reference| {
+            let read_one = reference.1.sequence.clone().to_ascii_uppercase();
+            println!("Reference: {}", u8s(&reference.1.name));
+            let _read_structure = SequenceLayout {
+                aligner: None,
+                merge: None,
+                reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+                known_strand: true,
+                references: BTreeMap::new(),
+            };
+
+            let mut read_mat = create_scoring_record_3d(300, 300, AlignmentType::Affine, false);
+
+            let _my_score = InversionScoring {
+                match_score: 9.0,
+                mismatch_score: -21.0,
+                gap_open: -25.0,
+                gap_extend: -1.0,
+                inversion_penalty: -40.0,
+                min_inversion_length: 20,
+            };
+
+            let my_aff_score = AffineScoring {
+                match_score: 10.0,
+                mismatch_score: -9.0,
+                special_character_score: 9.0,
+                gap_open: -20.0,
+                gap_extend: -1.0,
+                final_gap_multiplier: 1.0,
+
+            };
+
+            let best_ref = quick_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, &0.9);
+            match best_ref {
+                None => {
+                    println!("No reference found {}",String::from_utf8(reference.1.name.clone()).unwrap());
+                }
+                Some(x) => {
+                    assert_eq!(String::from_utf8(x.ref_name).unwrap(),
+                               String::from_utf8(reference.1.name.clone()).unwrap());
+                }
+            }
+
+        });
+
+    }
+    #[test]
+    fn test_twist_read() {
+        let ref_location = &"./test_data/18guide1.fa".to_string();
+        let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
+        let read_one = "GTGGAAAGGACGAAACACCGGTACTTTCGAAAGTACGCGTTTTAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTCGCATTCTACCGTGACTTTAGCAAGGTGATCATTCGCAACAGTATCGACGGGCGTACTTTCGAAAGTACGCCCGTCGATGTTTGAATTCGAATTTAAATCGGATCCGCGGCCAA".to_string().to_ascii_uppercase().into_bytes();
+
+        let _read_structure = SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            known_strand: true,
+            references: BTreeMap::new(),
+        };
+
+        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::Affine, false);
+
+        let _my_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        let my_aff_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -9.0,
+            special_character_score: 9.0,
+            gap_open: -20.0,
+            gap_extend: -1.0,
+            final_gap_multiplier: 1.0,
+
+        };
+        println!("here");
+
+        let best_ref = quick_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, &0.9);
+        assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
+                   String::from_utf8("A5_GCGTACTTTCGAAAGTACGCCGG_18GUIDE_1_2_1".to_string().into_bytes()).unwrap());
+
+    }
+
+    #[test]
+    fn test_twist_read2() {
+        let ref_location = &"./test_data/18guide1.fa".to_string();
+        let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
+        let read_one = "GTGGAAAGGACGAAACACCGACTCCCGCGCGGGAGTACGTTGTAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTCGCATTCTACCGTGACTTTAGCAAGGTGATCATTCGCAACAGTATCGACCTCGTAAATTCGCGAATTTACGAGGTCGATGTTTGAATTCGAATTTAAATCGGATCCGCGGCCAA".to_string().to_ascii_uppercase().into_bytes();
+
+        let _read_structure = SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            known_strand: true,
+            references: BTreeMap::new(),
+        };
+
+        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::Affine, false);
+
+        let _my_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        let my_aff_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -9.0,
+            special_character_score: 9.0,
+            gap_open: -20.0,
+            gap_extend: -1.0,
+            final_gap_multiplier: 1.0,
+
+        };
+        println!("here");
+
+        let best_ref = quick_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, &0.9);
+        assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
+                   String::from_utf8("A3_GTACTCCCGCGCGGGAGTACGGG_18GUIDE_1_2_1".to_string().into_bytes()).unwrap());
+
+    }
+
+    #[test]
+    fn test_twist_read3() {
+        let ref_location = &"./test_data/18guide1.fa".to_string();
+        let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
+        let read_one = "GTGGAAAGGACGAAACACCGACAAGCGGCCGCTTGTAGGTTTTAGAGCTAGAAATAGCAAGTTAAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTCGCATTCTACCGTGACTTTAGCAAGGTGATCATTCGCAACAGTATCGACCGCTACAAGCGGCCGCTTGTAGCGGTCGATGTTTGAATTCGAATTTAAATCGGATCCGCGGCCAA".to_string().to_ascii_uppercase().into_bytes();
+
+        let _read_structure = SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            known_strand: true,
+            references: BTreeMap::new(),
+        };
+
+        let mut read_mat = create_scoring_record_3d(read_one.len() + 100, read_one.len() + 100, AlignmentType::Affine, false);
+
+        let _my_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        let my_aff_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -9.0,
+            special_character_score: 9.0,
+            gap_open: -20.0,
+            gap_extend: -1.0,
+            final_gap_multiplier: 1.0,
+
+        };
+        println!("here");
+
+        let best_ref = quick_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, &0.9);
+        assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
+                   String::from_utf8("A356_CTACAAGCGGCCGCTTGTAGCGG_18GUIDE_1_2_1".to_string().into_bytes()).unwrap());
+
+    }
+    
+    #[test]
     fn test_find_best_reference() {
         let ref_location = &"test_data/test_best_alignment.fasta".to_string();
         let rm = ReferenceManager::from_fa_file(&ref_location, 8, 8);
@@ -806,12 +1004,12 @@ mod tests {
 
         };
 
-        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, None);
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("1_AAACCCCGGG_GGTAGCAAACGTTTGGACGTG".to_string().into_bytes()).unwrap());
 
         let read_one = "atggactatcatatgcttaccgtaacttgaaagtatttcgatttcttggctttatatatcttgtggaaaggacgaaacaccgGGTGCCCTTACTCTCACCTGATTACTTAATCCGTGGGGTTAGAGCTAGAAATAGCAAGTTAACCTAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTTTCCTGCAGGAACGCCCTACgaattcgggcccattggtatggc".to_string().to_ascii_uppercase().into_bytes();
-        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, None);
 
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("2_AACGCCCTAC_GGTGCCCTTACTCTCACCTGATTACTTAATCCGTG".to_string().into_bytes()).unwrap());
@@ -853,7 +1051,7 @@ mod tests {
 
         };
 
-        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
+        let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, None);
         assert_eq!(String::from_utf8(best_ref.unwrap().ref_name).unwrap(),
                    String::from_utf8("ref_48_GGTAAATTTGAGGCTCCGGCATGCAGGAGGCCGTG".to_string().into_bytes()).unwrap());
     }
@@ -984,13 +1182,16 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
         };
 
         for i in 0..10 {
-            let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score);
+            let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, None);
         }
     }
 
     use bio::io::{fasta, fastq};
     use flate2::read::GzDecoder;
+    use itertools::cloned;
     use sigalign::results::TargetAlignment;
+    use alignment_functions::{quick_alignment_search, AlignmentWithRef};
+    use utils::read_utils::u8s;
 
     // #[test]
     fn test_alignment_marc1_data() {

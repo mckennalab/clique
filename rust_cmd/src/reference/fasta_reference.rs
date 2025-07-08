@@ -156,10 +156,14 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         return SuffixTableLookup { suffix_table: SuffixTable::new(String::from_utf8(reference.clone()).unwrap()), seed_size };
     }
 
-    pub fn sequence_to_kmers(reference: &Vec<u8>, kmer_size: &usize, kmer_spacing: &usize) -> Vec<(Vec<u8>, usize)> {
-        let kmers: Vec<(Vec<u8>,usize)> = reference.to_ascii_uppercase().windows(*kmer_size).step_by(*kmer_spacing).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect::<Vec<(Vec<u8>,usize)>>();
-        //kmers.extend(reference.reverse_complement().to_ascii_uppercase().windows(*kmer_size).step_by(*kmer_spacing).dedup_with_count().map(|(c,w)| (w.to_vec(),c)).collect::<Vec<(Vec<u8>,usize)>>());
-        kmers
+    pub fn sequence_to_kmers(sequence: &Vec<u8>, kmer_size: &usize, kmer_spacing: &usize) -> Vec<(Vec<u8>, usize)> {
+        sequence.
+            to_ascii_uppercase().
+            windows(*kmer_size).
+            step_by(*kmer_spacing).
+            dedup_with_count().
+            map(|(c,w)| (w.to_vec(), c)).
+            collect::<Vec<(Vec<u8>, usize)>>()
     }
 
     /// find a list of unique kmers per reference
