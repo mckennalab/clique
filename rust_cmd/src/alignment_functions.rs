@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 
@@ -118,7 +118,6 @@ pub fn align_reads(read_structure: &SequenceLayout,
                     Some(alignment_obj) => {
                         let results = alignment_obj.alignment;
                         let _orig_ref_seq = alignment_obj.ref_sequence;
-                        let ref_name = alignment_obj.ref_name;
                         match results {
                             None => {
                                 // TODO: we should track this and provide a final summary
@@ -138,13 +137,10 @@ pub fn align_reads(read_structure: &SequenceLayout,
                                 let read = SortingReadSetContainer::empty_tags(aln);
                                 let new_read = SamReadyOutput { read, added_tags: Default::default() };
 
-                                //let samrecord = aln.to_sam_record(&i32::try_from(*reference_record).ok().unwrap(), &empty_tags, None);
-
                                 let output = Arc::clone(&output);
                                 let arc_writer = output.clone();
                                 let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
                                 arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC1)");
-                                //output.write(&samrecord).expect("Unable to write read to output bam file");
                             }
                         }
                     }
@@ -360,6 +356,7 @@ pub fn align_two_strings_passed_matrix(
 }
 
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct AlignmentWithRef {
     alignment: Option<AlignmentResult>,
@@ -563,7 +560,7 @@ fn quick_alignment_search(read_name: &String,
         rm.unique_kmers.kmer_to_reference.get(kmer)
     }).flatten().counts();
     
-    let count: f64  = max_ref.iter().map(|(x,y)|y).sum::<usize>() as f64;
+    let count: f64  = max_ref.iter().map(|(_x,y)|y).sum::<usize>() as f64;
     let proportions = max_ref.iter().map(|(x,y)| (x,*y as f64/count)).collect::<Vec<(&&Reference,f64)>>();
     let max_ref = proportions.iter().max_by(|x, y| x.1.total_cmp(&y.1));
 
@@ -591,7 +588,7 @@ fn quick_alignment_search(read_name: &String,
                     })
                 },
                 _ => {
-                    let ref_names : HashSet<Vec<u8>> = proportions.iter().map(|(x,y)|x.name.clone()).into_iter().collect();
+                    let ref_names : HashSet<Vec<u8>> = proportions.iter().map(|(x,_y)|x.name.clone()).into_iter().collect();
                     exhaustive_alignment_search(read_name, read, qual_sequence, rm, alignment_mat, my_aff_score,Some(ref_names))
                 }
             }
@@ -802,7 +799,7 @@ mod tests {
             let _read_structure = SequenceLayout {
                 aligner: None,
                 merge: None,
-                reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+                reads: vec![ReadPosition::Read1 { orientation: AlignedReadOrientation::Forward }],
                 known_strand: true,
                 references: BTreeMap::new(),
             };
@@ -851,7 +848,7 @@ mod tests {
         let _read_structure = SequenceLayout {
             aligner: None,
             merge: None,
-            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![ReadPosition::Read1 { orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -893,7 +890,7 @@ mod tests {
         let _read_structure = SequenceLayout {
             aligner: None,
             merge: None,
-            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![ReadPosition::Read1 { orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -935,7 +932,7 @@ mod tests {
         let _read_structure = SequenceLayout {
             aligner: None,
             merge: None,
-            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![ReadPosition::Read1 { orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -978,7 +975,7 @@ mod tests {
         let _read_structure = SequenceLayout {
             aligner: None,
             merge: None,
-            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![ReadPosition::Read1 { orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -1025,7 +1022,7 @@ mod tests {
         let _read_structure = SequenceLayout {
             aligner: None,
             merge: None,
-            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![ReadPosition::Read1 { orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -1100,8 +1097,8 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
         let mut aligner = Aligner::new(algorithm);
 
         // (3) Align query to reference
-        for i in 0..10 {
-            let result = aligner.align(test_read, &reference);
+        for _i in 0..10 {
+            let _ = aligner.align(test_read, &reference);
         }
         //println!("{:#?}", result);
     }
@@ -1138,8 +1135,8 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
         let mut aligner = Aligner::new(algorithm);
 
         // (3) Align query to reference
-        for i in 0..10 {
-            let result = aligner.align(test_read, &reference);
+        for _i in 0..10 {
+            let _ = aligner.align(test_read, &reference);
         }
         //println!("{:#?}", result);
     }
@@ -1155,7 +1152,7 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
         let _read_structure = SequenceLayout {
             aligner: None,
             merge: None,
-            reads: vec![ReadPosition::Read1 { chain_align: None, orientation: AlignedReadOrientation::Forward }],
+            reads: vec![ReadPosition::Read1 { orientation: AlignedReadOrientation::Forward }],
             known_strand: true,
             references: BTreeMap::new(),
         };
@@ -1181,19 +1178,17 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
 
         };
 
-        for i in 0..10 {
-            let best_ref = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, None);
+        for _i in 0..10 {
+            let _ = exhaustive_alignment_search(&"testread".to_string(), &read_one, None, &&rm, &mut read_mat, &my_aff_score, None);
         }
     }
 
     use bio::io::{fasta, fastq};
     use flate2::read::GzDecoder;
-    use itertools::cloned;
-    use sigalign::results::TargetAlignment;
-    use alignment_functions::{quick_alignment_search, AlignmentWithRef};
+    use alignment_functions::{quick_alignment_search};
     use utils::read_utils::u8s;
 
-    // #[test]
+    #[test]
     fn test_alignment_marc1_data() {
 
         // Open the FASTA file
@@ -1209,7 +1204,7 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
             let record = result.unwrap();
 
             // Extract the sequence ID and sequence
-            let id = record.id().clone().to_owned();
+            let id = record.id().to_owned();
             let seq = record.seq();
             println!("id {} seq {}",id, String::from_utf8(seq.to_vec()).unwrap());
             indexes.insert(index, id);
@@ -1233,9 +1228,7 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
 
         let mut aligner = Aligner::new(algorithm);
 
-        let mut correct = 0;
-        let mut incorrect = 0;
-
+        
         let input_fasta = "test_data/mouse_24c_known_barcode_with_tags_r1.fq.gz";
 
         // Create a GzDecoder to decompress the file
@@ -1258,7 +1251,6 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
                 // Extract the sequence ID, sequence, and quality scores
                 let id = record.id();
                 let seq = record.seq();
-                let qual = record.qual();
 
                 let correct = id.split('_').next().unwrap_or("failed");
 
@@ -1268,7 +1260,7 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
                 let best_alignment = result.0.iter().map(|aln| {
                     let mut min_score = u32::MAX;
                     let mut min_pos = 0;
-                    aln.alignments.iter().enumerate().map(|(index, ln)| {
+                    let _ = aln.alignments.iter().enumerate().map(|(index, ln)| {
                         if ln.penalty < min_score {
                             min_score = ln.penalty;
                             min_pos = index;
@@ -1279,8 +1271,6 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
 
                 let align_name = indexes.get(&(best_alignment.2 as usize)).unwrap();
                 let candidate_split = align_name.split('_').collect::<Vec<&str>>()[2];
-                //println!("count {} known {} candidate {} match {}", count, correct, candidate_split, correct == candidate_split);
-                //println!("{:#?}", result);
                 if correct == candidate_split {
                     correct_count += 1;
                 }
@@ -1289,7 +1279,5 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
                 return
             }
         }
-
-        //println!("{:#?}", result);
     }
 }

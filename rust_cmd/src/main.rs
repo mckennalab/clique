@@ -29,7 +29,6 @@ extern crate serde_yaml;
 extern crate symspell;
 extern crate shardio;
 extern crate anyhow;
-extern crate sift4;
 extern crate phf;
 extern crate rust_htslib;
 extern crate noodles_bam;
@@ -46,7 +45,6 @@ extern crate noodles_sam;
 extern crate nohash_hasher;
 extern crate vpsearch;
 extern crate nanoid;
-extern crate triple_accel;
 extern crate spoa;
 
 use ::std::io::Result;
@@ -61,7 +59,6 @@ use clap::Subcommand;
 use nanoid::nanoid;
 use consensus::consensus_builders::MergeStrategy;
 use crate::alignment_functions::align_reads;
-use crate::calling::call_events::BamCallingParser;
 use crate::collapse::collapse;
 use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::reference::fasta_reference::ReferenceManager;
@@ -70,11 +67,17 @@ mod linked_alignment;
 pub mod extractor;
 pub mod sequence_lookup;
 
+#[allow(dead_code)]
 const FASTA_UNSET: u8 = b'-';
+#[allow(dead_code)]
 const FASTA_N: u8 = b'N';
+#[allow(dead_code)]
 const FASTA_A: u8 = b'A';
+#[allow(dead_code)]
 const FASTA_G: u8 = b'G';
+#[allow(dead_code)]
 const FASTA_C: u8 = b'C';
+#[allow(dead_code)]
 const FASTA_T: u8 = b'T';
 
 
@@ -96,10 +99,6 @@ mod umis {
     pub mod correct_tags;
     
     pub mod known_list;
-}
-mod calling {
-//    pub mod bam_file_to_cell_list;
-    pub mod call_events;
 }
 
 mod consensus {
@@ -187,20 +186,6 @@ enum Cmd {
         find_inversions: bool,
 
     },
-
-    Call {
-        #[clap(long)]
-        read_structure: String,
-
-        #[clap(long)]
-        bam: String,
-
-        #[clap(long)]
-        output: String,
-        
-        #[clap(long)]
-        references: Option<String>,
-    },
 }
 
 #[derive(Parser, Debug)]
@@ -242,7 +227,7 @@ fn main() {
                      &mut tmp,
                      &my_yaml,
                      inbam,
-                     &MergeStrategy::STRETCHER,
+                     &MergeStrategy::Stretcher,
             );
         },
 
@@ -274,19 +259,6 @@ fn main() {
                         index2,
                         threads,
                         find_inversions);
-        },
-        Cmd::Call {
-            read_structure,
-            bam,
-            output,
-            references,
-        } => {
-            let my_yaml = SequenceLayout::from_yaml(read_structure);
-
-            let parser = BamCallingParser::new(&my_yaml, references.clone());
-
-            parser.output_bam_file_entries(bam.as_str(), output.as_str() ).expect("Unable to process events");
-
         }
     }
 }

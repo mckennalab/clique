@@ -6,7 +6,6 @@ use log::info;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use triple_accel::{levenshtein_exp};
 use vpsearch::{Tree};
 use vpsearch::{MetricSpace};
 use utils::read_utils::pad_right;
@@ -111,7 +110,7 @@ impl KnownList {
         let raw_reader = BufReader::new(File::open(filename).expect(&format!("Unable to open input file {}",filename)));
         let mut input_set = Vec::new();
         for line in raw_reader.lines() {
-            let mut bytes = line.unwrap();
+            let bytes = line.unwrap();
             if *reverse_comp {
                 input_set.push(FastaString::new_reverse_complement(bytes.into_bytes()));
             } else {
@@ -179,23 +178,12 @@ pub struct BestF32Hits {
 mod tests {
     use std::{
         fs::File,
-        io::{self, BufRead, BufReader},
-        path::Path,
+        io::{BufRead, BufReader},
     };
-    use std::collections::HashMap;
-    use vpsearch::MetricSpace;
     use crate::{
         read_strategies::sequence_layout::{UMIConfiguration, UMISortType},
-        umis::known_list::{FastaString, KnownList},
+        umis::known_list::{KnownList},
     };
-
-    fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-    where
-        P: AsRef<Path>,
-    {
-        let file = File::open(filename)?;
-        Ok(io::BufReader::new(file).lines())
-    }
 
     #[test]
     fn test_real_known_set() {

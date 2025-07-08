@@ -5,6 +5,7 @@ use petgraph::prelude::*;
 use indicatif::ProgressBar;
 use vpsearch::{BestCandidate, MetricSpace};
 
+#[allow(dead_code)]
 pub struct InputList {
     pub strings: Vec<Vec<u8>>,
     pub max_dist: usize, // the minimum distance to consider for creating an edge
@@ -64,6 +65,7 @@ pub fn average_dist(strings: &Vec<Vec<u8>>,compare: fn(&Vec<u8>, &Vec<u8>) -> u6
 
 
 
+#[allow(dead_code)]
 #[derive(Clone)]
 struct U8String {
     u8str : Vec<u8>
@@ -106,6 +108,7 @@ impl<Item: MetricSpace<Impl>, Impl> RadiusBasedNeighborhood<Item, Impl> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone,Copy,Hash)]
 struct ClosestHits {
     id: u32,
@@ -144,6 +147,7 @@ for RadiusBasedNeighborhood<Item, Impl>
     }
 }
 
+#[allow(dead_code)]
 pub fn vantage_point_string_graph(input_list: &InputList, progress: bool) -> StringGraph {
 
     let bar2: Option<ProgressBar> = if progress {
@@ -255,12 +259,10 @@ pub fn get_connected_components(string_graph: &StringGraph) -> Vec<Vec<Vec<u8>>>
 mod tests {
 
     use std::time::Instant;
-    use indexmap::map::Slice;
-    use triple_accel::levenshtein_exp;
     use crate::utils::base_utils::edit_distance;
     use super::*;
     use rand::prelude::*;
-    use rand::thread_rng;
+    use rand::rng;
 
     #[test]
     fn string_distance_test() {
@@ -287,7 +289,7 @@ mod tests {
     /// Generates a random DNA sequence of the given length as a Vec<u8>
     fn create_random_string(length: usize) -> Vec<u8> {
         let bases = b"ACGT";
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         (0..length)
             .map(|_| *bases.choose(&mut rng).unwrap())
@@ -326,89 +328,5 @@ mod tests {
         let str2 = vec![b'R', b'C', b'G', b'T', b'A'];
         assert_eq!(edit_distance(&str1, &str2), 0);
     }
-
-
-
-    fn aln_distance(st1: &Vec<u8>, st2: &Vec<u8>) -> f64 {
-        levenshtein_exp(st1,st2) as f64
-        
-    }
-
-    #[test]
-    fn test_sift4_vs_string_dist() {
-        let low_match =  "AAAAAAAA".as_bytes().to_vec();
-        let low_match_str = String::from_utf8(low_match.clone()).unwrap();
-
-        let high_match = "AAAATTTT".as_bytes().to_vec();
-        let high_match_str = String::from_utf8(high_match.clone()).unwrap();
-
-        let close_match = "AATAAAAA".as_bytes().to_vec();
-        let close_match_str = String::from_utf8(low_match.clone()).unwrap();
-
-        let iterations = 10000;
-        for _i in 0..4 {
-            let now = Instant::now();
-            for _x in 0..iterations {
-                let aln_dist = aln_distance(&low_match, &high_match);
-                assert_eq!(aln_dist,4.0);
-            }
-            println!("Aligned high/low {}", now.elapsed().as_millis());
-
-        }
-
-        let iterations = 10000;
-        for _i in 0..4 {
-            let now = Instant::now();
-            for _x in 0..iterations {
-                let sift_dist = sift4::simple(&low_match_str.as_str(), &high_match_str.as_str());
-                assert_eq!(sift_dist, 4);
-            }
-            println!("Sift4 high/low {}", now.elapsed().as_millis());
-
-        }
-        for _i in 0..4 {
-
-            let now = Instant::now();
-            for _x in 0..iterations {
-                let _ = sift4::simple(&low_match_str.as_str(), &close_match_str.as_str());
-            }
-            println!("Sift4 close/low {}", now.elapsed().as_millis());
-
-        }
-        for _i in 0..4 {
-            let now = Instant::now();
-            for _x in 0..iterations {
-                let _ = string_distance_no_break(&low_match, &high_match, &2);
-            }
-            println!("string_distance high/low {}", now.elapsed().as_millis());
-
-        }
-        for _i in 0..4 {
-
-            let now = Instant::now();
-            for _x in 0..iterations {
-                let _ = string_distance_no_break(&low_match, &high_match, &2);
-            }
-            println!("string_distance close/low {}", now.elapsed().as_millis());
-
-        }
-        for _i in 0..4 {
-
-            let now = Instant::now();
-            for _x in 0..iterations {
-                let _ = string_distance_break(&low_match, &high_match, &2);
-            }
-            println!("string_distance_break high/low {}", now.elapsed().as_millis());
-
-        }
-        for _i in 0..4 {
-
-            let now = Instant::now();
-            for _x in 0..iterations {
-                let _ = string_distance_break(&low_match, &close_match, &2);
-            }
-            println!("string_distance_break close/low {}", now.elapsed().as_millis());
-        }
-    }
-
+    
 }

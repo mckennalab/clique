@@ -3,9 +3,6 @@ use std::fs::File;
 use std::io::Read;
 use serde::{Serialize,Deserialize};
 use std::collections::{BTreeMap};
-use rust_star::Trie;
-use read_strategies::sequence_layout::UMISortType::KnownTag;
-use sequence_lookup::KnownLookup;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum UMISortType {
@@ -94,19 +91,15 @@ pub enum AlignedReadOrientation {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum ReadPosition {
     Read1 {
-        chain_align: Option<bool>,
         orientation: AlignedReadOrientation
     },
     Read2 {
-        chain_align: Option<bool>,
         orientation: AlignedReadOrientation
     },
     Index1 {
-        chain_align: Option<bool>,
         orientation: AlignedReadOrientation
     },
     Index2 {
-        chain_align: Option<bool>,
         orientation: AlignedReadOrientation
     },
     Spacer {

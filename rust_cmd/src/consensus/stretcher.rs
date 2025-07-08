@@ -5,15 +5,7 @@ use alignment_functions::simplify_cigar_string;
 use crate::alignment::alignment_matrix::AlignmentResult;
 use crate::consensus::consensus_builders::{calculate_qual_scores, combine_qual_scores, prob_to_phred};
 
-// take a series of reads aligned to a common reference and create a consensus using their alignments
-struct StretchConsensus {
-    max_alignment_distance: f64,
-}
-
-struct AlignmentPile {
-    //Vec<Alignment>
-}
-
+#[allow(dead_code)]
 const DEFAULT_QUAL_FOR_UNKNOWN_QUAL: u8 = 32u8;
 
 #[derive(Clone, Serialize, Deserialize, Hash)]
@@ -245,8 +237,8 @@ impl fmt::Debug for AlignmentCandidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let reference_string: Vec<u8> = self.reference.iter().map(|x| {
             match x {
-                ReferenceStatus::Original { base, original_position, counts } => { *base }
-                ReferenceStatus::Insertion { base, counts } => { *base }
+                ReferenceStatus::Original { base, original_position: _, counts: _ } => { *base }
+                ReferenceStatus::Insertion { base, counts: _ } => { *base }
             }
         }).collect();
         f.debug_struct("AlignmentCandidate")
@@ -281,7 +273,7 @@ impl AlignmentCandidate {
 
         let existing_ref_size = self.reference.len();
         self.read_names.push(alignment.read_name.clone());
-        let read_qual = alignment.read_quals.clone().unwrap_or(alignment.read_aligned.iter().map(|x| b'h').collect());
+        let read_qual = alignment.read_quals.clone().unwrap_or(alignment.read_aligned.iter().map(|_x: _| b'h').collect());
         //println!("*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- entry with {} {} ", u8s(&alignment.reference_aligned), u8s(&alignment.read_aligned));
 
         while existing_index < existing_ref_size && incoming_ref_index < alignment.reference_aligned.len() {
@@ -302,7 +294,7 @@ impl AlignmentCandidate {
                     existing_index += 1;
                 }
                 // an existing insertion to the reference but the new read isn't an insertion -- just skip over it
-                (ReferenceStatus::Insertion { base: _, counts: _ }, new_ref) => {
+                (ReferenceStatus::Insertion { base: _, counts: _ }, _new_ref) => {
                     //println!("step2b");
                     // just move past it
                     existing_index += 1;
@@ -321,14 +313,13 @@ impl AlignmentCandidate {
                 // we have a new insertion in the reference we haven't seen before
 
                 // this should not happen, where we're at the same position but we have different reference nucleotides; panic
-                (ReferenceStatus::Original { base, original_position, counts }, new_ref) if base != new_ref && *base != b'-' && *new_ref != b'-' => {
+                (ReferenceStatus::Original { base, original_position: _, counts: _ }, new_ref) if base != new_ref && *base != b'-' && *new_ref != b'-' => {
                     return Err(format!("Two mismatched reference nucleotides that are not gaps: {} and {}, pos {} and {}", *base as char, *new_ref as char, existing_index, incoming_ref_index));
                 }
                 // easy -- two reference aligned bases -- make sure they agree and then add to the counts
-                (ReferenceStatus::Original { base, original_position, counts }, new_ref) if base == new_ref && *base != b'-' && *new_ref != b'-' => {
+                (ReferenceStatus::Original { base, original_position: _, counts }, new_ref) if base == new_ref && *base != b'-' && *new_ref != b'-' => {
                     //println!("step3 {}", *incoming_read_base as char);
                     counts.update(*incoming_read_base, Some(*incoming_read_qual));
-                    ;
                     incoming_ref_index += 1;
                     existing_index += 1;
                     if *incoming_read_base != b'-' {
@@ -352,7 +343,7 @@ impl AlignmentCandidate {
 
         self.reference.iter().for_each(|rb| {
             match rb {
-                ReferenceStatus::Original { base, original_position, counts } => {
+                ReferenceStatus::Original { base, original_position: _, counts } => {
                     //println!("original {} {:?}", *base as char, counts);
                     let base_qual = counts.consensus_base(gap_call_threshold);
                     resulting_alignmented_ref.push(*base);
@@ -381,7 +372,7 @@ impl AlignmentCandidate {
                         }
                     }
                 }
-                ReferenceStatus::Insertion { base, counts } => {
+                ReferenceStatus::Insertion { base: _, counts: _ } => {
                     //println!("dropped insert {} {}", *base as char, counts.proportion(base,&self.read_names.len()));
                     // do nothing, we're not going to include this gap in the reference as it's not supported by enough reads
                 }
@@ -421,7 +412,7 @@ mod tests {
             read_name: "testread".to_string(),
             reference_aligned: ref_bases.as_bytes().to_vec(),
             read_aligned: read_bases.as_bytes().to_vec(),
-            read_quals: Some(read_bases.as_bytes().iter().filter(|x| **x != b'-').map(|x| DEFAULT_QUAL_FOR_UNKNOWN_QUAL).collect::<Vec<u8>>()), // not right
+            read_quals: Some(read_bases.as_bytes().iter().filter(|x| **x != b'-').map(|_x| DEFAULT_QUAL_FOR_UNKNOWN_QUAL).collect::<Vec<u8>>()), // not right
             cigar_string: vec![],
             path: vec![],
             score: 0.0,
@@ -436,21 +427,21 @@ mod tests {
         let ref_bases = "ACGTACGT";
         let read_bases = "ACG--CGT";
         let mut candidate = AlignmentCandidate::new(ref_bases.as_bytes(),"ref_name".as_bytes());
-        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases));
+        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases)).expect("Failed to add candidate to alignment");
         let conc = candidate.to_consensus(&0.75);
         assert_eq!(u8s(&conc.reference_aligned),u8s(&ref_bases.as_bytes().to_vec()));
         assert_eq!(u8s(&conc.read_aligned),u8s(&read_bases.as_bytes().to_vec()));
 
         let ref_bases = "ACGT-ACGT";
         let read_bases = "ACGTAACGT";
-        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases));
+        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases)).expect("Failed to add candidate to alignment");
         let conc = candidate.to_consensus(&0.75);
         assert_eq!(u8s(&conc.reference_aligned),u8s(&"ACGTACGT".as_bytes().to_vec())); // we don't have enough evidence for the insertion
         assert_eq!(u8s(&conc.read_aligned),u8s(&"ACGTACGT".as_bytes().to_vec())); // we don't have enough evidence for the insertion
 
         let ref_bases = "ACGTACGT";
         let read_bases = "ACGTACGT";
-        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases));
+        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases)).expect("Failed to add candidate to alignment");
         let conc = candidate.to_consensus(&0.75);
         assert_eq!(u8s(&conc.reference_aligned),u8s(&"ACGTACGT".as_bytes().to_vec()));
         assert_eq!(u8s(&conc.read_aligned),u8s(&"ACGTACGT".as_bytes().to_vec()));
@@ -458,17 +449,17 @@ mod tests {
 
         let ref_bases = "ACGTACGT";
         let read_bases = "--------";
-        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases));
+        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases)).expect("Failed to add candidate to alignment");
         let conc = candidate.to_consensus(&0.75);
         assert_eq!(u8s(&conc.reference_aligned),u8s(&"ACGTACGT".as_bytes().to_vec()));
         assert_eq!(u8s(&conc.read_aligned),u8s(&"ACGTACGT".as_bytes().to_vec()));
 
-        for i in 0..20 {
+        for _ in 0..20 {
             //     t ref_bases =   "ACGTACGT";
             let ref_bases = "ACGT----ACGT";
             let read_bases = "ACGTAGGAACGT";
 
-            candidate.add_alignment(&create_alignment_result(read_bases, ref_bases));
+            candidate.add_alignment(&create_alignment_result(read_bases, ref_bases)).expect("Unable to unwrap candidate");
         }
         let conc = candidate.to_consensus(&0.75);
         assert_eq!(u8s(&conc.reference_aligned),u8s(&"ACGT----ACGT".as_bytes().to_vec()));

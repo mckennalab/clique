@@ -5,14 +5,12 @@ use std::path::PathBuf;
 
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
-use bstr::ByteSlice;
 use collapse::LookupCollection;
 use read_strategies::sequence_layout::UMISortType;
 use rust_star::{DistanceGraphNode, LinkedDistances, Trie};
 use rustc_hash::{FxHashMap, FxHasher};
 use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use std::ops::Deref;
-use umis::known_list::KnownList;
 use utils::read_utils::{strip_gaps, u8s};
 
 pub struct SequenceCorrector {
@@ -52,7 +50,7 @@ impl SequenceCorrector {
         assert!(self.tag.length >= self.tag.max_distance);
 
         let key_value = item.ordered_unsorted_keys.pop_front().unwrap();
-        if (key_value.0 != self.tag.symbol) {
+        if key_value.0 != self.tag.symbol {
             println!(
                 "Failed read: {}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{} {}",
                 &item.aligned_read.read_name,
@@ -145,7 +143,7 @@ impl SequenceCorrector {
             } else {
                 0
             };
-            let mut future = if sorted_tag_index < sorted_tags.len() - 1 {
+            let future = if sorted_tag_index < sorted_tags.len() - 1 {
                 LinkedDistances::prefix_overlap_str(
                     &sorted_tags[sorted_tag_index + 1].0,
                     &sorted_tags[sorted_tag_index].0,
@@ -175,9 +173,6 @@ impl SequenceCorrector {
                     &search_nodes,
                 );
                 search_nodes = rt.1;
-                if future < 1 {
-                    future = 1;
-                }
 
                 match rt.0.len() {
                     1 => {
@@ -206,7 +201,7 @@ impl SequenceCorrector {
                         let mut min = usize::MAX;
                         let mut min_index = 0;
                         let mut min_count = 0;
-                        rt.0.iter().enumerate().for_each(|(index, (x, y))| {
+                        rt.0.iter().enumerate().for_each(|(index, (_x, y))| {
                             if *y < min {
                                 min = *y;
                                 min_index = index;
@@ -299,15 +294,13 @@ impl SequenceCorrector {
                 );
                 let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
-                correction.into_iter().for_each(|(center, dist_graph)| {
+                correction.into_iter().for_each(|(_center, dist_graph)| {
                     let connected_node = dist_graph.borrow_mut();
                     let connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
                     let string_name = connected_node.string.clone();
                     knowns.insert(string_name.clone(), string_name.clone());
-                    //println!("Known {} to known {}",u8s(&string_name),u8s(&string_name));
-                    connected_node.swallowed_links.iter().for_each(|(x, y)| {
+                    connected_node.swallowed_links.iter().for_each(|(x, _y)| {
                         knowns.insert(x.clone(), string_name.clone());
-                        //println!("Unknown {} to known {}",u8s(&x),u8s(&string_name));
                     });
                 });
                 knowns
@@ -372,7 +365,7 @@ impl SequenceCorrector {
                 let mut trie = lookup_collection
                     .ret_trie
                     .get_mut(&tag.file.clone().unwrap().clone());
-                let mut trie = trie
+                let trie = trie
                     .as_mut()
                     .unwrap();
                 let final_correction = self.correct_known_list(trie);
@@ -396,11 +389,11 @@ impl SequenceCorrector {
                 let mut kl = lookup_collection
                     .ret_known_lookup
                     .get_mut(&tag.file.clone().unwrap().clone());
-                let mut kl = kl
+                let kl = kl
                     .as_mut()
                     .unwrap();
                 let final_correction = kl.correct_all(
-                    &(self.hash_map.iter().map(|(ky,vl)| ky.clone()).collect::<Vec<Vec<u8>>>()),
+                    &(self.hash_map.iter().map(|(ky,_vl)| ky.clone()).collect::<Vec<Vec<u8>>>()),
                     &(self.tag.max_distance as u32),
                 );
                 self.close_and_write_to_shard_writer(sender, final_correction)
@@ -418,10 +411,8 @@ impl SequenceCorrector {
         final_correction: FxHashMap<Vec<u8>, Vec<u8>>,
     ) -> usize {
         let mut read_count: usize = 0;
-        let mut buffered_reads = 0;
         let mut unbuffered_reads = 0;
 
-        let mut hit_count = 0;
         self.buffer.iter().for_each(|y| {
             self.add_corrected(&final_correction, y.clone(), sender);
             read_count += 1;
@@ -457,17 +448,16 @@ impl SequenceCorrector {
         self.buffer.clear();
         self.hash_map.clear();
         debug!(
-            "COUNTS {} {} {} {} {}",
+            "COUNTS {} {} {}",
             read_count,
-            buffered_reads,
             unbuffered_reads,
-            hit_count,
             self.hash_map.len()
         );
         read_count
     }
 }
 
+#[allow(dead_code)]
 trait ListCorrector {
     fn correct_list(
         &self,
@@ -480,12 +470,8 @@ trait ListCorrector {
 mod tests {
     use super::*;
     use alignment::alignment_matrix::AlignmentResult;
-    use bio::io::fastq::Record;
-    use read_strategies::read_set::ReadSetContainer;
     use read_strategies::sequence_layout::UMISortType;
-    use tempfile::tempfile;
     use tempfile::NamedTempFile;
-    use {FASTA_A, FASTA_T};
 
     #[test]
     fn test_tag_buffer_corrects() {
@@ -510,10 +496,9 @@ mod tests {
         };
 
         // above the threshold for merging
-        let mut tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&10, &path, &config);
+        let tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&10, &path, &config);
         let list = tag_buffer.correct_degenerate_list();
-        let minimum_thresh = 5.0;
-
+        
         assert!(list.contains_key("AAAAATTTTT".as_bytes()));
         assert_eq!(
             list.get("AAAAATTTTT".as_bytes()).unwrap().clone(),
@@ -539,7 +524,7 @@ mod tests {
         );
 
         // below the threshold for merging
-        let mut tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&3, &path, &config);
+        let tag_buffer = create_tag_buffer_with_set_anchor_seq_count(&3, &path, &config);
         let list = tag_buffer.correct_degenerate_list();
 
         assert!(list.contains_key("AAAAATTTTT".as_bytes()));
@@ -615,7 +600,7 @@ mod tests {
     ) -> SequenceCorrector {
         let mut tag_buffer = SequenceCorrector::new(path.clone(), &5000, config.clone());
 
-        for i in 0..*count {
+        for _ in 0..*count {
             tag_buffer.push(create_fake_read_set_container(
                 &"read1".to_string(),
                 &"AAAAATTTTT".to_string(),
@@ -628,7 +613,7 @@ mod tests {
             &config,
         ));
 
-        for i in 0..*count {
+        for _ in 0..*count {
             tag_buffer.push(create_fake_read_set_container(
                 &"read1".to_string(),
                 &"GGGGGCCCCC".to_string(),
@@ -649,8 +634,6 @@ mod tests {
         read_one_seq: &String,
         config: &UMIConfiguration,
     ) -> SortingReadSetContainer {
-        let read_1_qual = vec![b'H'; read_one_seq.len()];
-
         let mut unsorted_keys = VecDeque::default();
         unsorted_keys.push_front((
             config.symbol.clone(),

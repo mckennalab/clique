@@ -1,5 +1,5 @@
 use num_traits::Pow;
-use rand::{seq::IteratorRandom, thread_rng};
+use rand::{seq::IteratorRandom, rng};
 use crate::read_strategies::read_set::ReadSetContainer;
 
 #[allow(dead_code)]
@@ -36,7 +36,7 @@ pub fn strip_gaps(bases: &Vec<u8>) -> Vec<u8> {
     bases.iter().filter(|x| **x != b'-').map(|x|*x).collect()
 }
 
-pub fn pad_right(mut v: &Vec<u8>, target_len: usize, pad_byte: u8) -> Vec<u8> {
+pub fn pad_right(v: &Vec<u8>, target_len: usize, pad_byte: u8) -> Vec<u8> {
     let mut vv = v.clone();
     vv.resize(target_len, pad_byte);
     vv
@@ -67,7 +67,7 @@ pub fn reverse_complement(dna: &[u8]) -> Vec<u8> {
 }
 pub fn random_sequence(length: usize) -> String {
     let bases = vec![b'A', b'C', b'G', b'T'];
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     String::from_utf8(bases.iter().choose_multiple(&mut rng, length).iter().map(|c| **c).collect::<Vec<u8>>()).unwrap()
 }

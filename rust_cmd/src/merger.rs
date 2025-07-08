@@ -45,129 +45,52 @@ pub fn merge_reads_by_concatenation(
     let mut final_sequence: Vec<u8> = Vec::with_capacity(reads.read_one.seq().len() * 4);
     let mut final_sequence_quals: Vec<u8> = Vec::with_capacity(reads.read_one.seq().len() * 4);
 
-    let mut chain_aligned_seq: Option<Vec<u8>> = None;
-    let mut chain_aligned_quals: Option<Vec<u8>> = None;
-
     for read_layout in sequence_layout.reads.clone() {
         match read_layout {
             ReadPosition::Read1 {
-                chain_align,
                 orientation,
-            } => match chain_align {
-                Some(x) if x => {
-                    let ret = chain_align_update(
-                        &reads.read_one,
-                        &mut chain_aligned_seq,
-                        &mut chain_aligned_quals,
-                        &orientation,
-                    );
-                    chain_aligned_seq = Some(ret.0);
-                    chain_aligned_quals = Some(ret.1);
-                }
-                _ => {
-                    if chain_aligned_seq.is_some() {
-                        final_sequence.extend(chain_aligned_seq.unwrap());
-                        final_sequence_quals.extend(chain_aligned_quals.unwrap());
-                        chain_aligned_seq = None;
-                        chain_aligned_quals = None;
-                    }
+            } => {
                     final_sequence
                         .extend(sequence_to_fasta_vec(reads.read_one.seq(), &orientation));
                     final_sequence_quals.extend(reads.read_one.qual());
-                }
+                
             },
             ReadPosition::Read2 {
-                chain_align,
                 orientation,
             } => {
                 assert!(reads.read_two.is_some());
-                match chain_align {
-                    Some(x) if x => {
-                        let ret = chain_align_update(
-                            &reads.read_two.as_ref().unwrap(),
-                            &mut chain_aligned_seq,
-                            &mut chain_aligned_quals,
-                            &orientation,
-                        );
-                        chain_aligned_seq = Some(ret.0);
-                        chain_aligned_quals = Some(ret.1);
-                    }
-                    _ => {
-                        if chain_aligned_seq.is_some() {
-                            final_sequence.extend(chain_aligned_seq.unwrap());
-                            final_sequence_quals.extend(chain_aligned_quals.unwrap());
-                            chain_aligned_seq = None;
-                            chain_aligned_quals = None;
-                        }
+                
                         final_sequence.extend(sequence_to_fasta_vec(
                             reads.read_two.as_ref().unwrap().seq(),
                             &orientation,
                         ));
                         final_sequence_quals.extend(reads.read_two.as_ref().unwrap().qual());
                     }
-                }
-            }
             ReadPosition::Index1 {
-                chain_align,
+                
                 orientation,
             } => {
                 assert!(reads.index_one.is_some());
-                match chain_align {
-                    Some(x) if x => {
-                        let ret = chain_align_update(
-                            &reads.index_one.as_ref().unwrap(),
-                            &mut chain_aligned_seq,
-                            &mut chain_aligned_quals,
-                            &orientation,
-                        );
-                        chain_aligned_seq = Some(ret.0);
-                        chain_aligned_quals = Some(ret.1);
-                    }
-                    _ => {
-                        if chain_aligned_seq.is_some() {
-                            final_sequence.extend(chain_aligned_seq.unwrap());
-                            final_sequence_quals.extend(chain_aligned_quals.unwrap());
-                            chain_aligned_seq = None;
-                            chain_aligned_quals = None;
-                        }
+                
                         final_sequence.extend(sequence_to_fasta_vec(
                             reads.index_one.as_ref().unwrap().seq(),
                             &orientation,
                         ));
                         final_sequence_quals.extend(reads.index_one.as_ref().unwrap().qual());
-                    }
-                }
+                
+                
             }
             ReadPosition::Index2 {
-                chain_align,
                 orientation,
             } => {
                 assert!(reads.index_two.is_some());
-                match chain_align {
-                    Some(x) if x => {
-                        let ret = chain_align_update(
-                            &reads.index_two.as_ref().unwrap(),
-                            &mut chain_aligned_seq,
-                            &mut chain_aligned_quals,
-                            &orientation,
-                        );
-                        chain_aligned_seq = Some(ret.0);
-                        chain_aligned_quals = Some(ret.1);
-                    }
-                    _ => {
-                        if chain_aligned_seq.is_some() {
-                            final_sequence.extend(chain_aligned_seq.unwrap());
-                            final_sequence_quals.extend(chain_aligned_quals.unwrap());
-                            chain_aligned_seq = None;
-                            chain_aligned_quals = None;
-                        }
+                
                         final_sequence.extend(sequence_to_fasta_vec(
                             reads.index_two.as_ref().unwrap().seq(),
                             &orientation,
                         ));
                         final_sequence_quals.extend(reads.index_two.as_ref().unwrap().qual());
-                    }
-                }
+                
             }
             ReadPosition::Spacer { spacer_sequence } => {
                 final_sequence.extend(sequence_to_fasta_vec(
@@ -175,45 +98,12 @@ pub fn merge_reads_by_concatenation(
                     &AlignedReadOrientation::Forward,
                 ));
                 final_sequence_quals.extend(vec![b'H';spacer_sequence.len()]);
-                //println!("read {} qual {}",final_sequence.len(), final_sequence_quals.len());
             }
         }
     }
-    if chain_aligned_seq.is_some() {
-        final_sequence.extend(chain_aligned_seq.unwrap());
-        final_sequence_quals.extend(chain_aligned_quals.unwrap());
-    }
-    //println!("Final sequence: \n{}\n{}", u8s(&final_sequence), u8s(&final_sequence_quals));
-    //println!("read {} qual {}",final_sequence.len(), final_sequence_quals.len());
     MergedSequence {
         read_bases: final_sequence,
         read_quals: final_sequence_quals,
-    }
-}
-
-fn chain_align_update(
-    record: &Record,
-    chain_aligned_seq: &Option<Vec<u8>>,
-    chain_aligned_quals: &Option<Vec<u8>>,
-    orientation: &AlignedReadOrientation,
-) -> (Vec<u8>, Vec<u8>) {
-    let seq: Vec<u8> = record.seq().to_vec();
-    let qual: Vec<u8> = record.qual().to_vec();
-
-    match chain_aligned_seq {
-        None => (sequence_to_fasta_vec(&seq, orientation), qual.clone()),
-        Some(x) => {
-            let merged = merge_fasta_bases_by_alignment(
-                &x,
-                &String::from(record.id()),
-                &chain_aligned_quals.as_ref().unwrap(),
-                &sequence_to_fasta_vec(seq.as_slice(), orientation),
-                &String::from(record.id()),
-                &qual,
-                DEFAULT_ALIGNMENT_AFFINE_SCORING.as_ref(),
-            );
-            (merged.read_bases, merged.read_quals)
-        }
     }
 }
 
@@ -265,7 +155,6 @@ impl MergedReadSequence {
     fn contains_read1(read_structure: &SequenceLayout) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::Read1 {
-                chain_align: _,
                 orientation: _,
             } => true,
             _ => false,
@@ -274,7 +163,6 @@ impl MergedReadSequence {
     fn contains_read2(read_structure: &SequenceLayout) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::Read2 {
-                chain_align: _,
                 orientation: _,
             } => true,
             _ => false,
@@ -283,7 +171,6 @@ impl MergedReadSequence {
     fn contains_index1(read_structure: &SequenceLayout) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::Index1 {
-                chain_align: _,
                 orientation: _,
             } => true,
             _ => false,
@@ -292,7 +179,6 @@ impl MergedReadSequence {
     fn contains_index2(read_structure: &SequenceLayout) -> bool {
         read_structure.reads.iter().any(|s| match s {
             ReadPosition::Index2 {
-                chain_align: _,
                 orientation: _,
             } => true,
             _ => false,
@@ -474,7 +360,7 @@ pub fn merge_fasta_bases_by_alignment(
     read2_quals: &Vec<u8>,
     merge_initial_scoring: &AffineScoring,
 ) -> MergedSequence {
-    let mut results = align_two_strings(
+    let results = align_two_strings(
         &read1_seq,
         &read2_seq,
         None, // TODO: fix with quality scores
@@ -823,11 +709,9 @@ mod tests {
             merge: None,
             reads: vec![
                 Read1 {
-                    chain_align: None,
                     orientation: AlignedReadOrientation::Forward,
                 },
                 Read2 {
-                    chain_align: None,
                     orientation: AlignedReadOrientation::ReverseComplement,
                 },
             ],
@@ -846,11 +730,9 @@ mod tests {
             merge: None,
             reads: vec![
                 Read1 {
-                    chain_align: None,
                     orientation: AlignedReadOrientation::Forward,
                 },
                 Read2 {
-                    chain_align: None,
                     orientation: AlignedReadOrientation::Reverse,
                 },
             ],
@@ -869,11 +751,9 @@ mod tests {
             merge: None,
             reads: vec![
                 Read1 {
-                    chain_align: None,
                     orientation: AlignedReadOrientation::Forward,
                 },
                 Read2 {
-                    chain_align: None,
                     orientation: AlignedReadOrientation::Forward,
                 },
             ],
@@ -913,14 +793,12 @@ mod tests {
             merge: None,
             reads: vec![
                 Read1 {
-                    chain_align: None,
                     orientation: AlignedReadOrientation::Forward,
                 },
                 Spacer {
                     spacer_sequence: "ACGTACGTACGT".to_string(),
                 },
                 Read2 {
-                    chain_align: None,
                     orientation: AlignedReadOrientation::Forward,
                 },
                 Spacer {

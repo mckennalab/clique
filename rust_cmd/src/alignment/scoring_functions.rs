@@ -1,6 +1,7 @@
 use FASTA_N;
 
 /// Trait required to instantiate a Scoring instance
+#[allow(dead_code)]
 pub trait ScoringFunction {
     fn match_mismatch(&self, a: &u8, b: &u8) -> f64;
     fn gap(&self, length: usize) -> f64;
@@ -25,6 +26,7 @@ impl ScoringFunction for SimpleScoring {
 }
 
 /// Trait required to instantiate a Scoring instance
+#[allow(dead_code)]
 pub trait ConvexScoringFunction {
     fn match_mismatch(&self, a: &u8, b: &u8) -> f64;
     fn gap(&self, length: usize) -> f64;

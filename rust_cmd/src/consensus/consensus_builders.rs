@@ -1,14 +1,11 @@
 extern crate spoa;
 
-use crate::alignment::alignment_matrix::{
-    create_scoring_record_3d, Alignment, AlignmentTag, AlignmentType as LocalAlignmentType,
-};
+use crate::alignment::alignment_matrix::AlignmentTag;
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::{align_two_strings, simplify_cigar_string, OutputAlignmentWriter};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::reference::fasta_reference::ReferenceManager;
 use counter::Counter;
-use ndarray::Ix3;
 use rust_htslib::bam::record::CigarString;
 use shardio::{Range, ShardReader};
 use spoa::{AlignmentEngine, AlignmentType, Graph};
@@ -16,18 +13,19 @@ use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
-use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
 use ::{FASTA_N, FASTA_UNSET};
-use utils::read_utils::{strip_gaps, u8s};
+use utils::read_utils::{strip_gaps};
 
+#[allow(dead_code)]
 const PHRED_OFFSET: u8 = 32;
 
+#[allow(dead_code)]
 pub enum MergeStrategy {
-    STRICT_CONSENSUS,
-    HYBRID,
-    STRETCHER,
+    StrictConsensus,
+    Hybrid,
+    Stretcher,
 }
 
 pub fn write_consensus_reads(
@@ -99,13 +97,6 @@ pub fn write_consensus_reads(
         });
     });
     if !buffered_reads.is_empty() {
-        let alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
-            (reference_manager.longest_ref + 1) * 2,
-            (reference_manager.longest_ref + 1) * 2,
-            LocalAlignmentType::Affine,
-            false,
-        );
-
         let new_read = create_sam_read(
             reference_manager,
             maximum_reads_before_downsampling,
@@ -131,6 +122,8 @@ pub struct SamReadyOutput {
     pub added_tags: HashMap<[u8; 2], String>,
 }
 
+
+#[allow(deprecated)]
 fn create_sam_read(
     reference_manager: &ReferenceManager,
     maximum_reads_before_downsampling: &usize,
@@ -173,7 +166,7 @@ fn create_sam_read(
             .clone();
 
         let consensus_reads = match merge_strategy {
-            MergeStrategy::STRICT_CONSENSUS => {
+            MergeStrategy::StrictConsensus => {
                 let consensus_reads = create_poa_consensus(buffered_reads, maximum_reads_before_downsampling);
 
                 let gapless_quals = consensus_reads.1.iter().enumerate().filter(|(i, _x)| consensus_reads.0.get(*i).unwrap() != &b'-').map(|(_i, x)| x.clone()).collect();
@@ -194,7 +187,7 @@ fn create_sam_read(
                 Some(new_alignment)
 
             }
-            MergeStrategy::HYBRID => {
+            MergeStrategy::Hybrid => {
                 // try the stretcher first, if that fails out, try the POA
                 let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), reference_pointer.name.as_slice());
 
@@ -228,7 +221,7 @@ fn create_sam_read(
                     Some(candidate.to_consensus(&0.75))
                 }
             }
-            MergeStrategy::STRETCHER => {
+            MergeStrategy::Stretcher => {
                 let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), reference_pointer.name.as_slice());
 
                 let valid : usize = buffered_reads.iter().map(|x| {
@@ -398,7 +391,7 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
     (0..ln-1).for_each(|index| {
         let mut bases = Vec::new();
         let mut quals = Vec::new();
-        &alignments[1..alignments.len()].iter().enumerate().for_each(|(sequence_index, x)| {
+        let _ = &alignments[1..alignments.len()].iter().enumerate().for_each(|(sequence_index, x)| {
             assert_eq!(ln, x.len());
 
             let base = x[index];
@@ -414,22 +407,16 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
             bases.push(base);
             quals.push(qual);
         });
-        let qualstr = quals.iter().map(|x| *x + 33 as u8).collect::<Vec<u8>>();
-        //println!("build {} {} {}",u8s(&bases),u8s(&qualstr),reference[index] as char);
-
         let qual_scores = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &reference[index], &0.99);
         let index_of_max: usize = qual_scores
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(index, _)| index).unwrap();
-
-        //println!("qual scores {:?} {}", qual_scores,index_of_max);
-
+        
         if index_of_max < 5 {
             let prob = prob_to_phred(&qual_scores[index_of_max]);
-            //println!("qual {} prob: {} phred {} max: {}", qual_scores[index_of_max], prob, (prob + 33) as char,index_of_max);
-
+        
             final_quals.push(prob);
 
             match index_of_max {
@@ -441,9 +428,7 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
                 _ => panic!("Unknown index"),
             };
         }
-        //println!("conc {}", u8s(&conc));
     });
-    //println!("conc {}", u8s(&conc));
     (conc, final_quals)
 }
 
@@ -489,7 +474,7 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], reference_b
 
     assert_eq!(bases.len(), scores.len());
 
-    bases.iter().zip(scores.iter()).enumerate().for_each(|(index,(base_set, qual_set))| {
+    bases.iter().zip(scores.iter()).for_each(|(base_set, qual_set)| {
 
 
         assert_eq!(base_set.len(), qual_set.len());
@@ -541,6 +526,7 @@ mod tests {
     use super::*;
     use rust_htslib::bam::record::Cigar;
     use std::collections::VecDeque;
+    use utils::read_utils::u8s;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 

@@ -27,8 +27,6 @@ use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::correct_tags::SequenceCorrector;
 use consensus::consensus_builders::MergeStrategy;
 use noodles_sam::alignment::record::QualityScores;
-use petgraph::matrix_graph::Nullable;
-use petgraph::visit::Walker;
 use read_strategies::sequence_layout::UMISortType;
 use rust_star::Trie;
 use umis::known_list::KnownList;
@@ -301,7 +299,7 @@ impl AlignmentFilter for FlankingDegenerateBaseFilter {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-struct BamReadFiltering {
+pub struct BamReadFiltering {
     total_reads: usize,
     unmapped_flag_reads: usize,
     secondary_flag_reads: usize,
@@ -614,7 +612,7 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> LookupCollection 
                                 trie.insert(sequence, None, &config.max_distance);
                             });
                             debug!("creating kn");
-                            ret_trie.insert(x.clone(), (trie));
+                            ret_trie.insert(x.clone(), trie);
                         } else {
                             ret_known_lookup.insert(x.clone(), KnownList::new(config));
                         }
@@ -790,11 +788,9 @@ pub fn sort_level(
 mod tests {
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
-    use crate::utils::read_utils::fake_reads;
-    use read_strategies::sequence_layout::UMISortType;
-    use std::collections::VecDeque;
 
     const FASTA_A: u8 = b'A';
+    #[allow(dead_code)]
     const FASTA_T: u8 = b'T';
 
     pub fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
@@ -872,178 +868,6 @@ mod tests {
         assert!(alignment_check.keep(&fake_read_alignment));
     }
 
-    // FlankingDegenerateBaseFilter
-
-    //#[test]
-    fn test_flanking_degenerate_base_filter() {
-        let alignment_check = FlankingDegenerateBaseFilter {
-            min_flanking_indentity: 0.9,
-            flanking_window_size: 3,
-        };
-
-        let fake_read_alignment = SortingReadSetContainer {
-            ordered_sorting_keys: vec![],
-            ordered_unsorted_keys: Default::default(),
-            aligned_read: AlignmentResult {
-                reference_name: "".to_string(),
-                read_name: "".to_string(),
-                reference_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N, FASTA_N, FASTA_N, FASTA_A,
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                ],
-                read_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                ],
-                read_quals: None,
-                cigar_string: vec![],
-                path: vec![],
-                score: 0.0,
-                reference_start: 0,
-                read_start: 0,
-                bounding_box: None,
-            },
-        };
-
-        assert!(alignment_check.keep(&fake_read_alignment));
-
-        let fake_read_alignment = SortingReadSetContainer {
-            ordered_sorting_keys: vec![],
-            ordered_unsorted_keys: Default::default(),
-            aligned_read: AlignmentResult {
-                reference_name: "".to_string(),
-                read_name: "".to_string(),
-                reference_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N, FASTA_N, FASTA_N, FASTA_A,
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                ],
-                read_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_T, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                ],
-                read_quals: None,
-                cigar_string: vec![],
-                path: vec![],
-                score: 0.0,
-                reference_start: 0,
-                read_start: 0,
-                bounding_box: None,
-            },
-        };
-
-        //assert!(!alignment_check.keep(&fake_read_alignment));
-
-        let fake_read_alignment = SortingReadSetContainer {
-            ordered_sorting_keys: vec![],
-            ordered_unsorted_keys: Default::default(),
-            aligned_read: AlignmentResult {
-                reference_name: "".to_string(),
-                read_name: "".to_string(),
-                reference_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N, FASTA_N, FASTA_N, FASTA_A,
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                ],
-                read_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_T,
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                ],
-                read_quals: None,
-                cigar_string: vec![],
-                path: vec![],
-                score: 0.0,
-                reference_start: 0,
-                read_start: 0,
-                bounding_box: None,
-            },
-        };
-
-        assert!(!alignment_check.keep(&fake_read_alignment));
-
-        assert!(!alignment_check.keep(&fake_read_alignment));
-        let fake_read_alignment = SortingReadSetContainer {
-            ordered_sorting_keys: vec![],
-            ordered_unsorted_keys: Default::default(),
-            aligned_read: AlignmentResult {
-                reference_name: "".to_string(),
-                read_name: "".to_string(),
-                reference_aligned: vec![
-                    FASTA_N, FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
-                    FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                ],
-                read_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                    FASTA_A, FASTA_A, FASTA_T, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                ],
-                read_quals: None,
-                cigar_string: vec![],
-                path: vec![],
-                score: 0.0,
-                reference_start: 0,
-                read_start: 0,
-                bounding_box: None,
-            },
-        };
-
-        assert!(!alignment_check.keep(&fake_read_alignment));
-
-        assert!(!alignment_check.keep(&fake_read_alignment));
-        let fake_read_alignment = SortingReadSetContainer {
-            ordered_sorting_keys: vec![],
-            ordered_unsorted_keys: Default::default(),
-            aligned_read: AlignmentResult {
-                reference_name: "".to_string(),
-                read_name: "".to_string(),
-                reference_aligned: vec![
-                    FASTA_N, FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
-                    FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
-                    FASTA_N, FASTA_N,
-                ],
-                read_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_T, FASTA_A,
-                    FASTA_A, FASTA_A,
-                ],
-                read_quals: None,
-                cigar_string: vec![],
-                path: vec![],
-                score: 0.0,
-                reference_start: 0,
-                read_start: 0,
-                bounding_box: None,
-            },
-        };
-
-        assert!(!alignment_check.keep(&fake_read_alignment));
-
-        assert!(!alignment_check.keep(&fake_read_alignment));
-        let fake_read_alignment = SortingReadSetContainer {
-            ordered_sorting_keys: vec![],
-            ordered_unsorted_keys: Default::default(),
-            aligned_read: AlignmentResult {
-                reference_name: "".to_string(),
-                read_name: "".to_string(),
-                reference_aligned: vec![
-                    FASTA_N, FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
-                    FASTA_N, FASTA_N, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_N,
-                    FASTA_N, FASTA_N,
-                ],
-                read_aligned: vec![
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                    FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A, FASTA_A,
-                    FASTA_A, FASTA_A,
-                ],
-                read_quals: None,
-                cigar_string: vec![],
-                path: vec![],
-                score: 0.0,
-                reference_start: 0,
-                read_start: 0,
-                bounding_box: None,
-            },
-        };
-
-        assert!(alignment_check.keep(&fake_read_alignment));
-    }
     #[test]
     fn test_consensus() {
         let basic_seqs: Vec<Vec<u8>> = vec![
@@ -1086,89 +910,4 @@ mod tests {
         assert_eq!(cons, String::from("TGGTATGCTGGG").as_bytes().to_vec());
     }
 
-    //TODO fix this #[test]
-    fn test_consensus_real_world() {
-        let reads = fake_reads(10, 1);
-
-        let read_seq = reads
-            .get(0)
-            .unwrap()
-            .read_one
-            .seq()
-            .iter()
-            .map(|x| x.clone())
-            .collect::<Vec<u8>>();
-
-        let fake_read = AlignmentResult {
-            reference_name: "".to_string(),
-            read_name: "".to_string(),
-            reference_aligned: read_seq.clone(),
-            read_aligned: read_seq.clone(),
-            read_quals: None,
-            cigar_string: vec![],
-            path: vec![],
-            score: 0.0,
-            reference_start: 0,
-            read_start: 0,
-            bounding_box: None,
-        };
-
-        let mut tbb = SequenceCorrector::new(
-            PathBuf::from("test_data/consensus_test.fastq"),
-            &1000,
-            UMIConfiguration {
-                symbol: 'c',
-                file: None,
-                reverse_complement_sequences: None,
-                sort_type: UMISortType::DegenerateTag,
-                length: "TGGTATGCTGGG".len(),
-                order: 0,
-                pad: None,
-                max_distance: 2, // TODO: the plus 1 here is confusing -- does STARCODE
-                maximum_subsequences: None,
-                max_gaps: Some(1),
-                minimum_collapsing_difference: Some(10.0),
-                levenshtein_distance: None,
-            },
-        );
-
-        // real example we hit
-        let st1 = SortingReadSetContainer {
-            ordered_sorting_keys: vec![
-                ('a', "AAACCCATCAGCATTA".as_bytes().to_vec()),
-                ('b', "TATTGACAACCT".as_bytes().to_vec()),
-            ],
-            ordered_unsorted_keys: VecDeque::from(vec![('c', "TGGTATGCTGG".as_bytes().to_vec())]),
-            aligned_read: fake_read.clone(),
-        };
-
-        let st2 = SortingReadSetContainer {
-            ordered_sorting_keys: vec![
-                ('a', "AAACCCATCAGCATTA".as_bytes().to_vec()),
-                ('b', "TATTGACAACCT".as_bytes().to_vec()),
-            ],
-            ordered_unsorted_keys: VecDeque::from(vec![('c', "TGGTATGCTGGG".as_bytes().to_vec())]),
-            aligned_read: fake_read.clone(),
-        };
-
-        assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);
-
-        tbb.push(st1);
-        for _ in 0..10 {
-            tbb.push(st2.clone());
-        }
-        let correction = tbb.correct_degenerate_list();
-
-        correction.iter().for_each(|x| {
-            debug!(
-                "{} -> {}",
-                String::from_utf8(x.0.clone()).unwrap(),
-                String::from_utf8(x.1.clone()).unwrap()
-            );
-            assert_eq!(
-                String::from_utf8(x.1.clone()).unwrap(),
-                String::from_utf8("TGGTATGCTGGG".as_bytes().to_vec()).unwrap()
-            );
-        });
-    }
 }
