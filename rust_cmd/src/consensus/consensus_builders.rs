@@ -114,8 +114,12 @@ pub fn write_consensus_reads(
                 arc_writer.write_read(&x.read, &x.added_tags).expect("Unable to write a read to the arc writer (LOC2)");
             }
         }
-
     }
+
+    let arc_writer = arc_output.clone();
+    let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
+    arc_writer.close().unwrap();
+    
 }
 
 pub struct SamReadyOutput {

@@ -141,21 +141,21 @@ pub fn align_reads(read_structure: &SequenceLayout,
                                 let read = SortingReadSetContainer::empty_tags(aln);
 
                                 let extracted_tags = extract_tagged_sequences(&read.aligned_read.read_aligned, &read.aligned_read.reference_aligned);
-                                
+
                                 let mut added_tags : HashMap<[u8;2],String> = HashMap::new();
-                                
+
                                 let structure = read_structure.references.get(&read.aligned_read.reference_name).unwrap();
-                                
+
                                 extracted_tags.iter().for_each(|(x,y)| {
                                     structure.umi_configurations.iter().for_each(|xi| {
                                         if xi.1.symbol as u8 == *x {
                                             added_tags.insert([b'e', xi.1.symbol as u8],y.clone());
-                                        }    
+                                        }
                                     })
                                 });
-                                
+
                                 added_tags.insert([b'r', b'c'], 1.to_string());
-                                
+
                                 added_tags.insert([b'a', b'r'], read.aligned_read.read_name.clone());
                                 added_tags.insert(
                                     [b'r', b'm'],
@@ -166,7 +166,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
                                         .to_string(),
                                 );
                                 added_tags.insert([b'a', b's'],  read.aligned_read.score.to_string());
-                                
+
                                 let output = Arc::clone(&output);
                                 let arc_writer = output.clone();
                                 let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
@@ -180,6 +180,11 @@ pub fn align_reads(read_structure: &SequenceLayout,
             }
         });
     });
+
+    let output = Arc::clone(&output);
+    let arc_writer = output.clone();
+    let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
+    arc_writer.close().unwrap();
 }
 
 #[allow(dead_code)]

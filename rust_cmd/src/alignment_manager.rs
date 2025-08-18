@@ -45,6 +45,8 @@ pub trait OutputAlignmentWriter: Sync + Send {
         additional_tags: &HashMap<[u8; 2], String>,
     ) -> Result<()>;
 
+    
+    fn close(&mut self) -> Result<()>;
 }
 
 /// Implementation of `OutputAlignmentWriter` for BAM files.
@@ -185,6 +187,22 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
         Ok(())
     }
 
+    fn close(&mut self) -> Result<()> {
+
+        let writer = Arc::clone(&self.underlying_bam_file);
+
+        let mut output = writer.lock().unwrap();
+
+        match output.finish(&self.header) {
+            Ok(_x) => {
+                //println!("Added read!")
+            },
+            Err(e) => {
+                panic!("error, unable to close output BAM writer {} {}", e.kind().to_string(),e.to_string());
+            },
+        }
+        Ok(())
+    }
 }
 
 /// Performs pairwise alignment between a reference sequence and a read sequence.
