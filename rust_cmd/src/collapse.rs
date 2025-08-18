@@ -30,7 +30,7 @@ use noodles_sam::alignment::record::QualityScores;
 use read_strategies::sequence_layout::UMISortType;
 use rust_star::Trie;
 use umis::known_list::KnownList;
-use utils::read_utils::reverse_complement;
+use utils::read_utils::{reverse_complement, u8s};
 use FASTA_N;
 
 pub fn collapse(
@@ -409,14 +409,30 @@ pub fn sort_reads_from_bam_file(
             .map(Box::new)
             .expect("Unable to parse out region information");
 
+        warn!("fetching reads for reference {} ", reference_name);
+        let mut read_count = 0;
+        let mut last_read_name: Option<Vec<u8>> = None;
+        
         for result in records {
             read_stats.total_reads += 1;
             if read_stats.total_reads % 1000000 == 0 {
                 read_stats.results(&filter_counts);
             }
 
-            let record = result.unwrap();
-
+            let record = match result {
+                Ok(x) => {
+                    last_read_name = Some(x.name().unwrap().as_bytes().to_vec());
+                    x
+                }
+                Err(x) => {
+                    println!("Read: {}", read_count);
+                    println!("Read: {}", u8s(last_read_name.as_ref().unwrap_or(&"UKNOWN".as_bytes().to_vec())));
+                    panic!("Unable to read record: {:?}", x);
+                }
+            };
+            
+            read_count += 1;
+            
             if !record.flags().is_secondary() && !record.flags().is_unmapped() {
                 let read = create_sorted_read_container(
                     reference_name,
