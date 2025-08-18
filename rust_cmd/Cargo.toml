@@ -40,10 +40,10 @@ libc = "0.2"
 sigalign = "0.4.1"
 
 phf = {version = "0.11", features = ["macros"] }
-noodles-core = "0.14.0"
-noodles-bam = "0.56.0"
-noodles-sam = "0.53.0"
-noodles-util = { version = "0.37.0", features = ["alignment"] }
+noodles-core = "*"
+noodles-bam = "*"
+noodles-sam = "*"
+noodles-util = { version = "*", features = ["alignment"] }
 bstr = "*"
 indexmap = "2.0.0"
 
