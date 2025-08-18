@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::cmp;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 
@@ -20,6 +21,8 @@ use crate::read_strategies::sequence_layout::{SequenceLayout};
 
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use itertools::Itertools;
+use consensus::consensus_builders::{create_sam_read, get_reference_alignment_rate, MergeStrategy};
+use extractor::{extract_tag_sequences, extract_tagged_sequences, stretch_sequence_to_alignment};
 use FASTA_UNSET;
 use reference::fasta_reference::Reference;
 use utils::read_utils::{reverse_complement, u8s};
@@ -117,6 +120,7 @@ pub fn align_reads(read_structure: &SequenceLayout,
                     }
                     Some(alignment_obj) => {
                         let results = alignment_obj.alignment;
+                        
                         let _orig_ref_seq = alignment_obj.ref_sequence;
                         match results {
                             None => {
@@ -135,12 +139,38 @@ pub fn align_reads(read_structure: &SequenceLayout,
                                 assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
 
                                 let read = SortingReadSetContainer::empty_tags(aln);
-                                let new_read = SamReadyOutput { read, added_tags: Default::default() };
 
+                                let extracted_tags = extract_tagged_sequences(&read.aligned_read.read_aligned, &read.aligned_read.reference_aligned);
+                                
+                                let mut added_tags : HashMap<[u8;2],String> = HashMap::new();
+                                
+                                let structure = read_structure.references.get(&read.aligned_read.reference_name).unwrap();
+                                
+                                extracted_tags.iter().for_each(|(x,y)| {
+                                    structure.umi_configurations.iter().for_each(|xi| {
+                                        if xi.1.symbol as u8 == *x {
+                                            added_tags.insert([b'e', xi.1.symbol as u8],y.clone());
+                                        }    
+                                    })
+                                });
+                                
+                                added_tags.insert([b'r', b'c'], 1.to_string());
+                                
+                                added_tags.insert([b'a', b'r'], read.aligned_read.read_name.clone());
+                                added_tags.insert(
+                                    [b'r', b'm'],
+                                    get_reference_alignment_rate(
+                                        &read.aligned_read.reference_aligned,
+                                        &read.aligned_read.read_aligned,
+                                    )
+                                        .to_string(),
+                                );
+                                added_tags.insert([b'a', b's'],  read.aligned_read.score.to_string());
+                                
                                 let output = Arc::clone(&output);
                                 let arc_writer = output.clone();
                                 let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
-                                arc_writer.write_read(&new_read.read, &new_read.added_tags).expect("Unable to write a read to the arc writer (LOC1)");
+                                arc_writer.write_read(&read, &added_tags).expect("Unable to write a read to the arc writer (LOC1)");
                             }
                         }
                     }
@@ -150,25 +180,6 @@ pub fn align_reads(read_structure: &SequenceLayout,
             }
         });
     });
-}
-
-#[allow(dead_code)]
-fn extract_tag_sequences(sorted_tags: &Vec<char>, ets: BTreeMap<u8, String>) -> (bool, VecDeque<(char, Vec<u8>)>) {
-    let mut invalid_read = false;
-    let queue = VecDeque::from(sorted_tags.iter().
-        map(|x| {
-            let ets_hit = ets.get(&x.to_string().as_bytes()[0]);
-            match ets_hit {
-                Some(e) => {
-                    Some((x.clone(), e.as_bytes().to_vec()))
-                }
-                None => {
-                    invalid_read = true;
-                    None
-                }
-            }
-        }).filter(|x| x.is_some()).map(|x| x.unwrap()).collect::<Vec<(char, Vec<u8>)>>());
-    (invalid_read, queue)
 }
 
 #[allow(dead_code)]
@@ -566,7 +577,7 @@ fn quick_alignment_search(read_name: &String,
 
     match max_ref {
         None => {
-            warn!("No reference found; moving to exhaustive_alignment_search");
+            info!("No reference found; moving to exhaustive_alignment_search");
             exhaustive_alignment_search(read_name, read, qual_sequence, rm, alignment_mat, my_aff_score,None)
         }
         Some(x) => {

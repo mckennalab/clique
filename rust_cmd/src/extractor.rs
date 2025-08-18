@@ -185,6 +185,36 @@ pub fn recover_soft_clipped_align_sequences(
     }
 }
 
+/// Stretches a native sequence to match the alignment structure of an aligned sequence.
+///
+/// This function takes an aligned sequence (which may contain gaps represented by '-') 
+/// and a native/unaligned sequence, then produces a new sequence that maintains the 
+/// alignment structure by inserting gaps in the native sequence at positions where 
+/// gaps exist in the aligned version.
+///
+/// # Arguments
+///
+/// * `aligned_version` - The aligned sequence that may contain gaps ('-' characters)
+/// * `native_version` - The native/unaligned sequence without gaps
+///
+/// # Returns
+///
+/// A new vector containing the native sequence stretched to match the alignment 
+/// structure, with gaps inserted at appropriate positions.
+///
+/// # Panics
+///
+/// Panics if the aligned version is shorter than the native version, as this 
+/// would indicate an invalid alignment.
+///
+/// # Example
+///
+/// ```
+/// let aligned = b"AC-GT-A";
+/// let native = b"ACGTA";
+/// let result = stretch_sequence_to_alignment(aligned, native);
+/// // result would be b"AC-GT-A"
+/// ```
 pub fn stretch_sequence_to_alignment(aligned_version: &[u8], native_version: &[u8]) -> Vec<u8> {
     assert!(
         aligned_version.len() >= native_version.len(),

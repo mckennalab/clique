@@ -64,6 +64,7 @@ pub fn write_consensus_reads(
                 s.spawn(|_y| {
 
                     let my_buffered_reads = my_buffered_reads;
+                    
                     let new_read = create_sam_read(
                         reference_manager,
                         maximum_reads_before_downsampling,
@@ -124,13 +125,14 @@ pub struct SamReadyOutput {
 
 
 #[allow(deprecated)]
-fn create_sam_read(
+pub fn create_sam_read(
     reference_manager: &ReferenceManager,
     maximum_reads_before_downsampling: &usize,
     buffered_reads: &VecDeque<SortingReadSetContainer>,
     my_aff_score: &AffineScoring,
     merge_strategy: &MergeStrategy,
 ) -> Option<SamReadyOutput> {
+    
     let mut added_tags = HashMap::new();
     added_tags.insert([b'r', b'c'], buffered_reads.len().to_string());
     added_tags.insert(
