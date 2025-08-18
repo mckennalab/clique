@@ -363,13 +363,13 @@ pub fn sort_reads_from_bam_file(
     let mut read_stats = BamReadFiltering::default();
 
     let filters: Vec<(String, &dyn AlignmentFilter)> = vec![
-        (
+        /*(
             "FlankingDegenerateBaseFilter".to_string(),
             &FlankingDegenerateBaseFilter {
                 min_flanking_indentity: 0.50,
                 flanking_window_size: 10,
             },
-        ),
+        ),*/
         (
             "AlignmentCheck".to_string(),
             &AlignmentCheck {
@@ -379,7 +379,7 @@ pub fn sort_reads_from_bam_file(
         ),
     ];
     let mut filter_counts: HashMap<String, u64> = HashMap::default();
-    filter_counts.insert("FlankingDegenerateBaseFilter".to_string(), 0);
+    //filter_counts.insert("FlankingDegenerateBaseFilter".to_string(), 0);
     filter_counts.insert("AlignmentCheck".to_string(), 0);
 
     let index = bai::fs::read(bai_file).expect("Unable to open BAM BAI file");
