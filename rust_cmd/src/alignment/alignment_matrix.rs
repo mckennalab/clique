@@ -20,7 +20,7 @@ use noodles_sam::alignment::RecordBuf;
 
 use noodles_sam::alignment::record::data::field::Tag;
 use noodles_sam::alignment::record_buf::data::field::Value;
-use noodles_sam::alignment::record_buf::{Cigar, Data, Name, QualityScores};
+use noodles_sam::alignment::record_buf::{Cigar, Data, QualityScores};
 use crate::consensus::consensus_builders::get_reference_alignment_rate;
 
 use noodles_sam::alignment::record::cigar::op::Kind;
@@ -756,7 +756,7 @@ impl AlignmentResult {
         //let seq : Vec<u8> = seq.iter().filter(|x|**x != b'-').map(|x|*x).collect();
         //println!("quals\n{}\nseq\n{}\n",String::from_utf8(self.read_quals.as_ref().unwrap().clone()).unwrap(),u8s(&seq));
         RecordBuf::builder()
-            .set_name(Name::from(self.read_name.as_bytes()))
+            .set_name(self.read_name.as_bytes())
             .set_sequence(seq.as_bytes().into())
             .set_cigar(Cigar::from_iter(self.cigar_string.iter().map(|m| m.to_op()).into_iter()).clone())
             .set_alignment_start(noodles_core::Position::new(self.reference_start+1).unwrap())
@@ -765,7 +765,7 @@ impl AlignmentResult {
                 None => { QualityScores::from(vec![b'H'; seq.len()]) }
             })
             .set_reference_sequence_id(*reference_id as usize)
-            .set_flags(Flags::PROPERLY_ALIGNED)
+            .set_flags(Flags::empty())
             .set_data(data).build()
     }
 

@@ -27,6 +27,7 @@ use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::correct_tags::SequenceCorrector;
 use consensus::consensus_builders::MergeStrategy;
 use noodles_sam::alignment::record::QualityScores;
+use rust_htslib::bam::index::Type::Bai;
 use read_strategies::sequence_layout::UMISortType;
 use rust_star::Trie;
 use umis::known_list::KnownList;
@@ -381,7 +382,7 @@ pub fn sort_reads_from_bam_file(
     filter_counts.insert("FlankingDegenerateBaseFilter".to_string(), 0);
     filter_counts.insert("AlignmentCheck".to_string(), 0);
 
-    let index = bai::read(bai_file).expect("Unable to open BAM BAI file");
+    let index = bai::fs::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();
     {
         let mut sharded_output: ShardWriter<SortingReadSetContainer> =
@@ -421,7 +422,7 @@ pub fn sort_reads_from_bam_file(
 
             let record = match result {
                 Ok(x) => {
-                    last_read_name = Some(x.name().unwrap().as_bytes().to_vec());
+                    last_read_name = Some(x.name().unwrap().to_vec());
                     x
                 }
                 Err(x) => {
@@ -512,7 +513,7 @@ fn create_sorted_read_container(
     let seq: Vec<u8> = record.sequence().iter().collect();
     let start_pos = record.alignment_start().unwrap().unwrap().get();
     let cigar = record.cigar();
-    let read_name: bam::record::Name<'_> = record.name().unwrap();
+    let read_name = record.name().unwrap();
     let read_qual = record.quality_scores().iter().collect();
     let ref_slice = reference_sequence.as_slice();
 
@@ -555,7 +556,7 @@ fn create_sorted_read_container(
                 reference_start: start_pos,
                 read_start: 0,
                 reference_aligned: aligned_read.aligned_ref,
-                read_name: String::from_utf8(read_name.as_bytes().to_vec()).unwrap(),
+                read_name: String::from_utf8(read_name.to_vec()).unwrap(),
                 bounding_box: None,
             },
         })
