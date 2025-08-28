@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::correct_tags::SequenceCorrector;
-use consensus::consensus_builders::MergeStrategy;
+use consensus::consensus_builders::{write_corrected_reads, MergeStrategy, ReadOutputApproach};
 use noodles_sam::alignment::record::QualityScores;
 use rust_htslib::bam::index::Type::Bai;
 use read_strategies::sequence_layout::UMISortType;
@@ -34,12 +34,48 @@ use umis::known_list::KnownList;
 use utils::read_utils::{reverse_complement, u8s};
 use FASTA_N;
 
+/// Collapses aligned reads from a BAM file by processing UMI configurations and generating consensus sequences.
+///
+/// This function processes BAM file reads for each reference sequence, sorts them by UMI configurations,
+/// and generates consensus reads that are written to an output BAM file. The collapse process involves
+/// multiple levels of sorting based on the UMI structure defined in the sequence layout.
+///
+/// # Arguments
+/// * `final_output` - Path to the output BAM file where collapsed reads will be written
+/// * `temp_directory` - Temporary directory for intermediate file storage during processing
+/// * `read_structure` - Configuration defining the sequence layout and UMI structure
+/// * `bam_file` - Path to the input BAM file containing aligned reads
+/// * `merge_strategy` - Strategy for merging reads during consensus generation
+///
+/// # Process
+/// 1. Loads reference sequences from the sequence layout
+/// 2. Creates lookup tables for known UMI sequences
+/// 3. For each reference sequence:
+///    - Sorts reads from BAM file by reference
+///    - Applies multiple levels of UMI-based sorting
+///    - Generates consensus reads using the specified merge strategy
+/// 4. Writes collapsed consensus reads to the output BAM file
+///
+/// # Examples
+/// ```
+/// use clique::collapse::collapse;
+/// use clique::consensus::consensus_builders::MergeStrategy;
+/// 
+/// collapse(
+///     &"output.bam".to_string(),
+///     &mut temp_dir,
+///     &sequence_layout,
+///     &"input.bam".to_string(),
+///     &MergeStrategy::Consensus,
+/// );
+/// ```
 pub fn collapse(
     final_output: &String,
     temp_directory: &mut InstanceLivedTempDir,
     read_structure: &SequenceLayout,
     bam_file: &String,
     merge_strategy: &MergeStrategy,
+    outputApproach: &ReadOutputApproach,
 ) {
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
@@ -85,9 +121,22 @@ pub fn collapse(
                         levels += 1;
                     });
 
-                info!("writing consensus reads for reference {}", ref_name);
                 // collapse the final reads down to a single sequence and write everything to the disk
-                write_consensus_reads(&sorted_reads, &mut writer, levels, &rm, &40, merge_strategy);
+                
+                match outputApproach {
+                    ReadOutputApproach::Collapse => {
+                        info!("writing consensus reads for reference {}", ref_name);
+
+                        write_consensus_reads(&sorted_reads, &mut writer, levels, &rm, &40, merge_strategy);
+
+                    }
+                    ReadOutputApproach::Correct => {
+                        info!("writing reads for reference {}", ref_name);
+
+                        write_corrected_reads(&sorted_reads, &mut writer, levels, &rm);
+                    }
+                }
+                
             }
         }
     });
@@ -227,9 +276,6 @@ impl AlignmentFilter for AlignmentCheck {
         let ret = (alignment_count as f64 / alignable_bases as f64
             >= self.min_aligned_identical_proportion)
             && (alignable_bases >= self.min_aligned_bases);
-        //if !ret {
-        //    println!("aligning {} {}\n{}\n{}",alignment_count,alignable_bases,u8s(&read.aligned_read.read_aligned), u8s(&read.aligned_read.reference_aligned));
-        //}
         ret
     }
 }
@@ -345,6 +391,38 @@ pub struct SortedReadsFromBam {
     pub read_stats: BamReadFiltering,
 }
 
+/// Sorts and filters reads from a BAM file for a specific reference sequence.
+///
+/// This function reads aligned reads from a BAM file, filters them based on quality criteria,
+/// extracts UMI tag information, and writes the valid reads to a temporary sharded file for
+/// further processing. Only primary, mapped reads that pass alignment filters are retained.
+///
+/// # Arguments
+/// * `bam_file` - Path to the input BAM file
+/// * `reference_name` - Name of the reference sequence to process
+/// * `reference_manager` - Manager containing reference sequence information
+/// * `read_structure` - Configuration defining the sequence layout and UMI structure
+/// * `temp_directory` - Temporary directory for intermediate file storage
+///
+/// # Returns
+/// * `SortedReadsFromBam` - Container with optional sharded reader and filtering statistics
+///
+/// # Filtering Criteria
+/// * Excludes unmapped reads (unmapped flag set)
+/// * Excludes secondary alignments
+/// * Applies alignment quality filters (minimum aligned bases and identity proportion)
+/// * Validates UMI tag extraction
+///
+/// # Examples
+/// ```
+/// let sorted_reads = sort_reads_from_bam_file(
+///     &"input.bam".to_string(),
+///     &"chr1".to_string(),
+///     &reference_manager,
+///     &sequence_layout,
+///     &mut temp_directory,
+/// );
+/// ```
 pub fn sort_reads_from_bam_file(
     bam_file: &String,
     reference_name: &String,
@@ -498,9 +576,36 @@ pub fn sort_reads_from_bam_file(
     }
 }
 
-/// create a read container from the read and reference sequence,
-/// returning Some(read) if successful, or None if we couldn't
-/// extract the tag
+/// Creates a sorted read container from a BAM record and reference sequence information.
+///
+/// This function processes a single BAM record, performs sequence alignment operations,
+/// extracts UMI tag sequences, and creates a `SortingReadSetContainer` for downstream
+/// processing. The function handles sequence alignment, tag extraction, and quality score
+/// preservation.
+///
+/// # Arguments
+/// * `reference_name` - Name of the reference sequence
+/// * `reference_manager` - Manager containing reference sequence information
+/// * `_read_stats` - Mutable reference to BAM read filtering statistics (unused)
+/// * `reference_sequence_id` - ID of the reference sequence in the manager
+/// * `reference_sequence` - The reference sequence as bytes
+/// * `reference_config` - Configuration for this reference including UMI structure
+/// * `record` - The BAM record to process
+///
+/// # Returns
+/// * `Some(SortingReadSetContainer)` - If tag extraction fails (valid tags not extracted)
+/// * `None` - If valid tags were extracted successfully
+///
+/// # Process
+/// 1. Extracts sequence, alignment position, CIGAR string, and quality scores from BAM record
+/// 2. Recovers soft-clipped alignment sequences using realignment
+/// 3. Stretches alignment to match reference sequence
+/// 4. Extracts tagged sequences and validates tag extraction
+/// 5. Creates alignment result with all necessary information
+///
+/// # Note
+/// The return logic is inverted: returns `Some` when tags are NOT valid, `None` when they are valid.
+/// This appears to be part of a filtering strategy where invalid tag reads are kept for processing.
 fn create_sorted_read_container(
     reference_name: &String,
     reference_manager: &&ReferenceManager,
@@ -565,6 +670,30 @@ fn create_sorted_read_container(
     }
 }
 
+/// Creates a vector of byte sequences from a text file.
+///
+/// This function reads a text file line by line, converts each line to a byte vector,
+/// and optionally applies reverse complement transformation to DNA sequences.
+/// Each line in the file is treated as a separate sequence.
+///
+/// # Arguments
+/// * `filename` - Path to the input file containing sequences (one per line)
+/// * `reverse_comp` - Whether to apply reverse complement transformation to sequences
+///
+/// # Returns
+/// * `Vec<Vec<u8>>` - Vector of byte sequences, one for each line in the file
+///
+/// # Panics
+/// * If the input file cannot be opened
+///
+/// # Examples
+/// ```
+/// // Read sequences without reverse complement
+/// let sequences = create_input_set("sequences.txt", &false);
+///
+/// // Read sequences with reverse complement
+/// let sequences = create_input_set("sequences.txt", &true);
+/// ```
 fn create_input_set(filename: &str, reverse_comp: &bool) -> Vec<Vec<u8>> {
     let raw_reader = BufReader::new(
         File::open(filename).expect(&format!("Unable to open input file {}", filename)),
@@ -580,6 +709,29 @@ fn create_input_set(filename: &str, reverse_comp: &bool) -> Vec<Vec<u8>> {
     input_set
 }
 
+/// Extracts a list of known UMI sequences from a configuration file.
+///
+/// This function reads known UMI sequences from a file specified in the UMI configuration.
+/// The sequences can optionally be reverse complemented based on the configuration settings.
+/// This is typically used to create allowlists of valid UMI sequences for sequence correction.
+///
+/// # Arguments
+/// * `umi_type` - UMI configuration containing file path and processing options
+/// * `_starting_nmer_size` - Starting n-mer size parameter (currently unused)
+///
+/// # Returns
+/// * `Vec<Vec<u8>>` - Vector of known UMI sequences as byte vectors
+///
+/// # Panics
+/// * If no file is specified in the UMI configuration
+/// * If the specified file cannot be opened
+///
+/// # Examples
+/// ```
+/// use clique::collapse::extract_known_list;
+/// 
+/// let known_sequences = extract_known_list(&umi_config, &8);
+/// ```
 pub fn extract_known_list(
     umi_type: &UMIConfiguration,
     _starting_nmer_size: &usize,
@@ -602,6 +754,29 @@ pub struct LookupCollection {
     pub ret_known_lookup: HashMap<String, KnownList>,
 }
 
+/// Creates lookup collections for known UMI sequences from the sequence layout configuration.
+///
+/// This function processes all UMI configurations in the sequence layout and creates appropriate
+/// lookup data structures (tries for Levenshtein distance matching or hash maps for exact/Hamming
+/// distance matching) for efficient sequence correction and validation.
+///
+/// # Arguments
+/// * `read_structure` - Sequence layout containing UMI configurations for all references
+///
+/// # Returns
+/// * `LookupCollection` - Collection containing tries for Levenshtein matching and known lists for other matching
+///
+/// # Process
+/// 1. Iterates through all reference sequences in the layout
+/// 2. For each UMI configuration with a known sequence file:
+///    - If Levenshtein distance is enabled: creates a Trie for fuzzy matching
+///    - Otherwise: creates a KnownList for exact/Hamming distance matching
+/// 3. Populates lookup structures with sequences from configuration files
+///
+/// # Examples
+/// ```
+/// let lookup_collection = get_known_level_lookups(&sequence_layout);
+/// ```
 fn get_known_level_lookups(read_structure: &SequenceLayout) -> LookupCollection {
     let mut ret_trie: HashMap<String, Trie> = HashMap::new();
     let mut ret_known_lookup: HashMap<String, KnownList> = HashMap::new();
@@ -643,29 +818,45 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> LookupCollection 
     }
 }
 
-/// Sorts the reads by the degenerate tag
+/// Sorts reads by UMI tags and performs sequence correction within groups.
 ///
-/// we group reads into a container where previous tags all match. We then determine the clique of
-/// degenerate tags within the container and correct the sequences to the consensuses of cliques within
-/// the group. For example, if we've sorted by a 10X cell ID tag, that we would collect cells that have the
-/// same cell ID, and then correct the UMI sequences within the cell to the consensuses of the UMI sequences
+/// This function processes reads in batches where all previous UMI tags match, then determines
+/// cliques of similar sequences within each batch and corrects them to consensus sequences.
+/// For example, when sorting by 10X cell barcodes, reads with the same cell barcode are grouped
+/// together, and UMI sequences within each cell are corrected to consensus sequences.
 ///
 /// # Arguments
-///     * `temp_directory` - The temporary directory to use for sorting
-///    * `reader` - The reader to sort
-///   * `tag` - The tag to sort by
+/// * `temp_directory` - Temporary directory for intermediate file storage
+/// * `reader` - Sharded reader containing sorted reads to process
+/// * `tag` - UMI configuration specifying the tag to sort by and correction parameters
+/// * `iteration` - Current iteration level in the sorting hierarchy
+/// * `read_count` - Total number of reads being processed (for progress tracking)
+/// * `known_sequence_lists` - Lookup collections for known sequence correction
 ///
 /// # Returns
-///    * `ShardReader` - The sorted reader
+/// * `(usize, ShardReader<SortingReadSetContainer>)` - Tuple of:
+///   - Number of reads written to output
+///   - Sharded reader for the next processing level
 ///
-/// # Errors
-///     * `std::io::Error` - If there is an error writing to the temporary directory
-///
-/// # Panics
-///    * If the tag is not a known tag
+/// # Process
+/// 1. Groups reads by matching UMI tags from previous sorting levels
+/// 2. For each group, applies sequence correction based on sort type:
+///    - `KnownTag`: Corrects to known sequences using Levenshtein or Hamming distance
+///    - `DegenerateTag`: Performs clustering and consensus calling on similar sequences
+/// 3. Writes corrected reads to temporary sharded output
+/// 4. Reports processing statistics
 ///
 /// # Examples
-///
+/// ```
+/// let (output_count, next_reader) = sort_level(
+///     &mut temp_dir,
+///     &input_reader,
+///     &umi_config,
+///     &iteration,
+///     &read_count,
+///     &mut lookup_collections,
+/// );
+/// ```
 pub fn sort_level(
     temp_directory: &mut InstanceLivedTempDir,
     reader: &ShardReader<SortingReadSetContainer>,
@@ -810,6 +1001,36 @@ mod tests {
     #[allow(dead_code)]
     const FASTA_T: u8 = b'T';
 
+    /// Generates a consensus sequence from multiple input sequences.
+    ///
+    /// This function takes a vector of byte sequences (representing DNA sequences) and generates
+    /// a consensus sequence by determining the most frequent base at each position. Special rules
+    /// apply for tie-breaking: 'N' (unknown) and '-' (gap) characters are deprioritized.
+    ///
+    /// # Arguments
+    /// * `input` - Vector of byte sequences, all must be the same length
+    ///
+    /// # Returns
+    /// * `Vec<u8>` - Consensus sequence as a byte vector
+    ///
+    /// # Panics
+    /// * If input sequences are not all the same length
+    ///
+    /// # Consensus Rules
+    /// 1. Most frequent base at each position wins
+    /// 2. In case of ties, prefer non-'N' and non-'-' bases
+    /// 3. If tied between 'N' and '-', prefer the new candidate
+    ///
+    /// # Examples
+    /// ```
+    /// let sequences = vec![
+    ///     "ATCG".as_bytes().to_vec(),
+    ///     "ATCG".as_bytes().to_vec(), 
+    ///     "GCTA".as_bytes().to_vec(),
+    /// ];
+    /// let result = consensus(&sequences);
+    /// assert_eq!(result, "ATCG".as_bytes());
+    /// ```
     pub fn consensus(input: &Vec<Vec<u8>>) -> Vec<u8> {
         let mut consensus = Vec::new();
 

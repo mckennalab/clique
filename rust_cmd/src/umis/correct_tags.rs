@@ -7,10 +7,11 @@ use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
 use collapse::LookupCollection;
 use read_strategies::sequence_layout::UMISortType;
-use rust_star::{DistanceGraphNode, LinkedDistances, Trie};
+use rust_star::{DistanceGraphNode, Link, LinkedDistances, Trie};
 use rustc_hash::{FxHashMap, FxHasher};
 use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use std::ops::Deref;
+use read_strategies::read_disk_sorter::CorrectedKey;
 use utils::read_utils::{strip_gaps, u8s};
 
 pub struct SequenceCorrector {
@@ -286,22 +287,39 @@ impl SequenceCorrector {
                     })
                     .collect::<Vec<(Vec<u8>, usize)>>();
 
-                let correction = LinkedDistances::cluster_string_vector_list(
+
+                let result: HashMap<Vec<u8>,Link<DistanceGraphNode>> = LinkedDistances::cluster_string_vector_list(
                     &max_length,
                     tags,
                     &self.tag.max_distance,
                     &self.collapse_ratio,
-                );
-                let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
+                ).into_iter().collect();
+                
+                let valid_clusters: Vec<_> = result.iter().filter(|x| x.1.borrow().valid).collect();
 
-                correction.into_iter().for_each(|(_center, dist_graph)| {
+                let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = HashMap::default();
+                let mut barcodes_to_resolve : VecDeque<Vec<u8>> = VecDeque::new();
+
+                valid_clusters.into_iter().for_each(|(_center, dist_graph)| {
                     let connected_node = dist_graph.borrow_mut();
                     let connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
                     let string_name = connected_node.string.clone();
                     knowns.insert(string_name.clone(), string_name.clone());
-                    connected_node.swallowed_links.iter().for_each(|(x, _y)| {
+                    connected_node.swallowed_links.iter().for_each(|(x, y)| {
+                        barcodes_to_resolve.push_front(x.clone());
                         knowns.insert(x.clone(), string_name.clone());
                     });
+
+                    while barcodes_to_resolve.len() > 0 {
+                        let processing_code = barcodes_to_resolve.pop_front().unwrap();
+                        let connected_node = result.get(&processing_code).unwrap().borrow_mut();
+                        let connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
+
+                        connected_node.swallowed_links.iter().for_each(|(x, y)| {
+                            barcodes_to_resolve.push_front(x.clone());
+                            knowns.insert(x.clone(), string_name.clone());
+                        });
+                    }
                 });
                 knowns
             }
@@ -315,21 +333,21 @@ impl SequenceCorrector {
         sender: &mut ShardSender<SortingReadSetContainer>,
     ) {
         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
-        let mut corrected_value: Vec<u8> = key_value
+        let mut key_to_be_corrected: Vec<u8> = key_value
             .1
             .clone()
             .into_iter()
             .filter(|x| *x != b'-')
             .collect::<Vec<u8>>();
-        corrected_value.resize(self.tag.length, b'-');
+        key_to_be_corrected.resize(self.tag.length, b'-');
 
-        let corrected = match (self.tag.sort_type, final_correction.get(&corrected_value)) {
+        let corrected = match (self.tag.sort_type, final_correction.get(&key_to_be_corrected)) {
             (UMISortType::DegenerateTag, None) => {
                 panic!(
                     "Unable to find match for key {} in corrected values ({}, {}, {})",
-                    u8s(&corrected_value),
+                    u8s(&key_to_be_corrected),
                     u8s(&key_value.1),
-                    final_correction.get(&corrected_value).is_some(),
+                    final_correction.get(&key_to_be_corrected).is_some(),
                     final_correction.get(&key_value.1).is_some(),
                 );
             }
@@ -338,7 +356,11 @@ impl SequenceCorrector {
         };
         match corrected {
             Some(cv) => {
-                y.ordered_sorting_keys.push((key_value.0, cv));
+                y.ordered_sorting_keys.push((key_value.0, CorrectedKey{
+                    key: self.tag.symbol,
+                    original: key_to_be_corrected,
+                    corrected: cv,
+                }));
                 sender.send(y).unwrap();
             }
             None => {}

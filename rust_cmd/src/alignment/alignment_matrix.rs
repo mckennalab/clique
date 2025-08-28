@@ -752,9 +752,6 @@ impl AlignmentResult {
 
         let seq = &self.read_aligned.clone().into_iter().filter(|b| b != &FASTA_UNSET).collect::<Vec<u8>>();
 
-        // set the read name
-        //let seq : Vec<u8> = seq.iter().filter(|x|**x != b'-').map(|x|*x).collect();
-        //println!("quals\n{}\nseq\n{}\n",String::from_utf8(self.read_quals.as_ref().unwrap().clone()).unwrap(),u8s(&seq));
         RecordBuf::builder()
             .set_name(self.read_name.as_bytes())
             .set_sequence(seq.as_bytes().into())

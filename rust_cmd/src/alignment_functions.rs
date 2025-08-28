@@ -21,7 +21,7 @@ use crate::read_strategies::sequence_layout::{SequenceLayout};
 
 use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
 use itertools::Itertools;
-use consensus::consensus_builders::{create_sam_read, get_reference_alignment_rate, MergeStrategy};
+use consensus::consensus_builders::{create_consensus_sam_read, get_reference_alignment_rate, MergeStrategy};
 use extractor::{extract_tag_sequences, extract_tagged_sequences, stretch_sequence_to_alignment};
 use FASTA_UNSET;
 use reference::fasta_reference::Reference;

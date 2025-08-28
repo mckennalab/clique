@@ -1,4 +1,4 @@
-
+use std::collections::HashMap;
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::align_two_strings;
 use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
@@ -51,7 +51,7 @@ pub fn merge_reads_by_concatenation(
                 orientation,
             } => {
                     final_sequence
-                        .extend(sequence_to_fasta_vec(reads.read_one.seq(), &orientation));
+                        .extend(orient_sequence(reads.read_one.seq(), &orientation));
                     final_sequence_quals.extend(reads.read_one.qual());
                 
             },
@@ -60,7 +60,7 @@ pub fn merge_reads_by_concatenation(
             } => {
                 assert!(reads.read_two.is_some());
                 
-                        final_sequence.extend(sequence_to_fasta_vec(
+                        final_sequence.extend(orient_sequence(
                             reads.read_two.as_ref().unwrap().seq(),
                             &orientation,
                         ));
@@ -72,7 +72,7 @@ pub fn merge_reads_by_concatenation(
             } => {
                 assert!(reads.index_one.is_some());
                 
-                        final_sequence.extend(sequence_to_fasta_vec(
+                        final_sequence.extend(orient_sequence(
                             reads.index_one.as_ref().unwrap().seq(),
                             &orientation,
                         ));
@@ -85,7 +85,7 @@ pub fn merge_reads_by_concatenation(
             } => {
                 assert!(reads.index_two.is_some());
                 
-                        final_sequence.extend(sequence_to_fasta_vec(
+                        final_sequence.extend(orient_sequence(
                             reads.index_two.as_ref().unwrap().seq(),
                             &orientation,
                         ));
@@ -93,7 +93,7 @@ pub fn merge_reads_by_concatenation(
                 
             }
             ReadPosition::Spacer { spacer_sequence } => {
-                final_sequence.extend(sequence_to_fasta_vec(
+                final_sequence.extend(orient_sequence(
                     spacer_sequence.as_bytes(),
                     &AlignedReadOrientation::Forward,
                 ));
@@ -107,7 +107,7 @@ pub fn merge_reads_by_concatenation(
     }
 }
 
-pub fn sequence_to_fasta_vec(
+pub fn orient_sequence(
     sequence: &[u8],
     orientation: &AlignedReadOrientation,
 ) -> Vec<u8> {
@@ -192,17 +192,32 @@ pub struct UnifiedRead {
     pub seq: Option<Vec<u8>>,
     pub quals: Option<Vec<u8>>,
     pub read_structure: SequenceLayout,
+    pub read_index_to_orientation: HashMap<usize,AlignedReadOrientation>,
     pub read_pattern: (bool, bool, bool, bool),
     pub underlying_reads: ReadSetContainer,
 }
 
+
 impl UnifiedRead {
     pub fn new(read_structure: SequenceLayout, underlying_reads: ReadSetContainer) -> UnifiedRead {
+        let mut read_index_to_orientation = HashMap::new();
+        read_structure.reads.iter().for_each(|s| {
+           match s {
+               ReadPosition::Read1 { orientation } => { read_index_to_orientation.insert(0,orientation.clone()); },
+               ReadPosition::Read2 { orientation } => { read_index_to_orientation.insert(1,orientation.clone()); },
+               ReadPosition::Index1 { orientation } => { read_index_to_orientation.insert(2,orientation.clone()); },
+               ReadPosition::Index2 { orientation } => { read_index_to_orientation.insert(3,orientation.clone()); },
+               ReadPosition::Spacer { .. } => { },
+           } 
+        });
+        
+        
         UnifiedRead {
             name: None,
             seq: None,
             quals: None,
             underlying_reads,
+            read_index_to_orientation,
             read_pattern: (
                 MergedReadSequence::contains_read1(&read_structure),
                 MergedReadSequence::contains_read2(&read_structure),
@@ -254,7 +269,6 @@ impl UnifiedRead {
                 if strat == &MergeStrategy::Concatenate
                     || strat == &MergeStrategy::ConcatenateBothForward =>
             {
-                // TODO: this part is broken = see merge by concat above
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
                 self.seq = Some(
                     merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure)
@@ -262,16 +276,18 @@ impl UnifiedRead {
                 );
             }
             ((true, false, false, false), _) => {
-                // TODO: this part is broken = see merge by concat above
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
-                self.seq = Some(
-                    self.underlying_reads
-                        .read_one
-                        .seq()
-                        .iter()
-                        .map(|x| *x)
-                        .collect(),
-                );
+                let sq: Vec<u8> = self.underlying_reads
+                    .read_one
+                    .seq()
+                    .iter()
+                    .map(|x| *x)
+                    .collect();
+                
+                self.seq = Some(orient_sequence(
+                    sq.as_slice(),
+                    self.read_index_to_orientation.get(&0).unwrap_or(&AlignedReadOrientation::Forward)));
+                
                 self.quals = Some(
                     self.underlying_reads.read_one.qual().to_vec()
                 )

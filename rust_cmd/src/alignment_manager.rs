@@ -156,7 +156,11 @@ impl<'a> OutputAlignmentWriter for BamFileAlignmentWriter<'a> {
         read_set_container.ordered_sorting_keys.iter().for_each(|(key, value)| {
             extra_annotations.insert(
                 [b'e', *key as u8],
-                u8s(value),
+                u8s(&value.corrected),
+            );
+            extra_annotations.insert(
+                [b'o', *key as u8],
+                u8s(&value.original),
             );
         });
             

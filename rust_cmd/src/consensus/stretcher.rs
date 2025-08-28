@@ -171,7 +171,8 @@ impl NucCounts {
 
 /// The idea is that we need to keep track of bases that came from the reference originally and bases
 /// that were inserted into the reference. Bases that are inserted in the reference only get matched
-/// against other reads that have inserted bases at that position
+/// against other reads that have inserted bases at that position. Read deletions are captured within
+/// bases in the reference sequence ('-' at that position)
 #[derive(Clone, Serialize, Deserialize, Hash)]
 enum ReferenceStatus {
     Original { base: u8, original_position: usize, counts: NucCounts },
@@ -345,14 +346,14 @@ impl AlignmentCandidate {
             match rb {
                 ReferenceStatus::Original { base, original_position: _, counts } => {
                     //println!("original {} {:?}", *base as char, counts);
-                    let base_qual = counts.consensus_base(gap_call_threshold);
+                    let base_and_qual = counts.consensus_base(gap_call_threshold);
                     resulting_alignmented_ref.push(*base);
-                    resulting_alignmented_read.push(base_qual.0);
+                    resulting_alignmented_read.push(base_and_qual.0);
 
-                    match base_qual.0 {
+                    match base_and_qual.0 {
                         b'-' => {cigar_tokens.push(AlignmentTag::Del(1))}
                         _ => {
-                            resulting_alignmented_qual.push(base_qual.1.unwrap() + 33);
+                            resulting_alignmented_qual.push(base_and_qual.1.unwrap() + 33);
                             cigar_tokens.push(AlignmentTag::MatchMismatch(1));
                         }
                     }
@@ -387,8 +388,8 @@ impl AlignmentCandidate {
         AlignmentResult {
             reference_name: self.reference_name.clone(),
             read_name: self.read_names.get(0).unwrap_or(&"UnnamedRead".to_string()).clone(),
-            reference_aligned: resulting_alignmented_ref.clone(),
-            read_aligned: resulting_alignmented_read.clone(),
+            reference_aligned: resulting_alignmented_ref,
+            read_aligned: resulting_alignmented_read,
             read_quals: Some(resulting_alignmented_qual),
             cigar_string: simplify_cigar_string(&cigar_tokens),
             path: vec![],

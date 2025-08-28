@@ -57,7 +57,7 @@ use tempfile::{TempDir as ActualTempDir};
 use clap::Parser;
 use clap::Subcommand;
 use nanoid::nanoid;
-use consensus::consensus_builders::MergeStrategy;
+use consensus::consensus_builders::{MergeStrategy, ReadOutputApproach};
 use crate::alignment_functions::align_reads;
 use crate::collapse::collapse;
 use crate::read_strategies::sequence_layout::SequenceLayout;
@@ -152,6 +152,8 @@ enum Cmd {
         #[clap(long, default_value = "0")]
         max_deletion: usize,
 
+        #[clap(long, default_value = "false")]
+        correct_only: bool,
 
     },
     Align {
@@ -217,17 +219,28 @@ fn main() {
             find_inversions: _,
             fast_reference_lookup: _,
             max_deletion: _,
+            correct_only: correction_only,
 
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
 
             let mut tmp = InstanceLivedTempDir::new().unwrap();
 
+            let correction = match *correction_only {
+                true => {
+                    ReadOutputApproach::Correct
+                },
+                false => {
+                    ReadOutputApproach::Collapse
+                }
+            };
+            
             collapse(outbam,
                      &mut tmp,
                      &my_yaml,
                      inbam,
-                     &MergeStrategy::Stretcher,
+                     &MergeStrategy::Stretcher, // TODO parameterize,
+                     &correction,
             );
         },
 

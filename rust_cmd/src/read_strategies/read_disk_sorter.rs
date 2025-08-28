@@ -6,8 +6,40 @@ use crate::alignment::alignment_matrix::{AlignmentResult};
 /// a sortable read set container that sorts on a set of keys -- which we populate with
 /// extracted barcode sequences. These sorting sequences could have been corrected to a known list
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CorrectedKey {
+    pub key: char,
+    pub original: Vec<u8>,
+    pub corrected: Vec<u8>,
+}
+
+impl CorrectedKey {
+    pub fn new(key: char, original: Vec<u8>, corrected: Vec<u8>) -> Self {
+        Self { key, original, corrected }
+    }
+}
+impl Eq for CorrectedKey {}
+
+impl PartialEq<Self> for CorrectedKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.corrected.eq(&other.corrected)
+    }
+}
+
+impl PartialOrd<Self> for CorrectedKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.corrected.partial_cmp(&other.corrected)
+    }
+}
+
+impl Ord for CorrectedKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.corrected.cmp(&other.corrected)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SortingReadSetContainer {
-    pub ordered_sorting_keys: Vec<(char,Vec<u8>)>,   // contains an ordered list of how this SortingReadSetContainer has been sorted so far
+    pub ordered_sorting_keys: Vec<(char,CorrectedKey)>,   // contains an ordered list of how this SortingReadSetContainer has been sorted so far
     pub ordered_unsorted_keys: VecDeque<(char, Vec<u8>)>, // a list of keys in this SortingReadSetContainer that have yet to be used to sort the container
     pub aligned_read: AlignmentResult,
 }
@@ -77,6 +109,7 @@ mod tests {
     use std::collections::VecDeque;
     use ::{FASTA_A, FASTA_N};
     use FASTA_T;
+    use read_strategies::read_disk_sorter::CorrectedKey;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::read_strategies::read_disk_sorter::{SortingReadSetContainer};
     use crate::utils::read_utils::fake_reads;
@@ -84,7 +117,7 @@ mod tests {
     #[test]
     fn test_ordinal_nature() {
         let srsc1 = SortingReadSetContainer{
-            ordered_sorting_keys: vec![('*', vec![b'A', b'A',])],
+            ordered_sorting_keys: vec![('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A]))],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
@@ -101,7 +134,7 @@ mod tests {
             }
         };
         let srsc2 = SortingReadSetContainer{
-            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A])],
+            ordered_sorting_keys: vec![('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A]))],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
@@ -121,7 +154,7 @@ mod tests {
         assert_eq!(srsc1.cmp(&srsc2), Ordering::Equal);
 
         let srsc1 = SortingReadSetContainer{
-            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A]),('*', vec![FASTA_A, FASTA_A])],
+            ordered_sorting_keys: vec![('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A])),('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A]))],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
@@ -138,7 +171,7 @@ mod tests {
             }
         };
         let srsc2 = SortingReadSetContainer{
-            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A]),('*', vec![FASTA_A, FASTA_T])],
+            ordered_sorting_keys: vec![('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A])),('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_T]))],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
@@ -159,9 +192,9 @@ mod tests {
         assert_eq!(srsc2.cmp(&srsc1), Ordering::Greater);
 
         let srsc1 = SortingReadSetContainer{
-            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A]),
-                                       ('*', vec![FASTA_A, FASTA_A]),
-                                       ('*', vec![FASTA_A, FASTA_A])],
+            ordered_sorting_keys: vec![('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A])),
+                                       ('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A])),
+                                       ('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A]))],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
@@ -178,9 +211,9 @@ mod tests {
             }
         };
         let srsc2 = SortingReadSetContainer{
-            ordered_sorting_keys: vec![('*', vec![FASTA_A, FASTA_A]),
-                                       ('*', vec![FASTA_A, FASTA_T]),
-                                       ('*', vec![FASTA_A, FASTA_A])],
+            ordered_sorting_keys: vec![('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A])),
+                                       ('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_T])),
+                                       ('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A],vec![FASTA_A, FASTA_A]))],
             ordered_unsorted_keys: Default::default(),
             aligned_read: AlignmentResult {
                 reference_name: "".to_string(),
@@ -205,8 +238,8 @@ mod tests {
 
     #[test]
     fn test_sorting_read_container() {
-        let key1 = ('$',vec![FASTA_N, FASTA_A]);
-        let key2 = ('$',vec![FASTA_N, FASTA_N]);
+        let key1 = ('*', CorrectedKey::new('*', vec![FASTA_N, FASTA_A],vec![FASTA_N, FASTA_A]));
+        let key2 = ('*', CorrectedKey::new('*', vec![FASTA_N, FASTA_N],vec![FASTA_N, FASTA_N]));
 
         let reads = fake_reads(10, 1);
         let read_seq = reads.get(0).unwrap().read_one.seq().iter().map(|x| x.clone()).collect::<Vec<u8>>();
@@ -241,8 +274,8 @@ mod tests {
         assert!(st1 > st2);
 
         // real example we hit
-        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![('a',"AAACCCATCAGCATTA".as_bytes().to_vec()),
-                                                                        ('a',"TATTGACAACCT".as_bytes().to_vec())],
+        let st1 = SortingReadSetContainer { ordered_sorting_keys: vec![('a',CorrectedKey::new('a',"AAACCCATCAGCATTA".as_bytes().to_vec(),"AAACCCATCAGCATTA".as_bytes().to_vec())),
+                                                                       ('a',CorrectedKey::new('a',"TATTGACAACCT".as_bytes().to_vec(),"TATTGACAACCT".as_bytes().to_vec()))],
             ordered_unsorted_keys: VecDeque::new(),aligned_read: fake_read.clone() };
         let st2 = st1.clone();
         assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);
