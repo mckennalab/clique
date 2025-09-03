@@ -46,7 +46,7 @@ impl SequenceLayout {
 
         for reference in deserialized_map.references.values_mut() {
 
-            let mut config_names = HashSet::default();
+            let mut config_names : HashSet<String> = HashSet::default();
             
             let mut ordering = reference.umi_configurations.iter().map(|(name,umi_config)| {
                 config_names.insert(name.clone());
