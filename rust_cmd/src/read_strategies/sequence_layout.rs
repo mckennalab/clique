@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
 use serde::{Serialize,Deserialize};
-use std::collections::{BTreeMap};
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum UMISortType {
@@ -46,10 +46,15 @@ impl SequenceLayout {
 
         for reference in deserialized_map.references.values_mut() {
 
-            let mut ordering = reference.umi_configurations.values().map(|umi_config| {
+            let mut config_names = HashSet::default();
+            
+            let mut ordering = reference.umi_configurations.iter().map(|(name,umi_config)| {
+                config_names.insert(name.clone());
                 umi_config.order
             }).collect::<Vec<usize>>();
 
+            assert_eq!(ordering.len(), config_names.len(), "Duplicate or mangled names in YAML configuration file; check umi_configurations field names and ordering");
+            
             ordering.sort_by_key(|a| *a);
 
             assert!(ordering.iter().enumerate().all(|(i, order)| {

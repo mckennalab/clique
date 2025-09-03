@@ -83,7 +83,9 @@ pub fn align_reads(read_structure: &SequenceLayout,
     lazy_static!{static ref STORE_CLONES: Mutex<Vec<SharedStore>> = Mutex::new(Vec::new());}
     thread_local!(static STORE: SharedStore = Arc::new(Mutex::new(None)));
 
-    let max_read_size = (rm.longest_ref + 1) * 2;
+    
+    let max_read_size = (rm.longest_ref + 1) * max_reference_multiplier;
+    info!("Longest reference found: {}, max read size set at {}",rm.longest_ref,max_read_size);
     let alignment_mat: Alignment<Ix3> = create_scoring_record_3d(rm.longest_ref + 1, max_read_size, AlignmentType::Affine, false);
 
     read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
