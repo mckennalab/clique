@@ -294,7 +294,7 @@ impl SequenceCorrector {
                     &self.tag.max_distance,
                     &self.collapse_ratio,
                 ).into_iter().collect();
-                
+
                 let valid_clusters: Vec<_> = result.iter().filter(|x| x.1.borrow().valid).collect();
 
                 let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = HashMap::default();
@@ -418,6 +418,7 @@ impl SequenceCorrector {
                     &(self.hash_map.iter().map(|(ky,_vl)| ky.clone()).collect::<Vec<Vec<u8>>>()),
                     &(self.tag.max_distance as u32),
                 );
+                info!("Closing and writing corrections");
                 self.close_and_write_to_shard_writer(sender, final_correction)
             }
             None | Some(true) => {

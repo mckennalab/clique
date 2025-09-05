@@ -152,7 +152,7 @@ enum Cmd {
         #[clap(long, default_value = "0")]
         max_deletion: usize,
 
-        #[clap(long, default_value = "false")]
+        #[clap(long, action=clap::ArgAction::SetTrue)]
         correct_only: bool,
 
     },
@@ -228,13 +228,15 @@ fn main() {
 
             let correction = match *correction_only {
                 true => {
+                    info!("Reads will be corrected and not collapsed");
                     ReadOutputApproach::Correct
                 },
                 false => {
+                    info!("Reads will be collapsed by the combination of tags");
                     ReadOutputApproach::Collapse
                 }
             };
-            
+
             collapse(outbam,
                      &mut tmp,
                      &my_yaml,

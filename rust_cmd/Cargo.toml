@@ -38,7 +38,6 @@ counter = "*"
 vpsearch = "2.0.1"
 libc = "0.2"
 sigalign = "0.4.1"
-
 phf = {version = "0.11", features = ["macros"] }
 noodles-core = "*"
 noodles-bam = "*"
@@ -50,6 +49,9 @@ indexmap = "2.0.0"
 rust-htslib = "*"
 rust_star = { git = "https://github.com/mckennalab/ruststarcode.git"}
 
+[build-dependencies]
+bindgen = "0.60.1"
+cmake = "0.1"
 
 [profile.release]
 lto = "fat"

@@ -75,7 +75,7 @@ pub fn collapse(
     read_structure: &SequenceLayout,
     bam_file: &String,
     merge_strategy: &MergeStrategy,
-    outputApproach: &ReadOutputApproach,
+    output_approach: &ReadOutputApproach,
 ) {
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
@@ -123,7 +123,7 @@ pub fn collapse(
 
                 // collapse the final reads down to a single sequence and write everything to the disk
                 
-                match outputApproach {
+                match output_approach {
                     ReadOutputApproach::Collapse => {
                         info!("writing consensus reads for reference {}", ref_name);
 
@@ -885,9 +885,9 @@ pub fn sort_level(
     let maximum_reads_per_bin = if tag.maximum_subsequences.is_some() {
         tag.maximum_subsequences.clone().unwrap()
     } else {
-        10000 // TODO make this a constant somewhere
+        1000000 // TODO make this a constant somewhere
     };
-    info!("Starting to sort degenerate level {}", tag.symbol);
+    info!("Starting to sort {:?} level {}", tag.sort_type, tag.symbol);
 
     let mut current_sorting_bin: Option<SequenceCorrector> = None;
 
