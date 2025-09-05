@@ -1,9 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::ffi::CStr;
-use std::os::raw::c_char;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::{cmp, slice};
+use std::slice;
 
 use crate::alignment::alignment_matrix::{
     create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment,
@@ -17,7 +15,6 @@ use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
 use crate::read_strategies::read_set::ReadIterator;
 use crate::reference::fasta_reference::ReferenceManager;
-use bio::alignment::AlignmentOperation;
 use ndarray::Ix3;
 use std::time::Instant;
 
@@ -27,17 +24,13 @@ use crate::read_strategies::sequence_layout::SequenceLayout;
 
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::alignment_manager::OutputAlignmentWriter;
-use crate::consensus::consensus_builders::SamReadyOutput;
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
-use alignment_functions::wfa::{wavefront_aligner_print_mode, wavefront_aligner_t};
-use consensus::consensus_builders::{
-    create_consensus_sam_read, get_reference_alignment_rate, MergeStrategy,
-};
-use extractor::{extract_tag_sequences, extract_tagged_sequences, stretch_sequence_to_alignment};
+use consensus::consensus_builders::get_reference_alignment_rate;
+use extractor::extract_tagged_sequences;
 use itertools::Itertools;
 use reference::fasta_reference::Reference;
 use utils::read_utils::{reverse_complement, u8s};
-use FASTA_UNSET;
+use ::{Aligner, FASTA_UNSET};
 
 /// Include the generated bindings into a separate module.
 #[allow(non_upper_case_globals)]
@@ -48,25 +41,9 @@ mod wfa {
     include!(concat!(env!("OUT_DIR"), "/bindings_wfa.rs"));
 }
 
-fn setup_wfa_alignment(mismatch: &i32,
-                       gap_open: &i32,
-                       gap_extend: &i32) -> *mut wavefront_aligner_t {
-    unsafe {
-        let mut attributes = wfa::wavefront_aligner_attr_default;
-        attributes.alignment_scope = wfa::alignment_scope_t_compute_alignment;
-        attributes.distance_metric = wfa::distance_metric_t_gap_affine;
-        attributes.affine_penalties.match_ = mismatch * -1;
-        attributes.affine_penalties.mismatch = *mismatch;
-        attributes.affine_penalties.gap_opening = *gap_open;
-        attributes.affine_penalties.gap_extension = *gap_extend;
-
-        // Initialize the aligner object.
-        // This should be reused for multiple queries.
-        wfa::wavefront_aligner_new(&mut attributes)
-    }
-}
 /// Compute the affine alignment score between `a` and `b` with the given substitution,
 /// gap-open, and gap-extend penalties.
+#[allow(dead_code)]
 fn wfa_alignment(
     read: &[u8],
     reference: &[u8],
@@ -89,7 +66,7 @@ fn wfa_alignment(
 
         // Initialize the aligner object.
         // This should be reused for multiple queries.
-        
+
         let wf_aligner = wfa::wavefront_aligner_new(&mut attributes); // setup_wfa_alignment(mismatch, gap_open, gap_extend);
 
         let status = wfa::wavefront_align(
@@ -114,6 +91,7 @@ fn wfa_alignment(
         alignment
     }
 }
+#[allow(dead_code)]
 pub fn collapse_repeats(seq: &[u8]) -> String {
     if seq.is_empty() {
         return String::new();
@@ -135,6 +113,7 @@ pub fn collapse_repeats(seq: &[u8]) -> String {
     result.push_str(&format!("{}{}", count, seq[seq.len() - 1] as char));
     result
 }
+
 pub fn align_reads(
     read_structure: &SequenceLayout,
     rm: &ReferenceManager,
@@ -146,7 +125,7 @@ pub fn align_reads(
     index1: &String,
     index2: &String,
     threads: &usize,
-    inversions: &bool,
+    _aligner: &Aligner,
 ) {
     let read_iterator = ReadIterator::new(
         PathBuf::from(&read1),
@@ -199,6 +178,7 @@ pub fn align_reads(
         "Longest reference found: {}, max read size set at {}",
         rm.longest_ref, max_read_size
     );
+
     let alignment_mat: Alignment<Ix3> = create_scoring_record_3d(
         rm.longest_ref + 1,
         max_read_size,
@@ -229,7 +209,7 @@ pub fn align_reads(
                     local_alignment.as_mut().unwrap(),
                     &my_aff_score,
                     &my_score,
-                    inversions,
+                    &false,
                     *max_reference_multiplier as f64,
                     *min_read_length,
                     seq_len,
@@ -906,77 +886,6 @@ fn cigar_to_alignment(reference: &Vec<u8>, read: &Vec<u8>, cigar: &Vec<u8>) -> (
         }
     }
     (alignment_string1, alignment_string2)
-}
-
-#[allow(dead_code)]
-pub fn bio_to_alignment_result(
-    _read_name: &String,
-    _ref_name: &String,
-    alignment: bio::alignment::Alignment,
-    reference: &Vec<u8>,
-    read: &Vec<u8>,
-) -> AlignmentResult {
-    let mut aligned_ref = Vec::new();
-    let mut aligned_read = Vec::new();
-    let mut ref_pos = alignment.ystart;
-    let mut read_pos = alignment.xstart;
-
-    let mut resulting_cigar = Vec::new();
-    for al in alignment.operations {
-        match al {
-            AlignmentOperation::Match => {
-                aligned_ref.push(reference.get(ref_pos).unwrap().clone());
-                aligned_read.push(read.get(read_pos).unwrap().clone());
-                ref_pos += 1;
-                read_pos += 1;
-                resulting_cigar.push(AlignmentTag::MatchMismatch(1));
-            }
-            AlignmentOperation::Subst => {
-                aligned_ref.push(reference.get(ref_pos).unwrap().clone());
-                aligned_read.push(read.get(read_pos).unwrap().clone());
-                ref_pos += 1;
-                read_pos += 1;
-                resulting_cigar.push(AlignmentTag::MatchMismatch(1));
-            }
-            AlignmentOperation::Del => {
-                aligned_ref.push(reference.get(ref_pos).unwrap().clone());
-                aligned_read.push(FASTA_UNSET);
-                ref_pos += 1;
-                resulting_cigar.push(AlignmentTag::Del(1));
-            }
-            AlignmentOperation::Ins => {
-                aligned_ref.push(FASTA_UNSET);
-                aligned_read.push(read.get(read_pos).unwrap().clone());
-                read_pos += 1;
-                resulting_cigar.push(AlignmentTag::Ins(1));
-            }
-            AlignmentOperation::Xclip(x) => {
-                aligned_ref.extend(reference[ref_pos..ref_pos + x].iter());
-                aligned_read.extend(vec![b'-'; x]);
-                ref_pos += x.clone();
-                resulting_cigar.push(AlignmentTag::Ins(x));
-            }
-            AlignmentOperation::Yclip(y) => {
-                aligned_read.extend(read[read_pos..read_pos + y].iter());
-                aligned_ref.extend(vec![b'-'; y]);
-                read_pos += y.clone();
-                resulting_cigar.push(AlignmentTag::Del(y));
-            }
-        }
-    }
-    AlignmentResult {
-        reference_name: "".to_string(),
-        read_name: "".to_string(),
-        reference_aligned: aligned_ref,
-        read_aligned: aligned_read,
-        read_quals: None,
-        cigar_string: simplify_cigar_string(&resulting_cigar),
-        path: vec![],
-        score: alignment.score as f64,
-        reference_start: alignment.xstart,
-        read_start: alignment.ystart,
-        bounding_box: None,
-    }
 }
 
 pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentTag> {

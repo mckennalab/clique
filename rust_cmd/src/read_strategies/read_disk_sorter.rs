@@ -12,11 +12,6 @@ pub struct CorrectedKey {
     pub corrected: Vec<u8>,
 }
 
-impl CorrectedKey {
-    pub fn new(key: char, original: Vec<u8>, corrected: Vec<u8>) -> Self {
-        Self { key, original, corrected }
-    }
-}
 impl Eq for CorrectedKey {}
 
 impl PartialEq<Self> for CorrectedKey {

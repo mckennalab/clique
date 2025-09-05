@@ -56,6 +56,7 @@ use tempfile::{TempDir as ActualTempDir};
 
 use clap::Parser;
 use clap::Subcommand;
+use clap::ValueEnum;
 use nanoid::nanoid;
 use consensus::consensus_builders::{MergeStrategy, ReadOutputApproach};
 use crate::alignment_functions::align_reads;
@@ -125,6 +126,14 @@ mod reference {
     pub mod fasta_reference;
 }
 
+#[derive(Debug, Default, Clone, ValueEnum)]
+enum Aligner {
+    #[default]
+    WFA,
+    Degenerate,
+    Inversion,
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
     Collapse {
@@ -184,9 +193,11 @@ enum Cmd {
         #[clap(long, default_value_t = 1)]
         threads: usize,
 
-        #[clap(long)]
-        find_inversions: bool,
+        #[clap(long, arg_enum, default_value_t = Aligner::WFA)]
+        aligner: Aligner,
 
+        
+        
     },
 }
 
@@ -256,7 +267,7 @@ fn main() {
             index1,
             index2,
             threads,
-            find_inversions,
+            aligner,
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
@@ -273,7 +284,7 @@ fn main() {
                         index1,
                         index2,
                         threads,
-                        find_inversions);
+                        aligner);
         }
     }
 }

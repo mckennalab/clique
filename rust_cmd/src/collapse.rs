@@ -26,8 +26,6 @@ use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
 use crate::alignment_manager::BamFileAlignmentWriter;
 use crate::umis::correct_tags::SequenceCorrector;
 use consensus::consensus_builders::{write_corrected_reads, MergeStrategy, ReadOutputApproach};
-use noodles_sam::alignment::record::QualityScores;
-use rust_htslib::bam::index::Type::Bai;
 use read_strategies::sequence_layout::UMISortType;
 use rust_star::Trie;
 use umis::known_list::KnownList;

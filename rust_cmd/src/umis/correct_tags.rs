@@ -310,7 +310,7 @@ impl SequenceCorrector {
                     let connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
                     let string_name = connected_node.string.clone();
                     knowns.insert(string_name.clone(), string_name.clone());
-                    connected_node.swallowed_links.iter().for_each(|(x, y)| {
+                    connected_node.swallowed_links.iter().for_each(|(x, _y)| {
                         barcodes_to_resolve.push_front(x.clone());
                         knowns.insert(x.clone(), string_name.clone());
                     });
@@ -320,7 +320,7 @@ impl SequenceCorrector {
                         let connected_node = result.get(&processing_code).unwrap().borrow_mut();
                         let connected_node: &DistanceGraphNode = connected_node.deref().to_owned();
 
-                        connected_node.swallowed_links.iter().for_each(|(x, y)| {
+                        connected_node.swallowed_links.iter().for_each(|(x, _y)| {
                             barcodes_to_resolve.push_front(x.clone());
                             knowns.insert(x.clone(), string_name.clone());
                         });

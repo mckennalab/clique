@@ -18,13 +18,12 @@ use num_traits::{Pow, ToPrimitive};
 use ::{FASTA_N, FASTA_UNSET};
 use utils::read_utils::{strip_gaps};
 
-const PHRED_OFFSET: u8 = 32;
-
 pub enum ReadOutputApproach {
     Collapse,
     Correct,
 }
 
+#[allow(dead_code)]
 pub enum MergeStrategy {
     StrictConsensus,
     Hybrid,
