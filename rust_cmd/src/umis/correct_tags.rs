@@ -11,6 +11,7 @@ use rust_star::{DistanceGraphNode, Link, LinkedDistances, Trie};
 use rustc_hash::{FxHashMap, FxHasher};
 use shardio::{Range, ShardReader, ShardSender, ShardWriter};
 use std::ops::Deref;
+use indicatif::ProgressBar;
 use read_strategies::read_disk_sorter::CorrectedKey;
 use utils::read_utils::{strip_gaps, u8s};
 
@@ -125,6 +126,8 @@ impl SequenceCorrector {
         let mut nostart = 0;
         let mut matched = 0;
 
+        let mut matched_to_set : HashSet<Vec<u8>> = HashSet::default(); 
+        
         let mut sorted_tags: Vec<(Vec<u8>, usize)> = self
             .hash_map
             .iter()
@@ -162,6 +165,7 @@ impl SequenceCorrector {
                 .into_iter()
                 .filter(|x| *x != b'-')
                 .collect::<Vec<u8>>();
+            
             corrected_value.resize(self.tag.length, b'-');
             let corrected_key = corrected_value.clone();
 
@@ -180,6 +184,7 @@ impl SequenceCorrector {
                         matched += 1;
                         nostart += sorted_tags[sorted_tag_index].1;
                         knowns.insert(corrected_value, rt.0[0].0.clone());
+                        matched_to_set.insert(rt.0[0].0.clone()); // TODO: delete later
                         debug!(
                             "{}\ttrue\t1\thit\t{}\t{}",
                             u8s(&corrected_key),
@@ -215,6 +220,7 @@ impl SequenceCorrector {
                             matched += 1;
                             nostart += sorted_tags[sorted_tag_index].1;
                             knowns.insert(corrected_value, rt.0[min_index].0.clone());
+                            matched_to_set.insert(rt.0[0].0.clone()); // TODO: delete later
                             debug!(
                                 "{}\ttrue\t{}\tmulti\tNA\t{}",
                                 u8s(&corrected_key),
@@ -234,20 +240,19 @@ impl SequenceCorrector {
             } else {
             }
         });
-        debug!(
-            "matched {} Unmatched {} multimatched {} nostart {} total {} super total {}",
+        info!(
+            "matched {} Unmatched {} multimatched {} nostart {} total {} super total {}, correction set size {}",
             matched,
             unmatched,
             multimatched,
             nostart,
             self.hash_map.len(),
-            self.processed_sequences
+            self.processed_sequences,
+            matched_to_set.len()
         );
 
         knowns
     }
-
-    /// This function 'corrects' a list of barcodes using our Starcode clone
     pub fn correct_degenerate_list(&self) -> FxHashMap<Vec<u8>, Vec<u8>> {
         match self.hash_map.len() {
             0 => {
@@ -331,7 +336,7 @@ impl SequenceCorrector {
         final_correction: &FxHashMap<Vec<u8>, Vec<u8>>,
         mut y: SortingReadSetContainer,
         sender: &mut ShardSender<SortingReadSetContainer>,
-    ) {
+    ) -> bool {
         let key_value = y.ordered_unsorted_keys.pop_front().unwrap();
         let mut key_to_be_corrected: Vec<u8> = key_value
             .1
@@ -339,6 +344,7 @@ impl SequenceCorrector {
             .into_iter()
             .filter(|x| *x != b'-')
             .collect::<Vec<u8>>();
+        
         key_to_be_corrected.resize(self.tag.length, b'-');
 
         let corrected = match (self.tag.sort_type, final_correction.get(&key_to_be_corrected)) {
@@ -362,8 +368,9 @@ impl SequenceCorrector {
                     corrected: cv,
                 }));
                 sender.send(y).unwrap();
+                true
             }
-            None => {}
+            None => {false}
         }
     }
 
@@ -391,6 +398,7 @@ impl SequenceCorrector {
                     .as_mut()
                     .unwrap();
                 let final_correction = self.correct_known_list(trie);
+                info!("Closing and writing corrections...");
                 self.close_and_write_to_shard_writer(sender, final_correction)
             }
             None | Some(false) => {
@@ -418,7 +426,7 @@ impl SequenceCorrector {
                     &(self.hash_map.iter().map(|(ky,_vl)| ky.clone()).collect::<Vec<Vec<u8>>>()),
                     &(self.tag.max_distance as u32),
                 );
-                info!("Closing and writing corrections");
+                info!("Closing and writing corrections...");
                 self.close_and_write_to_shard_writer(sender, final_correction)
             }
             None | Some(true) => {
@@ -436,9 +444,15 @@ impl SequenceCorrector {
         let mut read_count: usize = 0;
         let mut unbuffered_reads = 0;
 
+        let mut bar: Option<ProgressBar> = match self.processed_sequences > 100000 {
+            true => Some(ProgressBar::new(read_count.clone() as u64)),
+            false => None,
+        };
+        
         self.buffer.iter().for_each(|y| {
-            self.add_corrected(&final_correction, y.clone(), sender);
-            read_count += 1;
+            if self.add_corrected(&final_correction, y.clone(), sender) {
+                read_count += 1;
+            }
             unbuffered_reads += 1;
         });
 
@@ -450,6 +464,7 @@ impl SequenceCorrector {
                 .as_mut()
                 .finish()
                 .unwrap();
+            
             let reader: ShardReader<SortingReadSetContainer> =
                 ShardReader::open(&self.output_file).unwrap();
 
@@ -458,20 +473,24 @@ impl SequenceCorrector {
                 .unwrap()
                 .for_each(|current_read| {
                     let current_read: SortingReadSetContainer = current_read.unwrap();
-                    self.add_corrected(&final_correction, current_read, sender);
-
-                    read_count += 1;
+                    if self.add_corrected(&final_correction, current_read, sender) {
+                        read_count += 1;
+                    }
+                    
+                    if read_count % 10000 == 0 {
+                        bar.as_mut().map(|b| b.set_position(read_count as u64));
+                    }
                     unbuffered_reads += 1;
                 });
         }
 
-        // clear everything out
+        // clear everything out -- they were some weird issues with the auto drop here
         self.shard_sender = None;
         self.shard_writer = None;
         self.buffer.clear();
         self.hash_map.clear();
         debug!(
-            "COUNTS {} {} {}",
+            "Final correction counts:  read count: {} total reads: {} mapping size: {}",
             read_count,
             unbuffered_reads,
             self.hash_map.len()
