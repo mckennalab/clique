@@ -126,8 +126,8 @@ impl SequenceCorrector {
         let mut nostart = 0;
         let mut matched = 0;
 
-        let mut matched_to_set : HashSet<Vec<u8>> = HashSet::default(); 
-        
+        let mut matched_to_set : HashSet<Vec<u8>> = HashSet::default();
+
         let mut sorted_tags: Vec<(Vec<u8>, usize)> = self
             .hash_map
             .iter()
@@ -165,7 +165,7 @@ impl SequenceCorrector {
                 .into_iter()
                 .filter(|x| *x != b'-')
                 .collect::<Vec<u8>>();
-            
+
             corrected_value.resize(self.tag.length, b'-');
             let corrected_key = corrected_value.clone();
 
@@ -240,7 +240,7 @@ impl SequenceCorrector {
             } else {
             }
         });
-        info!(
+        debug!(
             "matched {} Unmatched {} multimatched {} nostart {} total {} super total {}, correction set size {}",
             matched,
             unmatched,
@@ -344,7 +344,7 @@ impl SequenceCorrector {
             .into_iter()
             .filter(|x| *x != b'-')
             .collect::<Vec<u8>>();
-        
+
         key_to_be_corrected.resize(self.tag.length, b'-');
 
         let corrected = match (self.tag.sort_type, final_correction.get(&key_to_be_corrected)) {
@@ -448,7 +448,7 @@ impl SequenceCorrector {
             true => Some(ProgressBar::new(read_count.clone() as u64)),
             false => None,
         };
-        
+
         self.buffer.iter().for_each(|y| {
             if self.add_corrected(&final_correction, y.clone(), sender) {
                 read_count += 1;
@@ -464,7 +464,7 @@ impl SequenceCorrector {
                 .as_mut()
                 .finish()
                 .unwrap();
-            
+
             let reader: ShardReader<SortingReadSetContainer> =
                 ShardReader::open(&self.output_file).unwrap();
 
@@ -476,7 +476,7 @@ impl SequenceCorrector {
                     if self.add_corrected(&final_correction, current_read, sender) {
                         read_count += 1;
                     }
-                    
+
                     if read_count % 10000 == 0 {
                         bar.as_mut().map(|b| b.set_position(read_count as u64));
                     }
