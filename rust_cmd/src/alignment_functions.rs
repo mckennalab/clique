@@ -17,8 +17,12 @@ use crate::read_strategies::read_set::ReadIterator;
 use crate::reference::fasta_reference::ReferenceManager;
 use ndarray::Ix3;
 use std::time::Instant;
-
+use bio::alignment::AlignmentOperation;
 use crate::merger::{MergedReadSequence, UnifiedRead};
+
+use bio::alignment::pairwise::*;
+use bio::alignment::AlignmentOperation::*;
+use bio::scores::blosum62;
 
 use crate::read_strategies::sequence_layout::SequenceLayout;
 
@@ -28,9 +32,10 @@ use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use consensus::consensus_builders::get_reference_alignment_rate;
 use extractor::extract_tagged_sequences;
 use itertools::Itertools;
+use sigalign::results::AlignmentOperations;
 use reference::fasta_reference::Reference;
 use utils::read_utils::{reverse_complement, u8s};
-use ::{Aligner, FASTA_UNSET};
+use ::{Aligner as RustAligner, FASTA_UNSET};
 
 /// Include the generated bindings into a separate module.
 #[allow(non_upper_case_globals)]
@@ -50,68 +55,13 @@ fn wfa_alignment(
     mismatch: &i32,
     gap_open: &i32,
     gap_extend: &i32
-) -> String {
-    let a = read.iter().map(|x| *x as i8).collect::<Vec<i8>>();
-    let b = reference.iter().map(|x| *x as i8).collect::<Vec<i8>>();
-
-    //println!("A {:?} b {:?} {} {} {}", a, b, a.len(),b.len(), a.len() as i32 * mismatch);
-    unsafe {
-        let mut attributes = wfa::wavefront_aligner_attr_default;
-        attributes.alignment_scope = wfa::alignment_scope_t_compute_alignment;
-        attributes.distance_metric = wfa::distance_metric_t_gap_affine;
-        attributes.affine_penalties.match_ = mismatch * -1;
-        attributes.affine_penalties.mismatch = *mismatch;
-        attributes.affine_penalties.gap_opening = *gap_open;
-        attributes.affine_penalties.gap_extension = *gap_extend;
-
-        // Initialize the aligner object.
-        // This should be reused for multiple queries.
- 
-        let wf_aligner = wfa::wavefront_aligner_new(&mut attributes); // setup_wfa_alignment(mismatch, gap_open, gap_extend);
-
-        let status = wfa::wavefront_align(
-            wf_aligner,
-            a.as_ptr(),
-            a.len() as i32,
-            b.as_ptr(),
-            b.len() as i32,
-        );
-        assert_eq!(status, 0);
-
-        let start = (*(*wf_aligner).cigar).begin_offset;
-        let stop = (*(*wf_aligner).cigar).end_offset;
-        let alignment = slice::from_raw_parts(
-            (*(*wf_aligner).cigar).operations.add(start as usize),
-            (stop - start) as usize,
-        );
-        let alignment =
-            String::from_utf8(alignment.iter().map(|x| *x as u8).collect::<Vec<u8>>()).unwrap();
-        // Clean up memory.
-        wfa::wavefront_aligner_delete(wf_aligner);
-        alignment
-    }
-}
-#[allow(dead_code)]
-pub fn collapse_repeats(seq: &[u8]) -> String {
-    if seq.is_empty() {
-        return String::new();
-    }
-
-    let mut result = String::new();
-    let mut count = 1;
-
-    for i in 1..seq.len() {
-        if seq[i] == seq[i - 1] {
-            count += 1;
-        } else {
-            result.push_str(&format!("{}{}", count, seq[i - 1] as char));
-            count = 1;
-        }
-    }
-
-    // Append the final run
-    result.push_str(&format!("{}{}", count, seq[seq.len() - 1] as char));
-    result
+) -> Vec<AlignmentOperation> {
+    let score = |a: u8, b: u8| if a == b || a == b'N' { 1i32 } else { -1i32 };
+    // gap open score: -5, gap extension score: -1
+    let mut aligner = Aligner::with_capacity(read.len(), reference.len(), -5, -1, &score);
+    let alignment = aligner.global(reference,read);
+    // x is global (target sequence) and y is local (reference sequence)
+    alignment.operations
 }
 
 pub fn align_reads(
@@ -125,7 +75,7 @@ pub fn align_reads(
     index1: &String,
     index2: &String,
     threads: &usize,
-    _aligner: &Aligner,
+    _aligner: &RustAligner,
 ) {
     let read_iterator = ReadIterator::new(
         PathBuf::from(&read1),
@@ -610,20 +560,15 @@ pub fn align_to_reference_choices(
                 read.clone()
             };
 
-            /*
-            
-#[derive(Serialize, Deserialize, Debug, Clone)]
-p
-             */
             let alignment = wfa_alignment(&ref_base.sequence, &forward_oriented_seq, &4, &10, &1);
             //println!("{}", alignment);
 
             let alignment = cigar_to_alignment(
                 &ref_base.sequence,
                 &forward_oriented_seq,
-                &alignment.into_bytes(),
+                &alignment,
             );
-            
+
             let result = AlignmentResult {
                 reference_name: ref_name.clone(),
                 read_name: read_name.clone(),
@@ -637,8 +582,8 @@ p
                 read_start: 0,
                 bounding_box: None,
             };
-            
-            
+
+
             /*
             let aln = align_two_strings_passed_matrix(
                 &ref_name,
@@ -648,7 +593,7 @@ p
                 qual_sequence,
                 my_aff_score,
                 alignment_mat,
-                max_indel,
+                &100,
             );
 */
             Some(AlignmentWithRef {
@@ -883,7 +828,7 @@ fn exhaustive_alignment_search(
 }
 
 #[allow(dead_code)]
-fn cigar_to_alignment(reference: &Vec<u8>, read: &Vec<u8>, cigar: &Vec<u8>) -> (Vec<u8>, Vec<u8>, Vec<AlignmentTag>) {
+fn cigar_to_alignment(reference: &Vec<u8>, read: &Vec<u8>, cigar: &Vec<AlignmentOperation>) -> (Vec<u8>, Vec<u8>, Vec<AlignmentTag>) {
     let mut alignment_string1 = Vec::new();
     let mut alignment_string2 = Vec::new();
     let mut cigar_vec = Vec::new();
@@ -893,34 +838,38 @@ fn cigar_to_alignment(reference: &Vec<u8>, read: &Vec<u8>, cigar: &Vec<u8>) -> (
 
     for c in cigar {
         match c {
-            b'M' | b'X' => {
+            Match => {
                 alignment_string1.push(reference.get(seq1_index).unwrap().clone());
                 alignment_string2.push(read.get(seq2_index).unwrap().clone());
                 cigar_vec.push(AlignmentTag::MatchMismatch(1));
                 seq1_index += 1;
                 seq2_index += 1;
             }
-            b'D' => {
+            Del => {
                 alignment_string1.push(reference.get(seq1_index).unwrap().clone());
                 alignment_string2.push(FASTA_UNSET);
                 cigar_vec.push(AlignmentTag::Del(1));
                 seq1_index += 1;
             }
-            b'I' => {
+           Ins => {
                 alignment_string1.push(FASTA_UNSET);
                 alignment_string2.push(read.get(seq2_index).unwrap().clone());
                 cigar_vec.push(AlignmentTag::Ins(1));
                 seq2_index += 1;
+            },
+            Subst => {
+                alignment_string1.push(reference.get(seq1_index).unwrap().clone());
+                alignment_string2.push(read.get(seq2_index).unwrap().clone());
+                cigar_vec.push(AlignmentTag::MatchMismatch(1));
+                seq1_index += 1;
+                seq2_index += 1;
             }
             _ => {
-                panic!(
-                    "Unknown cigar operation {}",
-                    String::from_utf8(vec![*c]).unwrap()
-                )
+                panic!("Unknown cigar operation {:?}",c)
             }
         }
     }
-    (alignment_string1, alignment_string2, cigar_vec)
+    (alignment_string1, alignment_string2, simplify_cigar_string(&cigar_vec))
 }
 
 pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentTag> {
@@ -1414,7 +1363,7 @@ CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT
         let fasta =
             br#">target_1
 CTACACGACGCTCTTCCGATCTNNNNNNNNNNNNNNNNNNNNNNNNNNNNTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTATTAGGAAAGGACAGTGGGAGTGGCACCTTCCAGGGTCAAGGAAGGCACGGGGGAGGGGCAAACAACAGATGGCTGGCAACTAGAAGGCACAGTGAGCTTGTACATAACTACGCAAGTCCTTGCTAGGACCGGCCTTAAAGCCACGTGGCGGCCGCCGAGCGGTATCAGCTCACTCAAAGGCGGTAATACGGTTATCCACAGAATCGTGGTACAATATGCGTCTCCGAAATTAACCCGGTGTGTTTAAACGAAAAGGACCGACTACTACCTCGCGAAAGCTCTAAGTGTTGTGTCAGCGAAACTTCGCGGAGGTTCGACATCGAAAGACACGCGGGTGTATATGGCGAAAGCAGCAACCTGATCTGGGGTGAAAAGCCATGGATGTCGGGACGAGAAAGGTCTAGGACTGTTTTGCGAGAAAAGGATTAGAGTTAGAATCGCGAAACGCTCGCGTTCTACCGCTCCGAAAGATCCCGAGGTTGTTTTACCGAAAGCGACGACTTCTGTCATAGTGAAACGATTGGACGTCTCTGGTGCGAAATCGCGGGTTGTACAACATACGAAACCGAGGCTATAATCCCGGACGAAAGGTATAGGTAGCTAACACGCGAAACCCTAGGGATCGTGCTAGCCGAAAGCCCTATTATGTAGGGGACTGAAAAACATGGGTACGTCCCCGATGAAACGCTGCTTGTCTGGCCTCGCGAAAGAATGAGCTGAGTGTGAGGCGAAAAGCTTAAGCTGTGCACTCTCGAAAGTCGGTGTCTATTAGTGGATGAAACAGCGGGTTCCTGCTCCCGCGAAACGCCACCTGTATGTTACTTCGAAAATGAAGGGATAGTGGCGGACGAAAGTCATATTCCGTTGTGGTACGAAATTGGTCCTGATGTACGCACAGAAAAGATTGACCTCTGTTCGTACGAAAGCTCGGCCTCTGGGAGTCGTGAAAGACTCGGATCCGTACCAGATGAAAGGCACACCCATGTCCGTCACGAAAACCCAAACCTTGTATGTATGGAAATCTTCTGCGTTCGGGCCGCGGAAAAGCGTATACCTATCTCGCATGAAAGTCTCTTATCTTGTCTACGCGAAACGCTCGTATGCGTACGGGCTGAAAGCGATATACTGTTCGCCCCTGAAACCCTCTAGTTATGCGCCAGTGAAAGAGTCGCGTAGAGTACAGTGCAAGGTCGACAATCAACCTCTGGATTACATCCGATTGCCTTACTGTGCGAAAGTACTCGATGGTGTGGCTTAGAAAGCGTACAGTCTCTGTGCCGGGAAAATAAGAGCGTCTGCGGTTATGAAATCGTGGGCTACTCCTGGGTGGAAAGCTATCCTGTATATTAGTACGAAAGGTGCCAGGTTGCTTCGATCGAAAGCCCGAGAGATTACTCGTAGGAAACTACGCCGGTTACGACGGGCGAAACGACATGAACTTATCCGGACGAAAGGTAGTCCTTACGGTGATCTGCTAGGGTCTCTCCTAGCAACGGTTACTCGATTTGGTACNNNNNNNNNNNNNNNNNNGTACCTGATGCGGCACAATGTCTAGC"#;
-         
+
         let reference = ReferenceBuilder::new()
             .set_uppercase(true) // Ignore case
             .ignore_base(b'N') // 'N' is never matched
