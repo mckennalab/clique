@@ -351,12 +351,13 @@ pub fn extract_tag_sequences(
     let mut vec_tags =    reference_tags
             .umi_configurations
             .iter()
-            .map(|(_umi_name, umi_obj)| {
+            .map(|(umi_name, umi_obj)| {
                 let ets_hit = ets.get(&umi_obj.symbol.to_string().as_bytes()[0]);
 
                 match ets_hit {
                     Some(e) => {
                         if e.len() != umi_obj.length {
+                            warn!("The extracted length {} doesn't match the expected length {} for {}", e.len(), umi_obj.length, umi_name);
                             invalid_read = true;
                         };
                         let mut gaps = 0;
@@ -371,12 +372,10 @@ pub fn extract_tag_sequences(
                             .collect::<Vec<u8>>();
 
                         if gaps > umi_obj.max_gaps.unwrap_or(gaps) {
-                            println!("tossing reads {} {}", gaps, e);
+                            warn!("tossing reads {} {}", gaps, e);
                             invalid_read = true;
-                        } //else {
-                        //println!("keeping reads {} {} level {}",gaps, e, umi_obj.max_gaps.unwrap_or(gaps));
-                        //}
-
+                        } 
+                        
                         Some((umi_obj.order, (
                             umi_obj.symbol,
                             str
@@ -384,7 +383,7 @@ pub fn extract_tag_sequences(
                     }
 
                     None => {
-                        println!("None read");
+                        warn!("Failed to extract the read sequence");
 
                         invalid_read = true;
                         None
