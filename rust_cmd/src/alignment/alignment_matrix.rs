@@ -756,7 +756,7 @@ impl AlignmentResult {
             .set_name(self.read_name.as_bytes())
             .set_sequence(seq.as_bytes().into())
             .set_cigar(Cigar::from_iter(self.cigar_string.iter().map(|m| m.to_op()).into_iter()).clone())
-            .set_alignment_start(noodles_core::Position::new(self.reference_start+1).unwrap())
+            .set_alignment_start(noodles_core::Position::new(self.reference_start).unwrap())
             .set_quality_scores(match &self.read_quals {
                 Some(_x) => { QualityScores::from(vec![b'H'; seq.len()]) }, //QualityScores::from(x.clone().iter().map(|x| u8::from(min(128,max(33,*x)))).collect::<Vec<u8>>()) }
                 None => { QualityScores::from(vec![b'H'; seq.len()]) }
