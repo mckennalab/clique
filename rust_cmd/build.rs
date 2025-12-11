@@ -10,13 +10,13 @@ fn wfa() {
     // The directory of the WFA libraries, added to the search path.
     println!("cargo:rustc-link-search=all=../WFA2-lib/build");
     // Link the `wfa-lib` library.
-    println!("cargo:rustc-link-lib=static=wfa2");
+    println!("cargo:rustc-link-lib=static=wfa");
     // Also link `omp`.
     println!("cargo:rustc-link-lib=omp");
     // Invalidate the built crate whenever the linked library changes.
-    println!("cargo:rerun-if-changed=../WFA2-lib/build/libwfa2.a");
+    println!("cargo:rerun-if-changed=../WFA2-lib/lib/libwfa.a");
 
-    println!("cargo:rustc-link-search=native=../WFA2-lib/build");
+    println!("cargo:rustc-link-search=native=../WFA2-lib/lib");
     // 2. Generate bindings.
 
     let bindings = bindgen::Builder::default()
