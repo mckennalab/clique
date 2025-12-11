@@ -38,7 +38,6 @@ extern crate rust_star;
 extern crate libc;
 extern crate clap;
 extern crate indexmap;
-extern crate sigalign;
 extern crate counter;
 extern crate rustc_hash;
 extern crate noodles_sam;
