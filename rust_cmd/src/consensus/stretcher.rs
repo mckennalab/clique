@@ -141,12 +141,14 @@ impl NucCounts {
             let t_slice = vec![b'T'; self.t];
             let n_slice = vec![b'N'; self.n];
             println!("A {} C {} G {} T {}",self.a, self.c, self.g, self.t);
+
             let bases = vec![a_slice.as_slice(), c_slice.as_slice(), g_slice.as_slice(), t_slice.as_slice(), n_slice.as_slice()];
 
             let quals = vec![self.a_qual.as_slice(), self.c_qual.as_slice(), self.g_qual.as_slice(), self.t_qual.as_slice(), self.n_qual.as_slice()];
 
             let mut allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &self.ref_base, &0.75);
             let qual_normalized = calculate_qual_scores(&mut allele_props);
+            println!("{:?}",qual_normalized);
             let index_of_max: usize = qual_normalized[0..4]
                 .iter()
                 .enumerate()
