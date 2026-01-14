@@ -140,7 +140,7 @@ impl NucCounts {
             let g_slice = vec![b'G'; self.g];
             let t_slice = vec![b'T'; self.t];
             let n_slice = vec![b'N'; self.n];
-
+            println!("A {} C {} G {} T {}",self.a, self.c, self.g, self.t);
             let bases = vec![a_slice.as_slice(), c_slice.as_slice(), g_slice.as_slice(), t_slice.as_slice(), n_slice.as_slice()];
 
             let quals = vec![self.a_qual.as_slice(), self.c_qual.as_slice(), self.g_qual.as_slice(), self.t_qual.as_slice(), self.n_qual.as_slice()];
