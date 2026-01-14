@@ -172,7 +172,7 @@ impl ReferenceLookupTable {
         let mut name_to_joint_index = HashMap::new();
         let mut unified_name_to_seq = HashMap::new();
 
-        // TODO: the header uses an in-order map for storing reference sequences, think through this
+        // TODO: the header uses an in-order map for storing reference sequences, think about this
         bam_header
             .reference_sequences()
             .iter()
@@ -428,6 +428,7 @@ pub fn sort_reads_from_bam_file(
     read_structure: &SequenceLayout,
     temp_directory: &mut InstanceLivedTempDir,
 ) -> SortedReadsFromBam {
+
     let aligned_temp = temp_directory.temp_file("bam.reads.sorted.sharded");
 
     let mut reader = bam::io::reader::Builder::default()

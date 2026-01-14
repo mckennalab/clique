@@ -44,7 +44,6 @@ extern crate noodles_sam;
 extern crate nohash_hasher;
 extern crate vpsearch;
 extern crate nanoid;
-extern crate spoa;
 
 use ::std::io::Result;
 use std::path::{Path, PathBuf};

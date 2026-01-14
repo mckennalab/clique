@@ -147,7 +147,7 @@ impl NucCounts {
 
             let mut allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &self.ref_base, &0.75);
             let qual_normalized = calculate_qual_scores(&mut allele_props);
-            let index_of_max: usize = qual_normalized
+            let index_of_max: usize = qual_normalized[0..4]
                 .iter()
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.total_cmp(b))

@@ -1,5 +1,3 @@
-extern crate spoa;
-
 use crate::alignment::alignment_matrix::AlignmentTag;
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::{align_two_strings, simplify_cigar_string, OutputAlignmentWriter};
@@ -8,7 +6,6 @@ use crate::reference::fasta_reference::ReferenceManager;
 use counter::Counter;
 use rust_htslib::bam::record::CigarString;
 use shardio::{Range, ShardReader};
-use spoa::{AlignmentEngine, AlignmentType, Graph};
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
@@ -214,58 +211,10 @@ pub fn create_consensus_sam_read(
 
         let consensus_reads = match merge_strategy {
             MergeStrategy::StrictConsensus => {
-                let consensus_reads = create_poa_consensus(buffered_reads, maximum_reads_before_downsampling);
-
-                let gapless_quals = consensus_reads.1.iter().enumerate().filter(|(i, _x)| consensus_reads.0.get(*i).unwrap() != &b'-').map(|(_i, x)| x.clone()).collect();
-
-                let mut new_alignment = align_two_strings(
-                    &reference_pointer.sequence,
-                    &consensus_reads.0,
-                    None, // TODO: fix with quality scores
-                    my_aff_score,
-                    false,
-                    &String::from_utf8(reference_pointer.name.clone()).unwrap(),
-                    &read_name,
-                    None,
-                );
-
-
-                new_alignment.read_quals = Some(gapless_quals);
-                Some(new_alignment)
+                unimplemented!("Removing SPOA");
             }
             MergeStrategy::Hybrid => {
-                // try the stretcher first, if that fails out, try the POA
-                let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), reference_pointer.name.as_slice());
-
-                let valid: usize = buffered_reads.iter().map(|x| {
-                    match candidate.add_alignment(&x.aligned_read) {
-                        Ok(_) => { 0 }
-                        Err(_) => { 1 }
-                    }
-                }).sum();
-
-                if valid > 1 {
-                    let consensus_reads = create_poa_consensus(buffered_reads, maximum_reads_before_downsampling);
-
-                    let gapless_quals = consensus_reads.1.iter().enumerate().filter(|(i, _x)| consensus_reads.0.get(*i).unwrap() != &b'-').map(|(_i, x)| x.clone()).collect();
-
-                    let mut new_alignment = align_two_strings(
-                        &reference_pointer.sequence,
-                        &consensus_reads.0,
-                        None, // TODO: fix with quality scores
-                        my_aff_score,
-                        false,
-                        &String::from_utf8(reference_pointer.name.clone()).unwrap(),
-                        &read_name,
-                        None,
-                    );
-
-
-                    new_alignment.read_quals = Some(gapless_quals);
-                    Some(new_alignment)
-                } else {
-                    Some(candidate.to_consensus(&0.75))
-                }
+                unimplemented!("Removing SPOA");
             }
             MergeStrategy::Stretcher => {
                 let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), reference_pointer.name.as_slice());
@@ -383,44 +332,6 @@ pub fn reference_read_to_cigar_string(
         .expect("Unable to parse cigar string.")
 }
 
-pub fn create_poa_consensus(
-    sequences: &VecDeque<SortingReadSetContainer>,
-    downsample_to: &usize,
-) -> (Vec<u8>, Vec<u8>) {
-    let mut base_sequences = Vec::new();
-    let mut quals_sequences = Vec::new();
-
-    let mut reference = strip_gaps(&sequences.get(0).unwrap().aligned_read.reference_aligned);
-    reference.push(b'\0');
-    base_sequences.push(reference);
-
-    sequences
-        .iter().take(*downsample_to)
-        .for_each(|n| {
-            let mut y = n.aligned_read.read_aligned.iter().filter(|x| **x != b'-').map(|x| *x).collect::<Vec<u8>>();
-            y.push(b'\0');
-            base_sequences.push(y);
-            quals_sequences.push(n.aligned_read.read_quals.as_ref().unwrap().clone());
-            // TODO we were panic'ing here --- why? oh right, we should move to stretcher
-        });
-
-    poa_consensus(&base_sequences, &quals_sequences)
-}
-
-fn poa_consensus(base_sequences: &Vec<Vec<u8>>, qual_sequences: &Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
-    let mut eng = AlignmentEngine::new(AlignmentType::kNW, 5, -4, -3, -1, -3, -1);
-    let mut graph = Graph::new();
-
-    for seq in base_sequences {
-        assert!(!seq.is_empty());
-        let aln = eng.align(seq.as_slice(), &graph);
-        graph.add_alignment(&aln, seq.as_slice(), 1);
-    }
-
-    let alignment = graph.multiple_sequence_alignment(false).into_iter().map(|x| x).collect::<Vec<Vec<u8>>>();
-
-    calculate_conc_qual_score(&alignment, qual_sequences)
-}
 
 pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
     assert_eq!(alignments.len() - 1, quality_scores.len());
@@ -512,7 +423,7 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], reference_b
         b'C' | b'c' => { allele_props[1] = (*reference_prob).log2(); }
         b'G' | b'g' => { allele_props[2] = (*reference_prob).log2(); }
         b'T' | b't' => { allele_props[3] = (*reference_prob).log2(); }
-        b'-' => { allele_props[4] = (*reference_prob).log2(); }
+        b'N' | b'n' => { allele_props[4] = (*reference_prob).log2(); }
         _ => {
             debug!("unaccounted for quality score");
         }
@@ -531,7 +442,7 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], reference_b
                 b'C' | b'c' => { 1 }
                 b'G' | b'g' => { 2 }
                 b'T' | b't' => { 3 }
-                b'-' => { 4 }
+                b'N' | b'n' => { 4 }
                 _ => {
                     debug!("unaccounted for quality score");
                     5
