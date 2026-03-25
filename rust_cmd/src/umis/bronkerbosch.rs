@@ -85,8 +85,113 @@ mod tests {
         let mut bk = BronKerbosch::new(g);
         bk.compute();
 
-        for clique in bk.cliques() {
-            println!("Clique {:?}", clique);
+        // Wikipedia example maximal cliques: {1,2,5}, {2,3}, {3,4}, {4,5}, {4,6}
+        let cliques = bk.cliques();
+        assert_eq!(cliques.len(), 5);
+
+        let has_125 = cliques.iter().any(|c| c.contains(&"1") && c.contains(&"2") && c.contains(&"5") && c.len() == 3);
+        assert!(has_125, "Expected clique {{1, 2, 5}}");
+
+        let has_23 = cliques.iter().any(|c| c.contains(&"2") && c.contains(&"3") && c.len() == 2);
+        assert!(has_23, "Expected clique {{2, 3}}");
+
+        let has_34 = cliques.iter().any(|c| c.contains(&"3") && c.contains(&"4") && c.len() == 2);
+        assert!(has_34, "Expected clique {{3, 4}}");
+
+        let has_45 = cliques.iter().any(|c| c.contains(&"4") && c.contains(&"5") && c.len() == 2);
+        assert!(has_45, "Expected clique {{4, 5}}");
+
+        let has_46 = cliques.iter().any(|c| c.contains(&"4") && c.contains(&"6") && c.len() == 2);
+        assert!(has_46, "Expected clique {{4, 6}}");
+    }
+
+    #[test]
+    fn test_empty_graph() {
+        // Empty graph: P=empty, X=empty → algorithm pushes empty R as a clique
+        let g: UnGraphMap<u32, u32> = UnGraphMap::new();
+        let mut bk = BronKerbosch::new(g);
+        bk.compute();
+        assert_eq!(bk.cliques().len(), 1);
+        assert!(bk.cliques()[0].is_empty());
+    }
+
+    #[test]
+    fn test_single_node() {
+        let mut g = UnGraphMap::new();
+        g.add_node(1u32);
+        let mut bk: BronKerbosch<u32, u32> = BronKerbosch::new(g);
+        bk.compute();
+        assert_eq!(bk.cliques().len(), 1);
+        assert!(bk.cliques()[0].contains(&1u32));
+    }
+
+    #[test]
+    fn test_single_edge() {
+        let mut g = UnGraphMap::new();
+        g.add_edge(1u32, 2u32, 1);
+        let mut bk = BronKerbosch::new(g);
+        bk.compute();
+        assert_eq!(bk.cliques().len(), 1);
+        assert!(bk.cliques()[0].contains(&1u32));
+        assert!(bk.cliques()[0].contains(&2u32));
+    }
+
+    #[test]
+    fn test_complete_graph_k4() {
+        let mut g = UnGraphMap::new();
+        // Complete graph on 4 vertices
+        for i in 0u32..4 {
+            for j in (i + 1)..4 {
+                g.add_edge(i, j, 1);
+            }
+        }
+        let mut bk = BronKerbosch::new(g);
+        bk.compute();
+        // K4 has exactly one maximal clique of size 4
+        assert_eq!(bk.cliques().len(), 1);
+        assert_eq!(bk.cliques()[0].len(), 4);
+    }
+
+    #[test]
+    fn test_triangle() {
+        let mut g = UnGraphMap::new();
+        g.add_edge(1u32, 2u32, 1);
+        g.add_edge(2u32, 3u32, 1);
+        g.add_edge(1u32, 3u32, 1);
+        let mut bk = BronKerbosch::new(g);
+        bk.compute();
+        assert_eq!(bk.cliques().len(), 1);
+        assert_eq!(bk.cliques()[0].len(), 3);
+    }
+
+    #[test]
+    fn test_disconnected_edges() {
+        let mut g = UnGraphMap::new();
+        g.add_edge(1u32, 2u32, 1);
+        g.add_edge(3u32, 4u32, 1);
+        let mut bk = BronKerbosch::new(g);
+        bk.compute();
+        assert_eq!(bk.cliques().len(), 2);
+        // Each clique should be size 2
+        for c in bk.cliques() {
+            assert_eq!(c.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_star_graph() {
+        // Star: center connected to 4 outer nodes, no edges between outer nodes
+        let mut g = UnGraphMap::new();
+        for i in 1u32..=4 {
+            g.add_edge(0, i, 1);
+        }
+        let mut bk = BronKerbosch::new(g);
+        bk.compute();
+        // Each edge {0, i} forms a maximal clique
+        assert_eq!(bk.cliques().len(), 4);
+        for c in bk.cliques() {
+            assert_eq!(c.len(), 2);
+            assert!(c.contains(&0));
         }
     }
 

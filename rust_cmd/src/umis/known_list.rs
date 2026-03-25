@@ -13,7 +13,7 @@ use crate::read_strategies::sequence_layout::{UMIConfiguration};
 
 use super::sequence_clustering::{RadiusBasedNeighborhood};
 
-#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
 pub struct FastaString {
     pub fa_u8: Vec<u8>,
     pub distance: u32,
@@ -184,6 +184,102 @@ mod tests {
         read_strategies::sequence_layout::{UMIConfiguration, UMISortType},
         umis::known_list::{KnownList},
     };
+    use super::*;
+
+    #[test]
+    fn test_fasta_string_new() {
+        let fs = FastaString::new(b"ACGT".to_vec());
+        assert_eq!(fs.fa_u8, b"ACGT".to_vec());
+        assert_eq!(fs.distance, u32::MAX);
+        assert_eq!(fs.count, 0);
+    }
+
+    #[test]
+    fn test_fasta_string_hamming_distance_identical() {
+        let fs1 = FastaString::new(b"ACGT".to_vec());
+        let fs2 = FastaString::new(b"ACGT".to_vec());
+        assert_eq!(fs1.hamming_distance(&fs2), 0);
+    }
+
+    #[test]
+    fn test_fasta_string_hamming_distance_one_diff() {
+        let fs1 = FastaString::new(b"ACGT".to_vec());
+        let fs2 = FastaString::new(b"ACTT".to_vec());
+        assert_eq!(fs1.hamming_distance(&fs2), 1);
+    }
+
+    #[test]
+    fn test_fasta_string_hamming_distance_all_diff() {
+        let fs1 = FastaString::new(b"AAAA".to_vec());
+        let fs2 = FastaString::new(b"TTTT".to_vec());
+        assert_eq!(fs1.hamming_distance(&fs2), 4);
+    }
+
+    #[test]
+    fn test_fasta_string_hamming_distance_symmetric() {
+        let fs1 = FastaString::new(b"ACGT".to_vec());
+        let fs2 = FastaString::new(b"TGCA".to_vec());
+        assert_eq!(fs1.hamming_distance(&fs2), fs2.hamming_distance(&fs1));
+    }
+
+    #[test]
+    fn test_fasta_string_reverse_complement() {
+        assert_eq!(FastaString::reverse_complement(b"ACGT"), b"ACGT");
+        assert_eq!(FastaString::reverse_complement(b"AAAA"), b"TTTT");
+        assert_eq!(FastaString::reverse_complement(b"TTTT"), b"AAAA");
+        assert_eq!(FastaString::reverse_complement(b""), b"");
+        assert_eq!(FastaString::reverse_complement(b"A"), b"T");
+    }
+
+    #[test]
+    fn test_fasta_string_reverse_complement_lowercase() {
+        assert_eq!(FastaString::reverse_complement(b"acgt"), b"acgt");
+        assert_eq!(FastaString::reverse_complement(b"aaaa"), b"tttt");
+    }
+
+    #[test]
+    fn test_fasta_string_reverse_complement_n() {
+        assert_eq!(FastaString::reverse_complement(b"N"), b"N");
+        assert_eq!(FastaString::reverse_complement(b"n"), b"N");
+    }
+
+    #[test]
+    fn test_fasta_string_new_reverse_complement() {
+        let fs = FastaString::new_reverse_complement(b"ACGT".to_vec());
+        assert_eq!(fs.fa_u8, b"ACGT"); // ACGT is its own reverse complement
+        let fs = FastaString::new_reverse_complement(b"AAAA".to_vec());
+        assert_eq!(fs.fa_u8, b"TTTT");
+    }
+
+    #[test]
+    fn test_fasta_string_metric_space() {
+        let fs1 = FastaString::new(b"ACGTACGT".to_vec());
+        let fs2 = FastaString::new(b"ACGTACGT".to_vec());
+        assert_eq!(fs1.distance(&fs2, &()), 0);
+
+        let fs3 = FastaString::new(b"TCGTACGT".to_vec());
+        assert_eq!(fs1.distance(&fs3, &()), 1);
+    }
+
+    #[test]
+    fn test_fasta_string_equality() {
+        let fs1 = FastaString::new(b"ACGT".to_vec());
+        let fs2 = FastaString::new(b"ACGT".to_vec());
+        assert_eq!(fs1, fs2);
+
+        let fs3 = FastaString::new(b"TGCA".to_vec());
+        assert_ne!(fs1, fs3);
+    }
+
+    #[test]
+    fn test_best_f32_hits_clone() {
+        let hit = BestF32Hits {
+            hits: vec![b"ACGT".to_vec()],
+            distance: 1,
+        };
+        let cloned = hit.clone();
+        assert_eq!(hit, cloned);
+    }
 
     #[test]
     fn test_real_known_set() {

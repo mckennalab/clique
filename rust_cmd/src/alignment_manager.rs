@@ -421,3 +421,140 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
     }
     new_cigar
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simplify_cigar_empty() {
+        let cigar: Vec<AlignmentTag> = vec![];
+        assert_eq!(simplify_cigar_string(&cigar), vec![]);
+    }
+
+    #[test]
+    fn test_simplify_cigar_single_element() {
+        let cigar = vec![AlignmentTag::MatchMismatch(5)];
+        assert_eq!(simplify_cigar_string(&cigar), vec![AlignmentTag::MatchMismatch(5)]);
+    }
+
+    #[test]
+    fn test_simplify_cigar_merge_consecutive_matches() {
+        let cigar = vec![
+            AlignmentTag::MatchMismatch(3),
+            AlignmentTag::MatchMismatch(5),
+            AlignmentTag::MatchMismatch(2),
+        ];
+        assert_eq!(simplify_cigar_string(&cigar), vec![AlignmentTag::MatchMismatch(10)]);
+    }
+
+    #[test]
+    fn test_simplify_cigar_merge_consecutive_dels() {
+        let cigar = vec![
+            AlignmentTag::Del(1),
+            AlignmentTag::Del(2),
+            AlignmentTag::Del(3),
+        ];
+        assert_eq!(simplify_cigar_string(&cigar), vec![AlignmentTag::Del(6)]);
+    }
+
+    #[test]
+    fn test_simplify_cigar_merge_consecutive_ins() {
+        let cigar = vec![
+            AlignmentTag::Ins(1),
+            AlignmentTag::Ins(1),
+        ];
+        assert_eq!(simplify_cigar_string(&cigar), vec![AlignmentTag::Ins(2)]);
+    }
+
+    #[test]
+    fn test_simplify_cigar_mixed_ops() {
+        let cigar = vec![
+            AlignmentTag::MatchMismatch(3),
+            AlignmentTag::MatchMismatch(5),
+            AlignmentTag::Ins(2),
+            AlignmentTag::Del(4),
+            AlignmentTag::Del(1),
+        ];
+        assert_eq!(simplify_cigar_string(&cigar), vec![
+            AlignmentTag::MatchMismatch(8),
+            AlignmentTag::Ins(2),
+            AlignmentTag::Del(5),
+        ]);
+    }
+
+    #[test]
+    fn test_simplify_cigar_no_merging_needed() {
+        let cigar = vec![
+            AlignmentTag::MatchMismatch(5),
+            AlignmentTag::Ins(2),
+            AlignmentTag::Del(3),
+            AlignmentTag::MatchMismatch(4),
+        ];
+        let result = simplify_cigar_string(&cigar);
+        assert_eq!(result, cigar);
+    }
+
+    #[test]
+    fn test_simplify_cigar_with_inversions() {
+        let cigar = vec![
+            AlignmentTag::MatchMismatch(5),
+            AlignmentTag::InversionOpen,
+            AlignmentTag::MatchMismatch(3),
+            AlignmentTag::InversionClose,
+            AlignmentTag::MatchMismatch(4),
+        ];
+        let result = simplify_cigar_string(&cigar);
+        assert_eq!(result, vec![
+            AlignmentTag::MatchMismatch(5),
+            AlignmentTag::InversionOpen,
+            AlignmentTag::MatchMismatch(3),
+            AlignmentTag::InversionClose,
+            AlignmentTag::MatchMismatch(4),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot have two inversion open tags in a row")]
+    fn test_simplify_cigar_double_inversion_open_panics() {
+        let cigar = vec![
+            AlignmentTag::InversionOpen,
+            AlignmentTag::InversionOpen,
+        ];
+        simplify_cigar_string(&cigar);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot have two inversion closed tags in a row")]
+    fn test_simplify_cigar_double_inversion_close_panics() {
+        let cigar = vec![
+            AlignmentTag::InversionClose,
+            AlignmentTag::InversionClose,
+        ];
+        simplify_cigar_string(&cigar);
+    }
+
+    #[test]
+    fn test_simplify_cigar_alternating_ops() {
+        let cigar = vec![
+            AlignmentTag::MatchMismatch(1),
+            AlignmentTag::Del(1),
+            AlignmentTag::MatchMismatch(1),
+            AlignmentTag::Ins(1),
+            AlignmentTag::MatchMismatch(1),
+        ];
+        // No merging possible since ops alternate
+        assert_eq!(simplify_cigar_string(&cigar), cigar);
+    }
+
+    #[test]
+    fn test_simplify_cigar_softclip() {
+        let cigar = vec![
+            AlignmentTag::SoftClip(5),
+            AlignmentTag::MatchMismatch(10),
+            AlignmentTag::SoftClip(3),
+        ];
+        // SoftClip is not merged (different type each time)
+        assert_eq!(simplify_cigar_string(&cigar), cigar);
+    }
+}

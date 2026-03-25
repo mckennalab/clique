@@ -227,6 +227,146 @@ mod tests {
     }
 
 
+    #[test]
+    fn test_validate_reference_sequence_all_present() {
+        let mut configs = BTreeMap::new();
+        configs.insert("umi1".to_string(), UMIConfiguration {
+            symbol: '*',
+            file: None,
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::DegenerateTag,
+            length: 10,
+            order: 0,
+            pad: None,
+            max_distance: 2,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance: None,
+        });
+        // Reference contains '*', so validation should pass
+        let ref_bases = b"ACGT*ACGT";
+        assert!(SequenceLayout::validate_reference_sequence(ref_bases, &configs));
+    }
+
+    #[test]
+    fn test_validate_reference_sequence_missing_symbol() {
+        let mut configs = BTreeMap::new();
+        configs.insert("umi1".to_string(), UMIConfiguration {
+            symbol: '#',
+            file: None,
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::DegenerateTag,
+            length: 10,
+            order: 0,
+            pad: None,
+            max_distance: 2,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance: None,
+        });
+        // Reference doesn't contain '#'
+        let ref_bases = b"ACGTACGT";
+        assert!(!SequenceLayout::validate_reference_sequence(ref_bases, &configs));
+    }
+
+    #[test]
+    fn test_validate_reference_sequence_multiple_configs() {
+        let mut configs = BTreeMap::new();
+        configs.insert("umi1".to_string(), UMIConfiguration {
+            symbol: '*',
+            file: None,
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::DegenerateTag,
+            length: 10,
+            order: 0,
+            pad: None,
+            max_distance: 2,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance: None,
+        });
+        configs.insert("umi2".to_string(), UMIConfiguration {
+            symbol: '#',
+            file: None,
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::KnownTag,
+            length: 5,
+            order: 1,
+            pad: None,
+            max_distance: 1,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance: None,
+        });
+        // Only has '*', not '#'
+        let ref_bases = b"ACG*TACGT";
+        assert!(!SequenceLayout::validate_reference_sequence(ref_bases, &configs));
+
+        // Has both
+        let ref_bases2 = b"ACG*T#ACGT";
+        assert!(SequenceLayout::validate_reference_sequence(ref_bases2, &configs));
+    }
+
+    #[test]
+    fn test_validate_reference_sequence_empty_configs() {
+        let configs = BTreeMap::new();
+        let ref_bases = b"ACGT";
+        assert!(SequenceLayout::validate_reference_sequence(ref_bases, &configs));
+    }
+
+    #[test]
+    fn test_umi_sort_type_serialization() {
+        let known = UMISortType::KnownTag;
+        let degen = UMISortType::DegenerateTag;
+        let k_yaml = serde_yaml::to_string(&known).unwrap();
+        let d_yaml = serde_yaml::to_string(&degen).unwrap();
+        assert_ne!(k_yaml, d_yaml);
+        let k_deser: UMISortType = serde_yaml::from_str(&k_yaml).unwrap();
+        assert_eq!(k_deser, known);
+    }
+
+    #[test]
+    fn test_merge_strategy_serialization() {
+        let align = serde_yaml::to_string(&MergeStrategy::Align).unwrap();
+        let concat = serde_yaml::to_string(&MergeStrategy::Concatenate).unwrap();
+        let concat_fwd = serde_yaml::to_string(&MergeStrategy::ConcatenateBothForward).unwrap();
+        // All should serialize differently
+        assert_ne!(align, concat);
+        assert_ne!(concat, concat_fwd);
+    }
+
+    #[test]
+    fn test_aligned_read_orientation_variants() {
+        assert_ne!(AlignedReadOrientation::Forward, AlignedReadOrientation::Reverse);
+        assert_ne!(AlignedReadOrientation::Reverse, AlignedReadOrientation::ReverseComplement);
+        assert_ne!(AlignedReadOrientation::ReverseComplement, AlignedReadOrientation::Unknown);
+    }
+
+    #[test]
+    fn test_target_type_variants() {
+        let types = vec![
+            TargetType::Static, TargetType::Cas9WT, TargetType::Cas12AWT,
+            TargetType::Cas9ABE, TargetType::Cas9CBE, TargetType::Cas9ABECBE,
+            TargetType::Cas12ABE, TargetType::Cas12CBE, TargetType::Cas12ABECBE,
+            TargetType::Cas9Homing, TargetType::Cas9ABEPalindrome,
+        ];
+        // All variants should be distinct
+        for i in 0..types.len() {
+            for j in (i + 1)..types.len() {
+                assert_ne!(types[i], types[j]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_umi_padding_variants() {
+        assert_ne!(UMIPadding::Left, UMIPadding::Right);
+    }
+
     /*
     TODO: figure out how to get SERDE to panic here or something else reasonable
     #[test]

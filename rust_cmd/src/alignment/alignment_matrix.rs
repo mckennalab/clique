@@ -586,6 +586,10 @@ fn update_3d_score_local(alignment: &mut Alignment<Ix3>, sequence1: &[u8], seque
         alignment.scores[[x, y, 0]] = best_match.0;
         alignment.traceback[[x, y, 0]] = best_match.1;
     }
+    // TODO: BUG - Unlike `update_3d_score` below, this function does not apply `gap_multiplier` to
+    // the gap-extend penalty when continuing an existing gap. Lines 591 and 602 use bare
+    // `scoring_function.gap_extend()` instead of `scoring_function.gap_extend() * gap_multiplier`.
+    // This makes terminal gap extensions more expensive than intended when `final_gap_multiplier < 1.0`.
     {
         let best_gap_x = three_way_max_and_direction(
             &(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend()),
@@ -1535,6 +1539,238 @@ mod tests {
                  fasta_vec_to_string(&test_read));
 
         println!("CIGAR: {:?}", results.cigar_string);
+    }
+
+    #[test]
+    fn test_three_way_max_and_direction_up_wins() {
+        let (val, dir) = three_way_max_and_direction(&10.0, &5.0, &3.0);
+        assert_eq!(val, 10.0);
+        assert_eq!(dir, AlignmentDirection::Up(1));
+    }
+
+    #[test]
+    fn test_three_way_max_and_direction_left_wins() {
+        let (val, dir) = three_way_max_and_direction(&3.0, &10.0, &5.0);
+        assert_eq!(val, 10.0);
+        assert_eq!(dir, AlignmentDirection::Left(1));
+    }
+
+    #[test]
+    fn test_three_way_max_and_direction_diag_wins() {
+        let (val, dir) = three_way_max_and_direction(&3.0, &5.0, &10.0);
+        assert_eq!(val, 10.0);
+        assert_eq!(dir, AlignmentDirection::Diag(1));
+    }
+
+    #[test]
+    fn test_three_way_max_and_direction_tie_up_diag() {
+        // When up == diag and up > left, diag wins (the >= check favors diag)
+        let (val, dir) = three_way_max_and_direction(&10.0, &5.0, &10.0);
+        assert_eq!(val, 10.0);
+        assert_eq!(dir, AlignmentDirection::Diag(1));
+    }
+
+    #[test]
+    fn test_three_way_max_and_direction_tie_left_diag() {
+        let (val, dir) = three_way_max_and_direction(&5.0, &10.0, &10.0);
+        assert_eq!(val, 10.0);
+        assert_eq!(dir, AlignmentDirection::Diag(1));
+    }
+
+    #[test]
+    fn test_three_way_max_all_equal() {
+        let (val, dir) = three_way_max_and_direction(&7.0, &7.0, &7.0);
+        assert_eq!(val, 7.0);
+        assert_eq!(dir, AlignmentDirection::Diag(1));
+    }
+
+    #[test]
+    fn test_three_way_max_negative_values() {
+        let (val, dir) = three_way_max_and_direction(&-10.0, &-5.0, &-3.0);
+        assert_eq!(val, -3.0);
+        assert_eq!(dir, AlignmentDirection::Diag(1));
+    }
+
+    #[test]
+    fn test_alignment_direction_add_same_type() {
+        let up1 = AlignmentDirection::Up(3);
+        let up2 = AlignmentDirection::Up(5);
+        assert_eq!(up1 + up2, AlignmentDirection::Up(8));
+
+        let left1 = AlignmentDirection::Left(2);
+        let left2 = AlignmentDirection::Left(4);
+        assert_eq!(left1 + left2, AlignmentDirection::Left(6));
+
+        let diag1 = AlignmentDirection::Diag(1);
+        let diag2 = AlignmentDirection::Diag(7);
+        assert_eq!(diag1 + diag2, AlignmentDirection::Diag(8));
+    }
+
+    #[test]
+    #[should_panic(expected = "adding discordant types")]
+    fn test_alignment_direction_add_different_types_panics() {
+        let up = AlignmentDirection::Up(1);
+        let left = AlignmentDirection::Left(1);
+        let _ = up + left;
+    }
+
+    #[test]
+    fn test_alignment_direction_zero() {
+        assert!(AlignmentDirection::Up(0).is_zero());
+        assert!(AlignmentDirection::Left(0).is_zero());
+        assert!(AlignmentDirection::Diag(0).is_zero());
+        assert!(!AlignmentDirection::Up(1).is_zero());
+        assert!(!AlignmentDirection::Left(1).is_zero());
+        assert!(!AlignmentDirection::Diag(1).is_zero());
+    }
+
+    #[test]
+    fn test_alignment_tag_from_u8() {
+        assert_eq!(AlignmentTag::from(b'M'), AlignmentTag::MatchMismatch(1));
+        assert_eq!(AlignmentTag::from(b'X'), AlignmentTag::MatchMismatch(1));
+        assert_eq!(AlignmentTag::from(b'D'), AlignmentTag::Del(1));
+        assert_eq!(AlignmentTag::from(b'I'), AlignmentTag::Ins(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot convert")]
+    fn test_alignment_tag_from_u8_invalid() {
+        AlignmentTag::from(b'Z');
+    }
+
+    #[test]
+    fn test_alignment_tag_display() {
+        assert_eq!(format!("{}", AlignmentTag::MatchMismatch(5)), "5M");
+        assert_eq!(format!("{}", AlignmentTag::Del(3)), "3D");
+        assert_eq!(format!("{}", AlignmentTag::Ins(2)), "2I");
+        assert_eq!(format!("{}", AlignmentTag::SoftClip(10)), "10S");
+        assert_eq!(format!("{}", AlignmentTag::HardClip(7)), "7H");
+        assert_eq!(format!("{}", AlignmentTag::InversionOpen), "<");
+        assert_eq!(format!("{}", AlignmentTag::InversionClose), ">");
+    }
+
+    #[test]
+    fn test_identical_sequences_global_alignment() {
+        let seq = str_to_fasta_vec("ACGTACGT");
+        let my_score = AffineScoring::default_dna();
+
+        let mut alignment_mat = create_scoring_record_3d(seq.len() + 1, seq.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment(&mut alignment_mat, &seq, &seq, &my_score);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &seq, &seq, &"ref".to_string(), &"read".to_string(), None, None);
+
+        assert_eq!(results.reference_aligned, seq);
+        assert_eq!(results.read_aligned, seq);
+        assert_eq!(results.cigar_string, vec![AlignmentTag::MatchMismatch(8)]);
+    }
+
+    #[test]
+    fn test_single_base_deletion() {
+        let reference = str_to_fasta_vec("ACGTACGT");
+        let read = str_to_fasta_vec("ACGACGT");
+        let my_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -10.0,
+            special_character_score: 8.0,
+            gap_open: -8.0,
+            gap_extend: -2.0,
+            final_gap_multiplier: 1.0,
+        };
+
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment(&mut alignment_mat, &reference, &read, &my_score);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+
+        // Should have a deletion of 1 base somewhere
+        let total_del: usize = results.cigar_string.iter().map(|t| match t {
+            AlignmentTag::Del(n) => *n,
+            _ => 0,
+        }).sum();
+        assert_eq!(total_del, 1);
+    }
+
+    #[test]
+    fn test_single_base_insertion() {
+        let reference = str_to_fasta_vec("ACGACGT");
+        let read = str_to_fasta_vec("ACGTACGT");
+        let my_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -10.0,
+            special_character_score: 8.0,
+            gap_open: -8.0,
+            gap_extend: -2.0,
+            final_gap_multiplier: 1.0,
+        };
+
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment(&mut alignment_mat, &reference, &read, &my_score);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+
+        let total_ins: usize = results.cigar_string.iter().map(|t| match t {
+            AlignmentTag::Ins(n) => *n,
+            _ => 0,
+        }).sum();
+        assert_eq!(total_ins, 1);
+    }
+
+    #[test]
+    fn test_alignment_result_from_match_segment() {
+        let str1 = b"ACGT";
+        let str2 = b"ACGT";
+        let af_score = AffineScoring::default_dna();
+        let result = AlignmentResult::from_match_segment(
+            str1, str2,
+            &"ref".to_string(), &"read".to_string(),
+            0, 0, &af_score,
+        );
+
+        assert_eq!(result.reference_aligned, b"ACGT".to_vec());
+        assert_eq!(result.read_aligned, b"ACGT".to_vec());
+        assert_eq!(result.cigar_string, vec![AlignmentTag::MatchMismatch(4)]);
+        assert_eq!(result.score, 20.0); // 4 matches * 5.0 each
+        assert_eq!(result.path.len(), 4);
+    }
+
+    #[test]
+    fn test_find_max_value_3d_array() {
+        let mut alignment = create_scoring_record_3d(3, 3, AlignmentType::Affine, false);
+        alignment.scores[[1, 2, 0]] = 42.0;
+        let result = find_max_value_3d_array(&alignment.scores);
+        assert!(result.is_some());
+        let (loc, val) = result.unwrap();
+        assert_eq!(val, 42.0);
+        assert_eq!(loc.x, 1);
+        assert_eq!(loc.y, 2);
+    }
+
+    #[test]
+    fn test_find_max_value_3d_array_all_negative() {
+        let alignment = create_scoring_record_3d(3, 3, AlignmentType::Affine, false);
+        // All zeros, but initial value is 0.0 > MAX_NEG_SCORE
+        let result = find_max_value_3d_array(&alignment.scores);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_local_alignment_finds_best_segment() {
+        let reference = str_to_fasta_vec("XXXXXXACGTACGTXXXXXX");
+        let read = str_to_fasta_vec("ACGTACGT");
+
+        let my_score = AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -11.0,
+            special_character_score: 8.0,
+            gap_open: -20.0,
+            gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
+        };
+
+        let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, true);
+        perform_affine_alignment(&mut alignment_mat, &reference, &read, &my_score);
+        let results = perform_3d_global_traceback(&mut alignment_mat, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+
+        // Local alignment should find the matching segment
+        assert!(results.score > 0.0);
+        assert!(results.reference_aligned.len() > 0);
     }
 }
 

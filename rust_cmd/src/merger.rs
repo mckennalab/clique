@@ -441,6 +441,12 @@ pub fn alignment_rate_and_consensus(
 
     for i in 0..alignment_1.len() {
         match (alignment_1[i], alignment_2[i]) {
+            // TODO: BUG - This arm matches when a == b INCLUDING when both are FASTA_UNSET
+            // (both gaps). In the gap-gap case, it incorrectly accesses qual_scores at the
+            // current quality position (which corresponds to the next non-gap base, not a gap)
+            // and increments both quality position counters. This corrupts quality position
+            // tracking for all subsequent bases. The arm should exclude the case where both
+            // are FASTA_UNSET, e.g.: `(a, b) if a == b && a != FASTA_UNSET =>`
             (a, b) if a == b => {
                 resulting_alignment.push(a.clone());
                 resulting_quality_scores.push(combine_phred_scores(
@@ -679,6 +685,71 @@ mod tests {
     use crate::read_strategies::sequence_layout::ReadPosition::{Read1, Read2, Spacer};
     use std::time::Instant;
     use utils::read_utils::u8s;
+
+    #[test]
+    fn test_orient_sequence_forward() {
+        let seq = b"ACGT";
+        let result = orient_sequence(seq, &AlignedReadOrientation::Forward);
+        assert_eq!(result, b"ACGT".to_vec());
+    }
+
+    #[test]
+    fn test_orient_sequence_reverse() {
+        let seq = b"ACGT";
+        let result = orient_sequence(seq, &AlignedReadOrientation::Reverse);
+        assert_eq!(result, b"TGCA".to_vec());
+    }
+
+    #[test]
+    fn test_orient_sequence_reverse_complement() {
+        let seq = b"ACGT";
+        let result = orient_sequence(seq, &AlignedReadOrientation::ReverseComplement);
+        assert_eq!(result, b"ACGT".to_vec()); // ACGT is its own reverse complement
+    }
+
+    #[test]
+    fn test_orient_sequence_reverse_complement_poly_a() {
+        let seq = b"AAAA";
+        let result = orient_sequence(seq, &AlignedReadOrientation::ReverseComplement);
+        assert_eq!(result, b"TTTT".to_vec());
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown")]
+    fn test_orient_sequence_unknown_panics() {
+        let seq = b"ACGT";
+        orient_sequence(seq, &AlignedReadOrientation::Unknown);
+    }
+
+    #[test]
+    fn test_orient_sequence_empty() {
+        let seq = b"";
+        assert_eq!(orient_sequence(seq, &AlignedReadOrientation::Forward), b"".to_vec());
+        assert_eq!(orient_sequence(seq, &AlignedReadOrientation::Reverse), b"".to_vec());
+        assert_eq!(orient_sequence(seq, &AlignedReadOrientation::ReverseComplement), b"".to_vec());
+    }
+
+    #[test]
+    fn test_alignment_rate_and_consensus_identical() {
+        let a1 = b"ACGT".to_vec();
+        let q1 = b"HHHH";
+        let a2 = b"ACGT".to_vec();
+        let q2 = b"HHHH";
+        let result = alignment_rate_and_consensus(&a1, q1, &a2, q2);
+        assert_eq!(result.read_bases, b"ACGT".to_vec());
+        assert_eq!(result.read_quals.len(), 4);
+    }
+
+    #[test]
+    fn test_alignment_rate_and_consensus_with_gap() {
+        let a1 = vec![b'A', FASTA_UNSET, b'G', b'T'];
+        let q1 = b"HHH";  // 3 quals for 3 non-gap bases: A, G, T
+        let a2 = vec![b'A', b'C', b'G', b'T'];
+        let q2 = b"HHHH";
+        let result = alignment_rate_and_consensus(&a1, q1, &a2, q2);
+        // Position 1: a1 is gap, so take a2's C
+        assert_eq!(result.read_bases[1], b'C');
+    }
 
     #[test]
     fn read_merger_many_real_reads() {

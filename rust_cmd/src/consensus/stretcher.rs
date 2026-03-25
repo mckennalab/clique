@@ -149,6 +149,10 @@ impl NucCounts {
             let mut allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &self.ref_base, &0.75);
             let qual_normalized = calculate_qual_scores(&mut allele_props);
             //println!("{:?}",qual_normalized);
+            // TODO: BUG - `index_of_max` is computed from a 4-element array [a,c,g,t] so it can
+            // only be 0-3. The match arm `4 => (b'N', ...)` is dead code. N counts are never
+            // considered when picking the consensus base even if N is the most frequent.
+            // Should be `[self.a, self.c, self.g, self.t, self.n]`.
             let index_of_max: usize = [self.a, self.c, self.g, self.t]
                 .iter()
                 .enumerate()
@@ -408,6 +412,159 @@ impl AlignmentCandidate {
 mod tests {
     use utils::read_utils::u8s;
     use super::*;
+
+    #[test]
+    fn test_nuc_counts_new() {
+        let nc = NucCounts::new(&b'A');
+        assert_eq!(nc.ref_base, b'A');
+        assert_eq!(nc.a, 0);
+        assert_eq!(nc.c, 0);
+        assert_eq!(nc.g, 0);
+        assert_eq!(nc.t, 0);
+        assert_eq!(nc.n, 0);
+        assert_eq!(nc.gap, 0);
+        assert_eq!(nc.total_count(), 0);
+    }
+
+    #[test]
+    fn test_nuc_counts_update() {
+        let mut nc = NucCounts::new(&b'A');
+        nc.update(b'A', Some(b'H'));
+        assert_eq!(nc.a, 1);
+        assert_eq!(nc.a_qual, vec![b'H']);
+        nc.update(b'C', Some(b'I'));
+        assert_eq!(nc.c, 1);
+        nc.update(b'G', Some(b'F'));
+        assert_eq!(nc.g, 1);
+        nc.update(b'T', Some(b'H'));
+        assert_eq!(nc.t, 1);
+        nc.update(b'-', None);
+        assert_eq!(nc.gap, 1);
+        assert_eq!(nc.total_count(), 5);
+    }
+
+    #[test]
+    fn test_nuc_counts_update_lowercase() {
+        let mut nc = NucCounts::new(&b'A');
+        nc.update(b'a', Some(b'H'));
+        assert_eq!(nc.a, 1);
+        nc.update(b'c', Some(b'H'));
+        assert_eq!(nc.c, 1);
+        nc.update(b'g', Some(b'H'));
+        assert_eq!(nc.g, 1);
+        nc.update(b't', Some(b'H'));
+        assert_eq!(nc.t, 1);
+    }
+
+    #[test]
+    fn test_nuc_counts_update_unknown_base() {
+        let mut nc = NucCounts::new(&b'A');
+        nc.update(b'N', Some(b'H'));
+        assert_eq!(nc.n, 1);
+        assert_eq!(nc.n_qual, vec![b'H']);
+    }
+
+    #[test]
+    fn test_nuc_counts_proportion() {
+        let mut nc = NucCounts::new(&b'A');
+        nc.update(b'A', Some(b'H'));
+        nc.update(b'A', Some(b'H'));
+        nc.update(b'C', Some(b'H'));
+        nc.update(b'-', None);
+        let read_count = 4_usize;
+        assert_eq!(nc.proportion(&b'A', &read_count), 0.5);
+        assert_eq!(nc.proportion(&b'C', &read_count), 0.25);
+        assert_eq!(nc.proportion(&b'-', &read_count), 0.25);
+        assert_eq!(nc.proportion(&b'G', &read_count), 0.0);
+    }
+
+    #[test]
+    fn test_nuc_counts_new_from() {
+        let nc = NucCounts::new_from(&b'G', b'A', b'H');
+        assert_eq!(nc.ref_base, b'G');
+        assert_eq!(nc.a, 1);
+        assert_eq!(nc.a_qual, vec![b'H']);
+        assert_eq!(nc.total_count(), 1);
+    }
+
+    #[test]
+    fn test_nuc_counts_consensus_base_majority() {
+        let mut nc = NucCounts::new(&b'A');
+        for _ in 0..5 {
+            nc.update(b'G', Some(b'I'));
+        }
+        nc.update(b'A', Some(b'I'));
+        let (base, qual) = nc.consensus_base(&0.75);
+        assert_eq!(base, b'G');
+        assert!(qual.is_some());
+    }
+
+    #[test]
+    fn test_nuc_counts_consensus_base_gap_call() {
+        let mut nc = NucCounts::new(&b'A');
+        // 4 gaps out of 5 total = 0.80, above threshold 0.75
+        for _ in 0..4 {
+            nc.update(b'-', None);
+        }
+        nc.update(b'A', Some(b'I'));
+        let (base, qual) = nc.consensus_base(&0.75);
+        assert_eq!(base, b'-');
+        assert!(qual.is_none());
+    }
+
+    #[test]
+    fn test_nuc_counts_display() {
+        let nc = NucCounts::new(&b'A');
+        let display = format!("{}", nc);
+        assert!(display.contains("a: 0"));
+    }
+
+    #[test]
+    fn test_reference_status_partial_eq_u8() {
+        let orig = ReferenceStatus::Original {
+            base: b'A',
+            original_position: 0,
+            counts: NucCounts::new(&b'A'),
+        };
+        assert_eq!(orig, b'A');
+        assert_ne!(orig, b'C');
+
+        let ins = ReferenceStatus::Insertion {
+            base: b'G',
+            counts: NucCounts::new(&b'G'),
+        };
+        assert_eq!(ins, b'G');
+        assert_ne!(ins, b'T');
+    }
+
+    #[test]
+    fn test_alignment_candidate_new() {
+        let candidate = AlignmentCandidate::new(b"ACGT", b"test_ref");
+        assert_eq!(candidate.reference.len(), 4);
+        assert_eq!(candidate.read_names.len(), 0);
+        assert_eq!(candidate.reference_name, "test_ref");
+    }
+
+    #[test]
+    fn test_alignment_candidate_single_perfect_match() {
+        let ref_bases = "ACGT";
+        let read_bases = "ACGT";
+        let mut candidate = AlignmentCandidate::new(ref_bases.as_bytes(), b"ref");
+        candidate.add_alignment(&create_alignment_result(read_bases, ref_bases)).unwrap();
+        let conc = candidate.to_consensus(&0.75);
+        assert_eq!(u8s(&conc.reference_aligned), ref_bases);
+        assert_eq!(u8s(&conc.read_aligned), read_bases);
+    }
+
+    #[test]
+    fn test_alignment_candidate_mismatched_refs_error() {
+        let mut candidate = AlignmentCandidate::new(b"ACGT", b"ref");
+        let result = candidate.add_alignment(&create_alignment_result("ACGT", "ACGT"));
+        assert!(result.is_ok());
+        // Try adding alignment with different ref base - should error
+        let result = candidate.add_alignment(&create_alignment_result("ACGT", "TCGT"));
+        assert!(result.is_err());
+    }
 
     fn create_alignment_result(read_bases: &str, ref_bases: &str) -> AlignmentResult {
         AlignmentResult {

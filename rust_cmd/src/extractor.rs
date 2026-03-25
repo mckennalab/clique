@@ -103,6 +103,10 @@ pub fn recover_soft_clipped_align_sequences(
             Kind::SoftClip => {
                 match soft_clip_as_match {
                     SoftClipResolution::Clip => {
+                        // TODO: BUG - Uses `ref_pos` to index into `unaligned_read` instead of `read_pos`.
+                        // Soft clips consume read bases, not reference bases, so the correct slice is
+                        // `unaligned_read[read_pos..read_pos + len]`. Also, `ref_pos += len` is wrong
+                        // because soft clips do not advance the reference position.
                         // just add dashes to the
                         aligned_ref.extend(unaligned_read[ref_pos..ref_pos + len].to_vec());
                         aligned_read.extend(b"-".repeat(len));
@@ -215,6 +219,12 @@ pub fn recover_soft_clipped_align_sequences(
 /// let result = stretch_sequence_to_alignment(aligned, native);
 /// // result would be b"AC-GT-A"
 /// ```
+/// TODO: BUG - The while loop condition `native_index < native_version.len()` causes the loop
+/// to exit as soon as all native bases are consumed, silently dropping any trailing gaps from
+/// the aligned version. For example, `stretch_sequence_to_alignment(b"ACGT-", b"ACGT")` returns
+/// `b"ACGT"` instead of `b"ACGT-"`. The result will be shorter than `aligned_version`, which
+/// can cause length mismatches when the result is used alongside the aligned reference downstream.
+/// The loop should continue processing remaining gap characters after native is exhausted.
 pub fn stretch_sequence_to_alignment(aligned_version: &[u8], native_version: &[u8]) -> Vec<u8> {
     assert!(
         aligned_version.len() >= native_version.len(),
@@ -538,6 +548,192 @@ mod tests {
 
     pub fn strip_gaps(str: &Vec<u8>) -> Vec<u8> {
         str.iter().filter(|x| **x != b'-').map(|x|*x).collect()
+    }
+
+    #[test]
+    fn test_stretch_sequence_to_alignment_basic() {
+        let aligned = b"AC-GT-A";
+        let native = b"ACGTA";
+        let result = stretch_sequence_to_alignment(aligned, native);
+        assert_eq!(result, b"AC-GT-A".to_vec());
+    }
+
+    #[test]
+    fn test_stretch_sequence_to_alignment_no_gaps() {
+        let aligned = b"ACGT";
+        let native = b"ACGT";
+        let result = stretch_sequence_to_alignment(aligned, native);
+        assert_eq!(result, b"ACGT".to_vec());
+    }
+
+    #[test]
+    fn test_stretch_sequence_to_alignment_all_gaps() {
+        // When native is empty, loop exits immediately; trailing gaps are not emitted
+        let aligned = b"----";
+        let native = b"";
+        let result = stretch_sequence_to_alignment(aligned, native);
+        assert_eq!(result, b"".to_vec());
+    }
+
+    #[test]
+    fn test_stretch_sequence_to_alignment_leading_gap() {
+        let aligned = b"-ACGT";
+        let native = b"ACGT";
+        let result = stretch_sequence_to_alignment(aligned, native);
+        assert_eq!(result, b"-ACGT".to_vec());
+    }
+
+    #[test]
+    fn test_stretch_sequence_to_alignment_trailing_gap() {
+        // Loop exits once native is consumed; trailing gaps after native are not emitted
+        let aligned = b"ACGT-";
+        let native = b"ACGT";
+        let result = stretch_sequence_to_alignment(aligned, native);
+        assert_eq!(result, b"ACGT".to_vec());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_stretch_sequence_to_alignment_native_longer_panics() {
+        let aligned = b"AC";
+        let native = b"ACGT";
+        stretch_sequence_to_alignment(aligned, native);
+    }
+
+    #[test]
+    fn test_gap_proportion_per_tag_no_gaps() {
+        let mut tags = BTreeMap::new();
+        tags.insert(b'0', String::from("ACGT"));
+        let props = gap_proportion_per_tag(&tags);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0], 0.0);
+    }
+
+    #[test]
+    fn test_gap_proportion_per_tag_all_gaps() {
+        let mut tags = BTreeMap::new();
+        tags.insert(b'0', String::from("----"));
+        let props = gap_proportion_per_tag(&tags);
+        assert_eq!(props[0], 1.0);
+    }
+
+    #[test]
+    fn test_gap_proportion_per_tag_ignores_ref_and_read_chars() {
+        let mut tags = BTreeMap::new();
+        tags.insert(REFERENCE_CHAR, String::from("----"));
+        tags.insert(READ_CHAR, String::from("----"));
+        let props = gap_proportion_per_tag(&tags);
+        assert_eq!(props.len(), 0);
+    }
+
+    #[test]
+    fn test_gap_proportion_per_tag_multiple_tags() {
+        let mut tags = BTreeMap::new();
+        tags.insert(b'0', String::from("ACGT"));
+        tags.insert(b'1', String::from("AC--"));
+        tags.insert(b'2', String::from("----"));
+        let props = gap_proportion_per_tag(&tags);
+        assert_eq!(props.len(), 3);
+        assert_eq!(props[0], 0.0);
+        assert_eq!(props[1], 0.5);
+        assert_eq!(props[2], 1.0);
+    }
+
+    #[test]
+    fn test_extract_tagged_sequences_basic() {
+        let reference = b"AATG0000ACGT";
+        let read = b"AATGTTTTACGT";
+        let result = extract_tagged_sequences(read, reference);
+        assert_eq!(result.get(&b'0').unwrap(), "TTTT");
+    }
+
+    #[test]
+    fn test_extract_tagged_sequences_multiple_tags() {
+        let reference = b"00001111";
+        let read = b"ACGTTTTT";
+        let result = extract_tagged_sequences(read, reference);
+        assert_eq!(result.get(&b'0').unwrap(), "ACGT");
+        assert_eq!(result.get(&b'1').unwrap(), "TTTT");
+    }
+
+    #[test]
+    fn test_extract_tagged_sequences_uppercase_tracking() {
+        let reference = b"aaAAaa";
+        let read = b"TTTTTT";
+        let result = extract_tagged_sequences(read, reference);
+        // Uppercase region should generate separate A/a keys
+        assert!(result.contains_key(&b'A'));
+        assert!(result.contains_key(&b'a'));
+    }
+
+    #[test]
+    fn test_custom_umi_score_matching_bases() {
+        assert_eq!(custom_umi_score(b'A', b'A'), 10);
+        assert_eq!(custom_umi_score(b'a', b'A'), 10);
+        assert_eq!(custom_umi_score(b'A', b'a'), 10);
+    }
+
+    #[test]
+    fn test_custom_umi_score_mismatching_bases() {
+        assert_eq!(custom_umi_score(b'A', b'T'), -8);
+        assert_eq!(custom_umi_score(b'C', b'G'), -8);
+    }
+
+    #[test]
+    fn test_custom_umi_score_special_characters() {
+        assert_eq!(custom_umi_score(b'0', b'A'), 7);
+        assert_eq!(custom_umi_score(b'A', b'#'), 7);
+        assert_eq!(custom_umi_score(b'*', b'*'), 7);
+    }
+
+    #[test]
+    fn test_recover_soft_clipped_match_only() {
+        let read = b"ACGTACGT";
+        let reference = b"ACGTACGT";
+        let start_pos: usize = 1; // 1-based
+        let cigar = vec![Op::new(Kind::Match, 8)];
+
+        let recovered = recover_soft_clipped_align_sequences(
+            read, start_pos, &cigar, &SoftClipResolution::MatchMismatch, reference,
+        );
+        assert_eq!(recovered.aligned_read, b"ACGTACGT".to_vec());
+        assert_eq!(recovered.aligned_ref, b"ACGTACGT".to_vec());
+    }
+
+    #[test]
+    fn test_recover_soft_clipped_with_insertion() {
+        let read = b"ACGTTACGT";
+        let reference = b"ACGTACGT";
+        let start_pos: usize = 1;
+        let cigar = vec![
+            Op::new(Kind::Match, 4),
+            Op::new(Kind::Insertion, 1),
+            Op::new(Kind::Match, 4),
+        ];
+
+        let recovered = recover_soft_clipped_align_sequences(
+            read, start_pos, &cigar, &SoftClipResolution::MatchMismatch, reference,
+        );
+        assert_eq!(strip_gaps(&recovered.aligned_read), read.to_vec());
+        assert_eq!(strip_gaps(&recovered.aligned_ref), reference.to_vec());
+    }
+
+    #[test]
+    fn test_recover_soft_clipped_with_deletion() {
+        let read = b"ACGACGT";
+        let reference = b"ACGTACGT";
+        let start_pos: usize = 1;
+        let cigar = vec![
+            Op::new(Kind::Match, 3),
+            Op::new(Kind::Deletion, 1),
+            Op::new(Kind::Match, 4),
+        ];
+
+        let recovered = recover_soft_clipped_align_sequences(
+            read, start_pos, &cigar, &SoftClipResolution::MatchMismatch, reference,
+        );
+        assert_eq!(strip_gaps(&recovered.aligned_read), read.to_vec());
+        assert_eq!(strip_gaps(&recovered.aligned_ref), reference.to_vec());
     }
 
     #[test]

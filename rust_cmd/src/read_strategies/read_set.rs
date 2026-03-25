@@ -131,6 +131,92 @@ impl Iterator for ReadIterator {
 
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bio::io::fastq::Record;
+    use serde_yaml;
+
+    fn make_record(id: &str, seq: &[u8], qual: &[u8]) -> Record {
+        Record::with_attrs(id, None, seq, qual)
+    }
+
+    #[test]
+    fn test_read_set_container_new_from_read1() {
+        let rec = make_record("read1", b"ACGT", b"HHHH");
+        let rsc = ReadSetContainer::new_from_read1(rec.clone());
+        assert_eq!(rsc.read_one.id(), "read1");
+        assert!(rsc.read_two.is_none());
+        assert!(rsc.index_one.is_none());
+        assert!(rsc.index_two.is_none());
+    }
+
+    #[test]
+    fn test_read_set_container_clone_read_only() {
+        let rec = make_record("read1", b"ACGT", b"HHHH");
+        let rsc = ReadSetContainer::new_from_read1(rec);
+        let cloned = rsc.clone();
+        assert_eq!(cloned.read_one.id(), rsc.read_one.id());
+        assert_eq!(cloned.read_one.seq(), rsc.read_one.seq());
+        assert!(cloned.read_two.is_none());
+        assert!(cloned.index_one.is_none());
+        assert!(cloned.index_two.is_none());
+    }
+
+    #[test]
+    fn test_read_set_container_clone_all_fields() {
+        let rsc = ReadSetContainer {
+            read_one: make_record("r1", b"ACGT", b"HHHH"),
+            read_two: Some(make_record("r2", b"TGCA", b"IIII")),
+            index_one: Some(make_record("i1", b"AA", b"HH")),
+            index_two: Some(make_record("i2", b"CC", b"HH")),
+        };
+        let cloned = rsc.clone();
+        assert_eq!(cloned.read_one.id(), "r1");
+        assert_eq!(cloned.read_two.as_ref().unwrap().id(), "r2");
+        assert_eq!(cloned.index_one.as_ref().unwrap().id(), "i1");
+        assert_eq!(cloned.index_two.as_ref().unwrap().id(), "i2");
+    }
+
+    #[test]
+    fn test_read_set_container_display() {
+        let rsc = ReadSetContainer::new_from_read1(
+            make_record("r1", b"ACGT", b"HHHH"),
+        );
+        let display = format!("{}", rsc);
+        assert!(display.contains("r1"));
+    }
+
+    #[test]
+    fn test_read_set_container_equality() {
+        let rsc1 = ReadSetContainer::new_from_read1(make_record("r1", b"ACGT", b"HHHH"));
+        let rsc2 = ReadSetContainer::new_from_read1(make_record("r1", b"ACGT", b"HHHH"));
+        assert_eq!(rsc1, rsc2);
+    }
+
+    #[test]
+    fn test_read_set_container_inequality() {
+        let rsc1 = ReadSetContainer::new_from_read1(make_record("r1", b"ACGT", b"HHHH"));
+        let rsc2 = ReadSetContainer::new_from_read1(make_record("r2", b"TGCA", b"IIII"));
+        assert_ne!(rsc1, rsc2);
+    }
+
+    #[test]
+    fn test_read_set_container_serialize_deserialize() {
+        let rsc = ReadSetContainer {
+            read_one: make_record("r1", b"ACGT", b"HHHH"),
+            read_two: Some(make_record("r2", b"TGCA", b"IIII")),
+            index_one: None,
+            index_two: None,
+        };
+        let serialized = serde_yaml::to_string(&rsc).unwrap();
+        let deserialized: ReadSetContainer = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.read_one.id(), "r1");
+        assert_eq!(deserialized.read_two.as_ref().unwrap().id(), "r2");
+        assert!(deserialized.index_one.is_none());
+    }
+}
+
 /// A helper function to manage unwrapping reads, which has a lot of layers
 pub fn unwrap_reader(read: &mut Option<Records<BufReader<Reader>>>) -> Option<Record> {
     match read

@@ -103,6 +103,11 @@ pub fn find_greedy_non_overlapping_segments(search_string: &[u8], reference: &[u
     while (position as i64) <= (search_string.len() as i64 - seeds.seed_size as i64) {
         let ref_positions = seeds.suffix_table.positions_internal(&search_string[position..(position + seeds.seed_size)]);
         let mut longest_hit = 0;
+        // TODO: BUG - Two issues here:
+        // 1) When a longer hit is found, the previous shorter MatchedPosition is never removed
+        //    from `return_hits`, leaving duplicate/suboptimal overlapping entries.
+        // 2) `position` is advanced by `extended_hit_size` inside the loop AND unconditionally
+        //    by 1 after the loop, causing one base after each hit to be skipped as a seed start.
         for ref_position in ref_positions {
             //println!("testing position {}", ref_position);
             if ref_position >= &greatest_ref_pos {
@@ -298,6 +303,12 @@ pub fn validate_cigar_string(reference: &Vec<u8>, read: &Vec<u8>, cigars: &Vec<A
     assert_eq!(cigar_pos, reference.len());
 }
 
+// TODO: BUG - The first match arm `!(FASTA_UNSET == *a) && FASTA_UNSET == *b` matches
+// deletions (ref=base, read=gap) but calls `match_mismatch(a, b)` and sets `in_indel = false`.
+// This means deletions are scored as match/mismatch operations instead of gap penalties.
+// Meanwhile, actual match/mismatch cases (both non-gap) fall through to arms 2/3, which apply
+// gap_extend/gap_open scoring. The first arm's condition should be
+// `!(FASTA_UNSET == *a) && !(FASTA_UNSET == *b)` to correctly catch match/mismatch cases.
 #[allow(dead_code)]
 pub fn calculate_score_from_strings(reference: &Vec<u8>, read: &Vec<u8>, my_aff_score: &AffineScoring) -> f64 {
     assert_eq!(reference.len(), read.len());
@@ -355,6 +366,156 @@ mod tests {
     use crate::reference::fasta_reference::ReferenceManager;
     use super::*;
 
+    #[test]
+    fn test_extend_hit_full_match() {
+        let search = b"ACGTACGT";
+        let reference = b"ACGTACGT";
+        assert_eq!(extend_hit(search, 0, reference, 0), 8);
+    }
+
+    #[test]
+    fn test_extend_hit_partial_match() {
+        let search = b"ACGTTTTT";
+        let reference = b"ACGTACGT";
+        assert_eq!(extend_hit(search, 0, reference, 0), 4);
+    }
+
+    #[test]
+    fn test_extend_hit_no_match() {
+        let search = b"TTTT";
+        let reference = b"ACGT";
+        assert_eq!(extend_hit(search, 0, reference, 0), 0);
+    }
+
+    #[test]
+    fn test_extend_hit_offset_search() {
+        let search = b"TTACGT";
+        let reference = b"ACGT";
+        assert_eq!(extend_hit(search, 2, reference, 0), 4);
+    }
+
+    #[test]
+    fn test_extend_hit_offset_reference() {
+        let search = b"ACGT";
+        let reference = b"TTACGT";
+        assert_eq!(extend_hit(search, 0, reference, 2), 4);
+    }
+
+    #[test]
+    fn test_extend_hit_degenerate_bases() {
+        // extend_hit requires BOTH bases to appear in each other's degenerate maps.
+        // A's map only contains {A,a}, not R, so R vs A fails the symmetric check.
+        let search = b"RCGT";
+        let reference = b"ACGT";
+        assert_eq!(extend_hit(search, 0, reference, 0), 0);
+    }
+
+    #[test]
+    fn test_slice_for_alignment_basic() {
+        let read = b"ACGTACGT";
+        assert_eq!(slice_for_alignment(read, 0, 4), b"ACGT".to_vec());
+        assert_eq!(slice_for_alignment(read, 4, 8), b"ACGT".to_vec());
+    }
+
+    #[test]
+    fn test_slice_for_alignment_empty() {
+        let read = b"ACGT";
+        assert_eq!(slice_for_alignment(read, 2, 2), b"".to_vec());
+    }
+
+    #[test]
+    fn test_slice_for_alignment_full() {
+        let read = b"ACGT";
+        assert_eq!(slice_for_alignment(read, 0, 4), b"ACGT".to_vec());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_slice_for_alignment_out_of_bounds() {
+        let read = b"ACGT";
+        slice_for_alignment(read, 0, 10);
+    }
+
+    #[test]
+    fn test_validate_cigar_string_simple_match() {
+        let reference = b"ACGT".to_vec();
+        let read = b"ACGT".to_vec();
+        let cigars = vec![AlignmentTag::MatchMismatch(4)];
+        // Should not panic
+        validate_cigar_string(&reference, &read, &cigars);
+    }
+
+    #[test]
+    fn test_validate_cigar_string_deletion() {
+        let reference = b"ACGT".to_vec();
+        let read = vec![FASTA_UNSET, FASTA_UNSET, FASTA_UNSET, FASTA_UNSET];
+        let cigars = vec![AlignmentTag::Del(4)];
+        validate_cigar_string(&reference, &read, &cigars);
+    }
+
+    #[test]
+    fn test_validate_cigar_string_insertion() {
+        let reference = vec![FASTA_UNSET, FASTA_UNSET];
+        let read = b"AC".to_vec();
+        let cigars = vec![AlignmentTag::Ins(2)];
+        validate_cigar_string(&reference, &read, &cigars);
+    }
+
+    #[test]
+    fn test_validate_cigar_string_mixed() {
+        let mut reference = b"AC".to_vec();
+        reference.extend(vec![FASTA_UNSET; 2]);
+        reference.extend(b"GT");
+
+        let mut read = b"AC".to_vec();
+        read.extend(b"TT");
+        read.extend(vec![FASTA_UNSET; 2]);
+
+        let cigars = vec![
+            AlignmentTag::MatchMismatch(2),
+            AlignmentTag::Ins(2),
+            AlignmentTag::Del(2),
+        ];
+        validate_cigar_string(&reference, &read, &cigars);
+    }
+
+    #[test]
+    fn test_cigar_alignment_to_full_string_match_only() {
+        let read = b"ACGT".to_vec();
+        let reference = b"ACGT".to_vec();
+        let cigar = AlignmentCigar {
+            alignment_start: 0,
+            alignment_tags: vec![AlignmentTag::MatchMismatch(4)],
+        };
+        let (read_str, ref_str) = cigar_alignment_to_full_string(&read, &reference, &cigar);
+        assert_eq!(read_str, "ACGT");
+        assert_eq!(ref_str, "ACGT");
+    }
+
+    #[test]
+    fn test_cigar_alignment_to_full_string_with_offset() {
+        let read = b"GT".to_vec();
+        let reference = b"ACGT".to_vec();
+        let cigar = AlignmentCigar {
+            alignment_start: 2,
+            alignment_tags: vec![AlignmentTag::MatchMismatch(2)],
+        };
+        let (read_str, ref_str) = cigar_alignment_to_full_string(&read, &reference, &cigar);
+        assert_eq!(read_str, "--GT");
+        assert_eq!(ref_str, "ACGT");
+    }
+
+    #[test]
+    fn test_alignment_results_struct() {
+        let ar = AlignmentResults {
+            aligned_read: b"ACGT".to_vec(),
+            aligned_ref: b"ACGT".to_vec(),
+            cigar_tags: vec![AlignmentTag::MatchMismatch(4)],
+        };
+        assert_eq!(ar.aligned_read.len(), 4);
+        assert_eq!(ar.aligned_ref.len(), 4);
+        assert_eq!(ar.cigar_tags.len(), 1);
+    }
 
     #[test]
     fn orient_by_longest_segment_test() {

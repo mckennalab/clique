@@ -181,6 +181,11 @@ pub fn vantage_point_string_graph(input_list: &InputList, progress: bool) -> Str
             &(),
             RadiusBasedNeighborhood::new(input_list.max_dist.clone() as u32),
         );
+        // TODO: BUG - The VP tree returns indices into the original `input_list.strings` array
+        // (which may contain duplicates), but `*index` is used directly as a graph node ID.
+        // Graph node IDs are assigned sequentially to *unique* strings only. When duplicates
+        // exist, the VP tree index won't correspond to the correct graph node ID. Should look
+        // up the string at the VP tree index and then use `string_to_node` to get the node ID.
         nearest.iter().for_each(|(index,dist)| {
             graph.add_edge(*n, *index, *dist);
         });
@@ -328,5 +333,131 @@ mod tests {
         let str2 = vec![b'R', b'C', b'G', b'T', b'A'];
         assert_eq!(edit_distance(&str1, &str2), 0);
     }
-    
+
+    #[test]
+    fn test_string_distance_no_break_identical() {
+        let s1 = vec![b'A', b'C', b'G', b'T'];
+        let s2 = vec![b'A', b'C', b'G', b'T'];
+        assert_eq!(string_distance_no_break(&s1, &s2, &4), 0);
+    }
+
+    #[test]
+    fn test_string_distance_no_break_all_different() {
+        let s1 = vec![b'A', b'A', b'A', b'A'];
+        let s2 = vec![b'T', b'T', b'T', b'T'];
+        assert_eq!(string_distance_no_break(&s1, &s2, &4), 4);
+    }
+
+    #[test]
+    fn test_string_distance_break_early_exit() {
+        let s1 = vec![b'A', b'A', b'A', b'A'];
+        let s2 = vec![b'T', b'T', b'T', b'T'];
+        // max_dist=1, should return 2 (exits after exceeding max_dist)
+        let dist = string_distance_break(&s1, &s2, &1);
+        assert_eq!(dist, 2); // returns dist=2 because it increments then checks > max_dist
+    }
+
+    #[test]
+    fn test_string_distance_break_within_limit() {
+        let s1 = vec![b'A', b'C', b'G', b'T'];
+        let s2 = vec![b'T', b'C', b'G', b'T'];
+        assert_eq!(string_distance_break(&s1, &s2, &2), 1);
+    }
+
+    #[test]
+    fn test_string_distance_empty() {
+        let s1: Vec<u8> = vec![];
+        let s2: Vec<u8> = vec![];
+        assert_eq!(string_distance_no_break(&s1, &s2, &0), 0);
+    }
+
+    #[test]
+    fn test_string_distance_different_lengths() {
+        // When lengths differ, zip only processes up to the shorter
+        let s1 = vec![b'A', b'C'];
+        let s2 = vec![b'A', b'C', b'G'];
+        assert_eq!(string_distance_no_break(&s1, &s2, &3), 0);
+    }
+
+    #[test]
+    fn test_max_set_distance_identical() {
+        let set = vec![
+            vec![b'A', b'C', b'G', b'T'],
+            vec![b'A', b'C', b'G', b'T'],
+        ];
+        assert_eq!(max_set_distance(&set), 0);
+    }
+
+    #[test]
+    fn test_max_set_distance_varied() {
+        let set = vec![
+            vec![b'A', b'A', b'A', b'A'],
+            vec![b'T', b'T', b'T', b'T'],
+            vec![b'A', b'A', b'A', b'T'],
+        ];
+        assert_eq!(max_set_distance(&set), 4); // AAAA vs TTTT
+    }
+
+    #[test]
+    fn test_max_set_distance_single() {
+        let set = vec![vec![b'A', b'C']];
+        assert_eq!(max_set_distance(&set), 0);
+    }
+
+    #[test]
+    fn test_get_connected_components_single_component() {
+        let collection = InputList {
+            strings: vec![
+                vec![b'A', b'A'],
+                vec![b'A', b'T'],
+            ],
+            max_dist: 1,
+        };
+        let graph = vantage_point_string_graph(&collection, false);
+        let components = get_connected_components(&graph);
+        // Both strings are within distance 1, so they should be in the same component
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].len(), 2);
+    }
+
+    #[test]
+    fn test_get_connected_components_two_components() {
+        let collection = InputList {
+            strings: vec![
+                vec![b'A', b'A', b'A', b'A'],
+                vec![b'T', b'T', b'T', b'T'],
+            ],
+            max_dist: 1,
+        };
+        let graph = vantage_point_string_graph(&collection, false);
+        let components = get_connected_components(&graph);
+        // Distance is 4, which exceeds max_dist=1, so should be separate components
+        assert_eq!(components.len(), 2);
+    }
+
+    #[test]
+    fn test_average_dist_identical() {
+        let strings = vec![
+            vec![b'A', b'A'],
+            vec![b'A', b'A'],
+        ];
+        fn dist(a: &Vec<u8>, b: &Vec<u8>) -> u64 {
+            a.iter().zip(b.iter()).map(|(x, y)| if x == y { 0 } else { 1 }).sum()
+        }
+        assert_eq!(average_dist(&strings, dist), 0.0);
+    }
+
+    #[test]
+    fn test_average_dist_all_different() {
+        let strings = vec![
+            vec![b'A'],
+            vec![b'T'],
+        ];
+        fn dist(a: &Vec<u8>, b: &Vec<u8>) -> u64 {
+            a.iter().zip(b.iter()).map(|(x, y)| if x == y { 0 } else { 1 }).sum()
+        }
+        // Distances: AA=0, AT=1, TA=1, TT=0 => 2/4 = 0.5
+        assert_eq!(average_dist(&strings, dist), 0.5);
+    }
+
 }

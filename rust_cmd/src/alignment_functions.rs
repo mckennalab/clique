@@ -39,6 +39,11 @@ use ::{Aligner as RustAligner, FASTA_UNSET};
 
 /// Compute the affine alignment score between `a` and `b` with the given substitution,
 /// gap-open, and gap-extend penalties.
+// TODO: BUG - This function accepts `mismatch`, `gap_open`, and `gap_extend` parameters but ignores
+// all three. The scoring closure hardcodes 1/-1 instead of using `mismatch`, and the aligner
+// hardcodes -5/-1 instead of using `gap_open`/`gap_extend`. Additionally, the N-base check is
+// one-directional: `a == b'N'` is checked but `b == b'N'` is not, so N in the reference is
+// treated as a mismatch (inconsistent with AffineScoring::match_mismatch which checks both).
 #[allow(dead_code)]
 fn rust_bio_alignment(
     read: &[u8],
@@ -537,6 +542,9 @@ pub fn align_to_reference_choices(
             None
         }
         1 => {
+            // TODO: BUG - Hardcodes reference key as 0. The `references` BTreeMap may not have key 0
+            // if the single reference was inserted with a different key. Should use
+            // `rm.references.values().next().unwrap()` instead.
             let ref_base = &rm.references.get(&0).unwrap();
             let ref_name = String::from_utf8(ref_base.name.clone()).unwrap();
             let forward_oriented_seq = if !read_structure.known_strand {
@@ -912,11 +920,12 @@ mod tests {
         create_scoring_record_3d, AlignmentTag, AlignmentType,
     };
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
-    use crate::alignment_functions::{exhaustive_alignment_search, simplify_cigar_string};
+    use crate::alignment_functions::{cigar_to_alignment, exhaustive_alignment_search, simplify_cigar_string};
     use crate::read_strategies::sequence_layout::{
         AlignedReadOrientation, ReadPosition, SequenceLayout,
     };
     use crate::reference::fasta_reference::ReferenceManager;
+    use bio::alignment::AlignmentOperation;
 
     #[test]
     fn test_find_best_reference() {
@@ -1087,6 +1096,121 @@ mod tests {
         ];
         let resulting_cigar = simplify_cigar_string(&input_cigar);
         assert_eq!(resulting_cigar, merged_cigar);
+    }
+
+    #[test]
+    fn test_simplify_cigar_empty() {
+        let input: Vec<AlignmentTag> = vec![];
+        let result = simplify_cigar_string(&input);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_simplify_cigar_single_element() {
+        let input = vec![AlignmentTag::Del(5)];
+        let result = simplify_cigar_string(&input);
+        assert_eq!(result, vec![AlignmentTag::Del(5)]);
+    }
+
+    #[test]
+    fn test_simplify_cigar_no_merge_needed() {
+        let input = vec![
+            AlignmentTag::MatchMismatch(3),
+            AlignmentTag::Del(2),
+            AlignmentTag::Ins(1),
+            AlignmentTag::MatchMismatch(4),
+        ];
+        let result = simplify_cigar_string(&input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_simplify_cigar_all_same_type() {
+        let input = vec![
+            AlignmentTag::Del(1),
+            AlignmentTag::Del(2),
+            AlignmentTag::Del(3),
+        ];
+        let result = simplify_cigar_string(&input);
+        assert_eq!(result, vec![AlignmentTag::Del(6)]);
+    }
+
+    #[test]
+    fn test_simplify_cigar_insertions() {
+        let input = vec![
+            AlignmentTag::Ins(1),
+            AlignmentTag::Ins(1),
+            AlignmentTag::Ins(1),
+        ];
+        let result = simplify_cigar_string(&input);
+        assert_eq!(result, vec![AlignmentTag::Ins(3)]);
+    }
+
+    #[test]
+    fn test_cigar_to_alignment_perfect_match() {
+        let reference = b"ACGT".to_vec();
+        let read = b"ACGT".to_vec();
+        let cigar = vec![
+            AlignmentOperation::Match,
+            AlignmentOperation::Match,
+            AlignmentOperation::Match,
+            AlignmentOperation::Match,
+        ];
+        let (ref_aln, read_aln, tags) = cigar_to_alignment(&reference, &read, &cigar);
+        assert_eq!(ref_aln, b"ACGT".to_vec());
+        assert_eq!(read_aln, b"ACGT".to_vec());
+        assert_eq!(tags, vec![AlignmentTag::MatchMismatch(4)]);
+    }
+
+    #[test]
+    fn test_cigar_to_alignment_with_deletion() {
+        let reference = b"ACGT".to_vec();
+        let read = b"AT".to_vec();
+        let cigar = vec![
+            AlignmentOperation::Match,
+            AlignmentOperation::Del,
+            AlignmentOperation::Del,
+            AlignmentOperation::Match,
+        ];
+        let (ref_aln, read_aln, tags) = cigar_to_alignment(&reference, &read, &cigar);
+        assert_eq!(ref_aln, reference);
+        assert_eq!(read_aln[0], b'A');
+        assert_eq!(read_aln[3], b'T');
+        assert_eq!(tags.len(), 3); // M, D, M
+    }
+
+    #[test]
+    fn test_cigar_to_alignment_with_insertion() {
+        let reference = b"AT".to_vec();
+        let read = b"ACGT".to_vec();
+        let cigar = vec![
+            AlignmentOperation::Match,
+            AlignmentOperation::Ins,
+            AlignmentOperation::Ins,
+            AlignmentOperation::Match,
+        ];
+        let (ref_aln, read_aln, tags) = cigar_to_alignment(&reference, &read, &cigar);
+        assert_eq!(read_aln, read);
+        assert_eq!(ref_aln[0], b'A');
+        assert_eq!(ref_aln[3], b'T');
+        assert_eq!(tags.len(), 3); // M, I, M
+    }
+
+    #[test]
+    fn test_cigar_to_alignment_with_substitution() {
+        let reference = b"ACGT".to_vec();
+        let read = b"ATGT".to_vec();
+        let cigar = vec![
+            AlignmentOperation::Match,
+            AlignmentOperation::Subst,
+            AlignmentOperation::Match,
+            AlignmentOperation::Match,
+        ];
+        let (ref_aln, read_aln, tags) = cigar_to_alignment(&reference, &read, &cigar);
+        assert_eq!(ref_aln, reference);
+        assert_eq!(read_aln, read);
+        // Subst is treated as MatchMismatch, so all merge to M(4)
+        assert_eq!(tags, vec![AlignmentTag::MatchMismatch(4)]);
     }
 
 }

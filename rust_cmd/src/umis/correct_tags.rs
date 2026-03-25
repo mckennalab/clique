@@ -444,6 +444,8 @@ impl SequenceCorrector {
         let mut read_count: usize = 0;
         let mut unbuffered_reads = 0;
 
+        // TODO: BUG - ProgressBar is initialized with `read_count` which is 0 at this point.
+        // Should be `self.processed_sequences as u64` for meaningful progress display.
         let mut bar: Option<ProgressBar> = match self.processed_sequences > 100000 {
             true => Some(ProgressBar::new(read_count.clone() as u64)),
             false => None,
