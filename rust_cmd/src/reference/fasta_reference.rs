@@ -25,7 +25,7 @@ pub fn reference_sequences_to_structs(reference_sequences: Vec<Record>, kmer_siz
 }
 
 #[allow(dead_code)]
-pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> Vec<Reference> {
+pub fn reference_file_to_structs(reference_file: &String, kmer_size: usize) -> Vec<Reference<'static, 'static>> {
     let reader = Reader::from_file(reference_file).unwrap();
     let fasta_entries: Vec<Record> = reader.records().map(|f| f.unwrap()).collect();
     reference_sequences_to_structs(fasta_entries,kmer_size)
@@ -87,7 +87,7 @@ pub struct Reference<'s, 't> {
 #[allow(dead_code)]
 impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
-    pub fn from_yaml_input(yaml_input: &SequenceLayout, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
+    pub fn from_yaml_input(yaml_input: &SequenceLayout, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager<'static, 'static, 'static> {
 
 
         let references: Vec<Reference> = yaml_input.references.iter().map(|(ref_name, ref_obj)| {
@@ -124,7 +124,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         rm
     }
 
-    pub fn from_fa_file(fasta_file: &String, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager {
+    pub fn from_fa_file(fasta_file: &String, kmer_size: usize, kmer_spacing: usize) -> ReferenceManager<'static, 'static, 'static> {
         let references = reference_file_to_structs(&fasta_file, kmer_size);
         ReferenceManager::from_fasta_vec(references, kmer_size, kmer_spacing)
     }
@@ -201,8 +201,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
         UniqueKmerLookup{ kmer_length: 0, kmer_to_reference: unique_kmer_to_reference, reference_to_kmer: reference_to_unique, all_have_unique_mappings: all_unique }
     }
 
-    #[allow(dead_code)]
-    pub fn match_references(&self, read: ReadSetContainer) -> Vec<&Reference> {
+    pub fn match_references(&self, read: ReadSetContainer) -> Vec<&Reference<'s, 't>> {
         let read_kmers = ReferenceManager::sequence_to_kmers(&read.read_one.seq().to_vec(), &self.kmer_size, &self.kmer_skip );
 
         // now collect reference that have unique kmers matching this sequence

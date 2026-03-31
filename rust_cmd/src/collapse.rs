@@ -281,6 +281,7 @@ impl AlignmentFilter for AlignmentCheck {
 /// We want to be extra confident in the alignments around our 'tags'.
 /// This filters out reads where we have mismatches and gaps around the
 /// degenerate sequences we recover
+#[allow(dead_code)]
 pub struct FlankingDegenerateBaseFilter {
     min_flanking_indentity: f64,
     flanking_window_size: usize,

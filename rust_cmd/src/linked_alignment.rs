@@ -127,6 +127,7 @@ pub fn find_greedy_non_overlapping_segments(search_string: &[u8], reference: &[u
     SharedSegments { start_position: least_ref_pos as usize, alignment_segments: return_hits }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlignmentResults {
     pub aligned_read: Vec<u8>,

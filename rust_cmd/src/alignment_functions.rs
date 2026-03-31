@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::slice;
 
 use crate::alignment::alignment_matrix::{
     create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment,
@@ -22,7 +21,6 @@ use crate::merger::{MergedReadSequence, UnifiedRead};
 
 use bio::alignment::pairwise::*;
 use bio::alignment::AlignmentOperation::*;
-use bio::scores::blosum62;
 
 use crate::read_strategies::sequence_layout::SequenceLayout;
 
@@ -48,9 +46,9 @@ use ::{Aligner as RustAligner, FASTA_UNSET};
 fn rust_bio_alignment(
     read: &[u8],
     reference: &[u8],
-    mismatch: &i32,
-    gap_open: &i32,
-    gap_extend: &i32
+    _mismatch: &i32,
+    _gap_open: &i32,
+    _gap_extend: &i32
 ) -> Vec<AlignmentOperation> {
     let score = |a: u8, b: u8| if a == b || a == b'N' { 1i32 } else { -1i32 };
     // gap open score: -5, gap extension score: -1
@@ -912,9 +910,7 @@ pub fn simplify_cigar_string(cigar_tokens: &Vec<AlignmentTag>) -> Vec<AlignmentT
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
-    use std::fs::File;
-    use std::io::BufReader;
+    use std::collections::BTreeMap;
 
     use crate::alignment::alignment_matrix::{
         create_scoring_record_3d, AlignmentTag, AlignmentType,

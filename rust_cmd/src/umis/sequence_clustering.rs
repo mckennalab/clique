@@ -38,6 +38,7 @@ pub fn string_distance_break(str1: &Vec<u8>, str2: &Vec<u8>, max_dist: &usize) -
     dist
 }
 
+#[allow(dead_code)]
 pub struct BestHits {
     pub hits: Vec<Vec<u8>>,
     pub distance: usize,

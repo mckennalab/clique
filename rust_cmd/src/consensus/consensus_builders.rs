@@ -1,6 +1,6 @@
 use crate::alignment::alignment_matrix::AlignmentTag;
 use crate::alignment::scoring_functions::AffineScoring;
-use crate::alignment_manager::{align_two_strings, simplify_cigar_string, OutputAlignmentWriter};
+use crate::alignment_manager::{simplify_cigar_string, OutputAlignmentWriter};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::reference::fasta_reference::ReferenceManager;
 use counter::Counter;
@@ -13,7 +13,6 @@ use std::convert::TryFrom;
 use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
 use ::{FASTA_N, FASTA_UNSET};
-use utils::read_utils::{strip_gaps};
 
 #[allow(dead_code)]
 const PHRED_OFFSET: u8 = 32;
@@ -175,7 +174,7 @@ pub fn create_consensus_sam_read(
     reference_manager: &ReferenceManager,
     maximum_reads_before_downsampling: &usize,
     buffered_reads: &VecDeque<SortingReadSetContainer>,
-    my_aff_score: &AffineScoring,
+    _my_aff_score: &AffineScoring,
     merge_strategy: &MergeStrategy,
 ) -> Option<SamReadyOutput> {
     let mut added_tags = HashMap::new();
@@ -203,14 +202,6 @@ pub fn create_consensus_sam_read(
                     .unwrap(),
             )
             .unwrap();
-
-        let read_name = buffered_reads
-            .iter()
-            .next()
-            .unwrap()
-            .aligned_read
-            .read_name
-            .clone();
 
         let consensus_reads = match merge_strategy {
             MergeStrategy::StrictConsensus => {
@@ -341,6 +332,7 @@ pub fn reference_read_to_cigar_string(
 // quality index `sequence_indexes[sequence_index]`. This means the quality score position for
 // each sequence is set to `array_index + 0_or_1` instead of being properly incremented through
 // the quality scores. It should be `sequence_indexes[sequence_index] += ...`.
+#[allow(dead_code)]
 pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
     assert_eq!(alignments.len() - 1, quality_scores.len());
 
@@ -490,13 +482,21 @@ pub fn calculate_qual_scores(allele_props: &mut [f64; 5]) -> [f64; 5] {
 mod tests {
     use super::*;
     use rust_htslib::bam::record::Cigar;
-    use std::collections::VecDeque;
-    use FASTA_A;
-    use read_strategies::read_disk_sorter::CorrectedKey;
-    use utils::read_utils::u8s;
-    use crate::alignment::alignment_matrix::AlignmentResult;
-    use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 
+    #[cfg(feature = "spoa")]
+    use std::collections::VecDeque;
+    #[cfg(feature = "spoa")]
+    use FASTA_A;
+    #[cfg(feature = "spoa")]
+    use read_strategies::read_disk_sorter::CorrectedKey;
+    #[cfg(feature = "spoa")]
+    use crate::alignment::alignment_matrix::AlignmentResult;
+    #[cfg(feature = "spoa")]
+    use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
+    #[cfg(feature = "spoa")]
+    use utils::read_utils::u8s;
+
+    #[cfg(feature = "spoa")]
     fn create_test_alignment_result(
         reference_name: String,
         read_name: String,
@@ -520,6 +520,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "spoa")]
     fn create_test_sorting_read(alignment: AlignmentResult) -> SortingReadSetContainer {
         SortingReadSetContainer {
             ordered_sorting_keys: vec![('*', CorrectedKey::new('*', vec![FASTA_A, FASTA_A], vec![FASTA_A, FASTA_A]))],

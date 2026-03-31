@@ -90,19 +90,19 @@ mod tests {
         assert_eq!(cliques.len(), 5);
 
         let has_125 = cliques.iter().any(|c| c.contains(&"1") && c.contains(&"2") && c.contains(&"5") && c.len() == 3);
-        assert!(has_125, "Expected clique {{1, 2, 5}}");
+        assert!(has_125, "Expected clique (1, 2, 5)");
 
         let has_23 = cliques.iter().any(|c| c.contains(&"2") && c.contains(&"3") && c.len() == 2);
-        assert!(has_23, "Expected clique {{2, 3}}");
+        assert!(has_23, "Expected clique (2, 3)");
 
         let has_34 = cliques.iter().any(|c| c.contains(&"3") && c.contains(&"4") && c.len() == 2);
-        assert!(has_34, "Expected clique {{3, 4}}");
+        assert!(has_34, "Expected clique (3, 4)");
 
         let has_45 = cliques.iter().any(|c| c.contains(&"4") && c.contains(&"5") && c.len() == 2);
-        assert!(has_45, "Expected clique {{4, 5}}");
+        assert!(has_45, "Expected clique (4, 5)");
 
         let has_46 = cliques.iter().any(|c| c.contains(&"4") && c.contains(&"6") && c.len() == 2);
-        assert!(has_46, "Expected clique {{4, 6}}");
+        assert!(has_46, "Expected clique (4, 6)");
     }
 
     #[test]

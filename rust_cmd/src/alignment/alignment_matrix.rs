@@ -1635,7 +1635,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Cannot convert")]
     fn test_alignment_tag_from_u8_invalid() {
-        AlignmentTag::from(b'Z');
+        let _tag = AlignmentTag::from(b'Z');
     }
 
     #[test]
