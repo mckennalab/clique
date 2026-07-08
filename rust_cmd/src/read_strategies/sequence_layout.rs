@@ -1,8 +1,12 @@
+//! The read-structure YAML model. [`SequenceLayout`] describes each reference,
+//! its UMI/barcode configurations, and its CRISPR targets; loading it validates
+//! that symbols, targets, and UMI orderings are internally consistent.
+
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
 use serde::{Serialize,Deserialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum UMISortType {
@@ -46,15 +50,13 @@ impl SequenceLayout {
 
         for reference in deserialized_map.references.values_mut() {
 
-            let mut config_names : HashSet<String> = HashSet::default();
-            
-            let mut ordering = reference.umi_configurations.iter().map(|(name,umi_config)| {
-                config_names.insert(name.clone());
+            // Collect UMI `order` values. UMI names are BTreeMap keys and thus already unique --
+            // duplicate YAML keys are dropped by serde during deserialization, so a name-collision
+            // check here could never fire and is omitted.
+            let mut ordering = reference.umi_configurations.values().map(|umi_config| {
                 umi_config.order
             }).collect::<Vec<usize>>();
 
-            assert_eq!(ordering.len(), config_names.len(), "Duplicate or mangled names in YAML configuration file; check umi_configurations field names and ordering");
-            
             ordering.sort_by_key(|a| *a);
 
             assert!(ordering.iter().enumerate().all(|(i, order)| {
@@ -121,16 +123,23 @@ pub enum UMIPadding {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct UMIConfiguration {
     pub symbol: char,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reverse_complement_sequences: Option<bool>,
     pub sort_type: UMISortType,
     pub length: usize,
     pub order: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pad: Option<UMIPadding>,
     pub max_distance: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maximum_subsequences: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_gaps: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_collapsing_difference: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub levenshtein_distance: Option<bool>,
 }
 
@@ -156,6 +165,7 @@ pub struct ReferenceRecord {
     pub umi_configurations: BTreeMap<String,UMIConfiguration>,
     pub targets: Vec<String>,
     pub target_types: Vec<TargetType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_locations: Option<Vec<usize>>,
 }
 
@@ -177,7 +187,9 @@ impl ReferenceRecord {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct SequenceLayout {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aligner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeStrategy>,
     pub reads: Vec<ReadPosition>,
     pub known_strand: bool,

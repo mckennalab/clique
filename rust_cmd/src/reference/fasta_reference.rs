@@ -1,3 +1,7 @@
+//! [`ReferenceManager`]: holds one or more references with their suffix tables
+//! and per-reference unique-k-mer indices, used to match a read to its most
+//! likely reference before alignment.
+
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use bio::io::fasta::*;

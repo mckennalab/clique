@@ -1,3 +1,7 @@
+//! The core affine-gap aligner: a 3D dynamic-programming scoring matrix, its
+//! traceback, the [`AlignmentResult`] it produces, and conversion of an
+//! alignment into a SAM/BAM record.
+
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt;
@@ -761,6 +765,10 @@ impl AlignmentResult {
             .set_sequence(seq.as_bytes().into())
             .set_cigar(Cigar::from_iter(self.cigar_string.iter().map(|m| m.to_op()).into_iter()).clone())
             .set_alignment_start(noodles_core::Position::new(self.reference_start+1).unwrap())
+            // TODO: BUG - Quality scores from `self.read_quals` are thrown away: both match arms produce the
+            // same hardcoded `vec![b'H'; seq.len()]`, so the Some branch never uses its `_x`. The real qual
+            // computation is commented out. Also, `b'H'` is ASCII 72, which noodles writes as raw Phred 72
+            // (above the Illumina max of 93 but still a nonsense value) rather than the intended Phred ~39.
             .set_quality_scores(match &self.read_quals {
                 Some(_x) => { QualityScores::from(vec![b'H'; seq.len()]) }, //QualityScores::from(x.clone().iter().map(|x| u8::from(min(128,max(33,*x)))).collect::<Vec<u8>>()) }
                 None => { QualityScores::from(vec![b'H'; seq.len()]) }

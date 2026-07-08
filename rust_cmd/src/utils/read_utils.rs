@@ -1,11 +1,14 @@
-use num_traits::Pow;
-use rand::{seq::IteratorRandom, rng};
+//! Read helpers shared across the crate: reverse-complement, Phred/probability
+//! conversions, byte-string formatting, and random-sequence generation.
+
 use crate::read_strategies::read_set::ReadSetContainer;
+use num_traits::Pow;
+use rand::{rng, seq::IteratorRandom};
 
 #[allow(dead_code)]
-pub fn phred_to_prob(phred: &u8) -> f64 {
+pub fn phred_to_probability_wrong(phred: &u8) -> f64 {
     let phred_f64 = ((*phred as usize) - 33) as f64;
-    (10.0).pow((-1.0 * phred_f64)/10.0)
+    (10.0).pow((-1.0 * phred_f64) / 10.0)
 }
 
 #[allow(dead_code)]
@@ -18,27 +21,25 @@ pub fn u8s(u8s: &Vec<u8>) -> String {
 }
 
 #[allow(dead_code)]
-// TODO: BUG - In the `false` (disagree) branch, the formula `1.0 - ((1.0 - prob2) * (1.0 * prob1))`
-// simplifies to `1.0 - prob1 + prob1*prob2`. The `1.0 * prob1` should likely be `(1.0 - prob1)`
-// to correctly compute `1.0 - (1.0 - prob1) * (1.0 - prob2)`, which is the probability that at
-// least one of the two independent error events occurred. The current formula uses `1.0 * prob1`
-// which is just `prob1` and produces incorrect disagreement quality scores.
 pub fn combine_phred_scores(phred_one: &u8, phred_two: &u8, agree: bool) -> u8 {
-    let prob1 = phred_to_prob(phred_one);
-    let prob2 = phred_to_prob(phred_two);
+    let prob1_wrong = phred_to_probability_wrong(phred_one);
+    let prob2_wrong = phred_to_probability_wrong(phred_two);
 
     match agree {
-        true => {
-            prob_to_phred(prob1 * prob2)
-        }
+        true => prob_to_phred(prob1_wrong * prob2_wrong),
         false => {
-            prob_to_phred(1.0 - ((1.0 - prob2) * ( 1.0 * prob1)))
+            // we'll take the most likely prob, multiply it by 1 - other_wrong
+            if prob1_wrong > prob2_wrong {
+                prob_to_phred(1.0 - ((1.0 - prob2_wrong) * prob1_wrong))
+            } else {
+                prob_to_phred(1.0 - ((1.0 - prob1_wrong) * prob2_wrong))
+            }
         }
     }
 }
 
 pub fn strip_gaps(bases: &Vec<u8>) -> Vec<u8> {
-    bases.iter().filter(|x| **x != b'-').map(|x|*x).collect()
+    bases.iter().filter(|x| **x != b'-').map(|x| *x).collect()
 }
 
 pub fn pad_right(v: &Vec<u8>, target_len: usize, pad_byte: u8) -> Vec<u8> {
@@ -79,16 +80,28 @@ pub fn random_sequence(length: usize) -> String {
     let bases = vec![b'A', b'C', b'G', b'T'];
     let mut rng = rng();
 
-    String::from_utf8(bases.iter().choose_multiple(&mut rng, length).iter().map(|c| **c).collect::<Vec<u8>>()).unwrap()
+    String::from_utf8(
+        bases
+            .iter()
+            .choose_multiple(&mut rng, length)
+            .iter()
+            .map(|c| **c)
+            .collect::<Vec<u8>>(),
+    )
+    .unwrap()
 }
 
 pub fn all_combinations(n: usize) -> Vec<String> {
     let characters = vec!["A", "C", "G", "T"];
 
-    (2..n).fold(
-        characters.iter().map(|c| characters.iter().map(move |&d| d.to_owned() + *c)).flatten().collect(),
-        |acc, _| acc.into_iter().map(|c| characters.iter().map(move |&d| d.to_owned() + &*c)).flatten().collect(),
-    )
+    // Build all length-`n` combinations by starting from the single empty string and prepending
+    // one character `n` times. Correct for every n (n=0 -> [""], n=1 -> ["A","C","G","T"],
+    // n=2 -> the 16 two-mers, ...).
+    (0..n).fold(vec![String::new()], |acc, _| {
+        acc.iter()
+            .flat_map(|suffix| characters.iter().map(move |&c| c.to_owned() + suffix))
+            .collect()
+    })
 }
 
 pub fn create_fake_quality_scores(length: usize) -> Vec<u8> {
@@ -100,12 +113,21 @@ pub fn fake_reads(full_length: usize, permutation_leader_size: usize) -> Vec<Rea
     //sort_string: &Vec<u8>, read: &ReadSetContainer
     let mut fake_reads = Vec::new();
     let all_perm = all_combinations(permutation_leader_size);
-    println!("All perm size {} for size {}", all_perm.len(), permutation_leader_size);
+    println!(
+        "All perm size {} for size {}",
+        all_perm.len(),
+        permutation_leader_size
+    );
     for sequence_leader in all_perm {
         let mut read_seq = sequence_leader.clone();
         read_seq.push_str(random_sequence(full_length - permutation_leader_size).as_str());
         let qual = create_fake_quality_scores(full_length);
-        let record = bio::io::fastq::Record::with_attrs("fakeRead", None, read_seq.as_bytes(), qual.as_slice());
+        let record = bio::io::fastq::Record::with_attrs(
+            "fakeRead",
+            None,
+            read_seq.as_bytes(),
+            qual.as_slice(),
+        );
         let fake_rsc = ReadSetContainer::new_from_read1(record);
         fake_reads.push(fake_rsc);
     }
@@ -117,11 +139,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_all_combinations_lengths() {
+        // regression (7/7/2026): n < 2 must produce n-mers, not the 16 two-mer seed.
+        assert_eq!(all_combinations(0), vec![String::new()]);
+        assert_eq!(
+            all_combinations(1),
+            vec!["A".to_string(), "C".to_string(), "G".to_string(), "T".to_string()]
+        );
+        assert_eq!(all_combinations(2).len(), 16);
+        assert_eq!(all_combinations(3).len(), 64);
+        assert!(all_combinations(3).iter().all(|s| s.len() == 3));
+    }
+
+    #[test]
     fn phred_to_qual_test() {
-        assert_eq!(phred_to_prob(&b'I'), 0.0001);
-        assert_eq!(phred_to_prob(&b'H'), 0.00012589254117941674);
-        assert_eq!(phred_to_prob(&b'+'), 0.1);
-        assert_eq!(phred_to_prob(&b'5'), 0.01);
+        assert_eq!(phred_to_probability_wrong(&b'I'), 0.0001);
+        assert_eq!(phred_to_probability_wrong(&b'H'), 0.00012589254117941674);
+        assert_eq!(phred_to_probability_wrong(&b'+'), 0.1);
+        assert_eq!(phred_to_probability_wrong(&b'5'), 0.01);
     }
 
     #[test]
@@ -134,8 +169,9 @@ mod tests {
 
     #[test]
     fn combine_qual_test() {
-        assert_eq!(combine_phred_scores(&b'H',&b'+', false), b'!');
-        assert_eq!(combine_phred_scores(&b'H',&b'+', true), b'R');
+        assert_eq!(combine_phred_scores(&b'I', &b'+', false), b'!');
+        assert_eq!(combine_phred_scores(&b'+', &b'I', false), b'!');
+        assert_eq!(combine_phred_scores(&b'H', &b'+', true), b'R');
     }
 
     #[test]
@@ -199,7 +235,10 @@ mod tests {
 
     #[test]
     fn test_strip_gaps() {
-        assert_eq!(strip_gaps(&vec![b'A', b'-', b'C', b'-', b'G']), vec![b'A', b'C', b'G']);
+        assert_eq!(
+            strip_gaps(&vec![b'A', b'-', b'C', b'-', b'G']),
+            vec![b'A', b'C', b'G']
+        );
         assert_eq!(strip_gaps(&vec![b'A', b'C', b'G']), vec![b'A', b'C', b'G']);
         assert_eq!(strip_gaps(&vec![b'-', b'-', b'-']), Vec::<u8>::new());
         assert_eq!(strip_gaps(&vec![]), Vec::<u8>::new());
@@ -207,7 +246,10 @@ mod tests {
 
     #[test]
     fn test_pad_right() {
-        assert_eq!(pad_right(&vec![b'A', b'C'], 5, b'-'), vec![b'A', b'C', b'-', b'-', b'-']);
+        assert_eq!(
+            pad_right(&vec![b'A', b'C'], 5, b'-'),
+            vec![b'A', b'C', b'-', b'-', b'-']
+        );
         assert_eq!(pad_right(&vec![b'A', b'C'], 2, b'-'), vec![b'A', b'C']);
         assert_eq!(pad_right(&vec![], 3, b'N'), vec![b'N', b'N', b'N']);
     }
@@ -259,7 +301,7 @@ mod tests {
     fn test_phred_roundtrip() {
         // Converting to prob and back should yield the same phred
         for phred in [b'!', b'+', b'5', b'I'] {
-            let prob = phred_to_prob(&phred);
+            let prob = phred_to_probability_wrong(&phred);
             let back = prob_to_phred(prob);
             assert_eq!(back, phred, "Roundtrip failed for phred {}", phred);
         }
@@ -268,6 +310,6 @@ mod tests {
     #[test]
     fn test_phred_to_prob_boundaries() {
         // Phred 33 (ASCII '!') = quality 0 => error prob = 1.0
-        assert_eq!(phred_to_prob(&b'!'), 1.0);
+        assert_eq!(phred_to_probability_wrong(&b'!'), 1.0);
     }
 }

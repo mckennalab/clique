@@ -2,6 +2,53 @@
 
 
 #![feature(ascii_char)]
+//! # clique
+//!
+//! A high-performance CLI for amplicon / lineage-tracing sequencing data from
+//! both Illumina and long-read (Nanopore / PacBio) platforms. It aligns reads
+//! to one or more reference amplicons, collapses the reads of each molecule by
+//! their unique molecular identifiers (UMIs) and static identifiers into a
+//! consensus, and calls the CRISPR edits ("events") each molecule carries.
+//!
+//! ## Pipeline
+//!
+//! 1. **`align`** — FASTQ(s) + a read-structure YAML → a BAM. Each read is
+//!    oriented, matched to its best reference, aligned, and annotated; UMI/tag
+//!    subsequences and edit events are written as BAM aux tags.
+//! 2. **`collapse`** — an aligned BAM + the YAML → a consensus BAM. Reads are
+//!    grouped down a hierarchy of UMIs (each level corrected to a known list or
+//!    clustered), then merged into one consensus (or corrected) read per
+//!    molecule.
+//! 3. **`genbank-to-yaml`** — an annotated GenBank file → a read-structure YAML
+//!    (see [`genbank`]).
+//!
+//! ## Read structure
+//!
+//! A [`read_strategies::sequence_layout::SequenceLayout`] (loaded from YAML)
+//! describes each reference amplicon: the UMI/barcode slots (marked by symbol
+//! characters embedded in the reference sequence) and the CRISPR target sites
+//! with their editing chemistry.
+//!
+//! ## BAM tag contract
+//!
+//! Downstream tools (e.g. the `cliqueR` R package) read these aux tags:
+//! `e<symbol>` corrected extracted tag, `o<symbol>` original, `rc` read count,
+//! `ar` read name(s), `as`/`rs` alignment score, `rm` alignment rate, and `ce`
+//! the called-edit string (see [`events`]).
+//!
+//! ## Module map
+//!
+//! - [`read_strategies`] — FASTQ reading, the read-structure model, the on-disk
+//!   sort container.
+//! - [`reference`](mod@reference) — the multi-reference manager and its k-mer index.
+//! - [`alignment`] / `alignment_functions` / `alignment_manager` — the aligner,
+//!   scoring, reference selection, and BAM output.
+//! - [`merger`] — merging paired / overlapping reads.
+//! - [`extractor`] — pulling UMI/tag subsequences out of an alignment.
+//! - [`umis`] — tag correction, clustering, known-list lookup, clique finding.
+//! - [`consensus`] — per-molecule consensus building and writing.
+//! - [`events`] — CRISPR edit calling; [`genbank`] — GenBank → YAML.
+
 extern crate backtrace;
 extern crate bgzip;
 extern crate bio;
@@ -44,6 +91,7 @@ extern crate noodles_sam;
 extern crate nohash_hasher;
 extern crate vpsearch;
 extern crate nanoid;
+extern crate gb_io;
 
 use ::std::io::Result;
 use std::path::{Path, PathBuf};
@@ -116,6 +164,8 @@ mod utils {
 // mod alignment_functions;
 mod sorter;
 pub mod merger;
+pub mod events;
+pub mod genbank;
 mod collapse;
 mod alignment_manager;
 mod alignment_functions;
@@ -124,6 +174,8 @@ mod reference {
     pub mod fasta_reference;
 }
 
+/// Aligner selection. Currently informational: the affine-gap aligner is used
+/// regardless of this choice.
 #[derive(Debug, Default, Clone, ValueEnum)]
 enum Aligner {
     #[default]
@@ -134,68 +186,109 @@ enum Aligner {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
+    /// Collapse an aligned BAM into one consensus (or corrected) read per
+    /// molecule, grouping reads by the UMI hierarchy in the read structure.
     Collapse {
+        /// Output BAM path for the collapsed reads.
         #[clap(long)]
         output_bam_file: String,
 
+        /// Read-structure YAML describing references, UMIs, and targets.
         #[clap(long)]
         read_structure: String,
 
+        /// Number of worker threads.
         #[clap(long, default_value = "1")]
         threads: usize,
 
+        /// Directory for temporary sort files ("NONE" uses the system temp dir).
         #[clap(long, default_value = "NONE")]
         temp_dir: String,
 
+        /// Input aligned, indexed BAM (produced by `align`).
         #[clap(long)]
         input_bam_file: String,
 
+        /// Detect inversions while collapsing.
         #[clap(long)]
         find_inversions: bool,
 
+        /// Use the fast k-mer reference lookup instead of exhaustive search.
         #[clap(long)]
         fast_reference_lookup: bool,
 
+        /// Maximum deletion length to tolerate.
         #[clap(long, default_value = "0")]
         max_deletion: usize,
 
+        /// Only correct UMI/tag sequences; do not build consensus reads.
         #[clap(long, action=clap::ArgAction::SetTrue)]
         correct_only: bool,
 
     },
+    /// Align FASTQ reads to their best-matching reference and write an annotated
+    /// BAM (extracted tags plus called edits).
     Align {
+        /// Read-structure YAML describing references, UMIs, and targets.
         #[clap(long)]
         read_structure: String,
 
+        /// Output BAM path for the aligned reads.
         #[clap(long)]
         output_bam_file: String,
 
+        /// Drop reads longer than this multiple of the longest reference.
         #[clap(long, default_value = "2")]
         max_reference_multiplier: usize,
 
+        /// Skip reads shorter than this many bases.
         #[clap(long, default_value = "50")]
         min_read_length: usize,
 
+        /// Read 1 FASTQ (required).
         #[clap(long)]
         read1: String,
 
+        /// Read 2 FASTQ ("NONE" for single-end / long reads).
         #[clap(long, default_value = "NONE")]
         read2: String,
 
+        /// Index 1 FASTQ ("NONE" if absent).
         #[clap(long, default_value = "NONE")]
         index1: String,
 
+        /// Index 2 FASTQ ("NONE" if absent).
         #[clap(long, default_value = "NONE")]
         index2: String,
 
+        /// Number of worker threads.
         #[clap(long, default_value_t = 1)]
         threads: usize,
 
+        /// Aligner selection (currently informational).
         #[clap(long, arg_enum, default_value_t = Aligner::WFA)]
         aligner: Aligner,
 
-        
-        
+
+
+    },
+    /// Generate a read-structure YAML from an annotated GenBank file.
+    GenbankToYaml {
+        /// Path to the annotated GenBank file.
+        #[clap(long)]
+        genbank: String,
+
+        /// Path to write the generated read-structure YAML.
+        #[clap(long)]
+        output: String,
+
+        /// Text that must appear in a feature's name for it to be included.
+        #[clap(long, default_value = "lineage_target")]
+        tag: String,
+
+        /// Reference name for the emitted layout (defaults to the GenBank LOCUS).
+        #[clap(long, default_value = "NONE")]
+        reference_name: String,
     },
 }
 
@@ -283,6 +376,50 @@ fn main() {
                         index2,
                         threads,
                         aligner);
+        }
+
+        Cmd::GenbankToYaml {
+            genbank,
+            output,
+            tag,
+            reference_name,
+        } => {
+            let records = gb_io::reader::parse_file(genbank)
+                .unwrap_or_else(|e| panic!("Unable to parse GenBank file {}: {:?}", genbank, e));
+            if records.is_empty() {
+                panic!("No records found in GenBank file {}", genbank);
+            }
+            if records.len() > 1 {
+                warn!(
+                    "GenBank file {} has {} records; using the first ({:?})",
+                    genbank, records.len(), records[0].name
+                );
+            }
+            let ref_name = if reference_name == "NONE" {
+                None
+            } else {
+                Some(reference_name.clone())
+            };
+            let opts = genbank::GenbankToYamlOptions { tag: tag.clone(), reference_name: ref_name };
+            let layout = genbank::genbank_to_layout(&records[0], &opts)
+                .unwrap_or_else(|e| panic!("Unable to build read structure from GenBank: {}", e));
+
+            let yaml = serde_yaml::to_string(&layout)
+                .unwrap_or_else(|e| panic!("Unable to serialize YAML: {}", e));
+            std::fs::write(output, &yaml)
+                .unwrap_or_else(|e| panic!("Unable to write {}: {}", output, e));
+
+            // Validate the emitted file by re-parsing it through the same loader
+            // the align/collapse commands use (panics on an invalid layout).
+            let reloaded = SequenceLayout::from_yaml(output);
+            let reference = reloaded.references.values().next().unwrap();
+            info!(
+                "Wrote read-structure YAML to {} ({} reference(s), {} target(s), {} UMI(s))",
+                output,
+                reloaded.references.len(),
+                reference.targets.len(),
+                reference.umi_configurations.len()
+            );
         }
     }
 }

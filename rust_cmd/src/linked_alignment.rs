@@ -1,3 +1,7 @@
+//! Anchored ("linked") alignment: find shared k-mer seed segments between a
+//! read and a reference via the suffix table, then affine-align the gaps
+//! between consecutive anchors — cheaper than a full matrix for long references.
+
 use std::{str, cmp};
 
 use crate::fasta_comparisons::DEGENERATEBASES;
@@ -186,7 +190,9 @@ pub fn align_string_with_anchors(read_name: &String,
         debug!("Pushing {:?}",alignment.cigar_string.clone());
         alignment_ref.extend(alignment.reference_aligned);
         alignment_read.extend(alignment.read_aligned);
-        alignment_cigar.extend(alignment.cigar_string.into_iter().rev().collect::<Vec<AlignmentTag>>());
+        // `perform_3d_global_traceback` already returns cigar_string in the same forward order as
+        // reference_aligned/read_aligned, so it is appended as-is (no re-reversal).
+        alignment_cigar.extend(alignment.cigar_string);
 
         alignment_ref.extend_from_slice(&reference[overlap.ref_start..overlap.ref_start + overlap.length]);
         alignment_read.extend_from_slice(&search_string[overlap.search_start..overlap.search_start + overlap.length]);
@@ -220,7 +226,7 @@ pub fn align_string_with_anchors(read_name: &String,
 
             alignment_ref.extend(alignment.reference_aligned);
             alignment_read.extend(alignment.read_aligned);
-            alignment_cigar.extend(alignment.cigar_string.into_iter().rev().collect::<Vec<AlignmentTag>>());
+            alignment_cigar.extend(alignment.cigar_string);
         } else if ref_alignment_last_position < reference.len() {
             let gap_len = reference.len() - ref_alignment_last_position;
             alignment_ref.extend(reference[ref_alignment_last_position..reference.len()].to_vec());
@@ -245,7 +251,7 @@ pub fn align_string_with_anchors(read_name: &String,
         alignment_ref.extend(alignment.reference_aligned);
         alignment_read.extend(alignment.read_aligned);
         debug!("Pushing {:?}",alignment.cigar_string.clone());
-        alignment_cigar.extend(alignment.cigar_string.into_iter().rev().collect::<Vec<AlignmentTag>>());
+        alignment_cigar.extend(alignment.cigar_string);
     }
 
     let score = calculate_score_from_strings(&alignment_ref, &alignment_read, my_aff_score);

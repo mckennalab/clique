@@ -1,4 +1,8 @@
 
+//! Clustering degenerate UMI sequences: string-distance functions, VP-tree
+//! nearest-neighbour search over tags, and connected-component / clique
+//! grouping (petgraph) to collapse a group of tags to consensus keys.
+
 use std::collections::{HashMap, HashSet};
 use petgraph::algo::{tarjan_scc};
 use petgraph::prelude::*;

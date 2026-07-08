@@ -1,3 +1,7 @@
+//! High-level alignment entry points: orient each read, pick the best-matching
+//! reference among the candidates (a k-mer vote fast path with an exhaustive
+//! fallback), run the aligner, extract tags, and hand results to the writer.
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -222,6 +226,18 @@ pub fn align_reads(
                                 );
                                 added_tags
                                     .insert([b'a', b's'], read.aligned_read.score.to_string());
+
+                                let events = crate::events::call_read_events(
+                                    &read.aligned_read.reference_aligned,
+                                    &read.aligned_read.read_aligned,
+                                    structure,
+                                );
+                                if !events.is_empty() {
+                                    added_tags.insert(
+                                        crate::consensus::consensus_builders::EVENT_TAG,
+                                        events,
+                                    );
+                                }
 
                                 let output = Arc::clone(&output);
                                 let arc_writer = output.clone();
@@ -545,16 +561,19 @@ pub fn align_to_reference_choices(
             // `rm.references.values().next().unwrap()` instead.
             let ref_base = &rm.references.get(&0).unwrap();
             let ref_name = String::from_utf8(ref_base.name.clone()).unwrap();
-            let forward_oriented_seq = if !read_structure.known_strand {
+            let (forward_oriented_seq, oriented_quals) = if !read_structure.known_strand {
                 let orientation =
                     orient_by_longest_segment(&read, &ref_base.sequence, &ref_base.suffix_table).0;
                 if orientation {
-                    read.clone()
+                    (read.clone(), qual_sequence)
                 } else {
-                    reverse_complement(&read)
+                    // reverse-complementing the read reverses base order, so the quals must be
+                    // reversed too to stay paired with the aligned bases.
+                    let reversed_quals = qual_sequence.map(|mut q| { q.reverse(); q });
+                    (reverse_complement(&read), reversed_quals)
                 }
             } else {
-                read.clone()
+                (read.clone(), qual_sequence)
             };
 
             let alignment = rust_bio_alignment(&ref_base.sequence, &forward_oriented_seq, &4, &10, &1);
@@ -571,7 +590,7 @@ pub fn align_to_reference_choices(
                 read_name: read_name.clone(),
                 reference_aligned: alignment.0,
                 read_aligned: alignment.1,
-                read_quals: qual_sequence,
+                read_quals: oriented_quals,
                 cigar_string: alignment.2,
                 path: vec!(),
                 score: 0.0,

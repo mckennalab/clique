@@ -1,3 +1,7 @@
+//! Reading raw sequencing input: [`ReadSetContainer`] bundles the one-to-four
+//! FASTQ records of a spot, and [`ReadIterator`] streams them from the input
+//! files.
+
 use bio::io::fastq::{Record, Records};
 use bio::io::fastq::Reader as FqReader;
 use serde::{Serialize, Deserialize};

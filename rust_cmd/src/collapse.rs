@@ -1,3 +1,8 @@
+//! The `collapse` pipeline: for each reference, read its aligned records from a
+//! BAM, filter and extract UMI/barcode tags, sort reads down through the UMI
+//! hierarchy (correcting tags at each level), then emit one consensus (or
+//! corrected) read per molecule.
+
 use crate::consensus::consensus_builders::write_consensus_reads;
 use crate::extractor::{
     extract_tag_sequences, extract_tagged_sequences, recover_soft_clipped_align_sequences,
@@ -125,13 +130,13 @@ pub fn collapse(
                     ReadOutputApproach::Collapse => {
                         info!("writing consensus reads for reference {}", ref_name);
 
-                        write_consensus_reads(&sorted_reads, &mut writer, levels, &rm, &40, merge_strategy);
+                        write_consensus_reads(&sorted_reads, &mut writer, levels, &rm, read_structure, &40, merge_strategy);
 
                     }
                     ReadOutputApproach::Correct => {
                         info!("writing reads for reference {}", ref_name);
 
-                        write_corrected_reads(&sorted_reads, &mut writer, levels, &rm);
+                        write_corrected_reads(&sorted_reads, &mut writer, levels, &rm, read_structure);
                     }
                 }
                 
@@ -356,14 +361,12 @@ pub struct BamReadFiltering {
 }
 
 impl BamReadFiltering {
-    // TODO: BUG - `passing_reads()` does not subtract `failed_alignment_creation` from the total.
-    // Reads that fail alignment creation are counted in `total_reads` but are not passing reads,
-    // causing this method to overcount.
     pub fn passing_reads(&self) -> usize {
         self.total_reads
             - self.unmapped_flag_reads
             - self.secondary_flag_reads
             - self.failed_alignment_filters
+            - self.failed_alignment_creation
             - self.duplicate_reads
             - self.invalid_tags
     }
@@ -554,11 +557,12 @@ pub fn sort_reads_from_bam_file(
                     }
                 }
             } else {
-                if record.flags().is_secondary() {
-                    read_stats.secondary_flag_reads += 1;
-                }
+                // Count each excluded record in exactly one bucket so `passing_reads()` does not
+                // double-subtract a record that is somehow both unmapped and secondary.
                 if record.flags().is_unmapped() {
                     read_stats.unmapped_flag_reads += 1;
+                } else if record.flags().is_secondary() {
+                    read_stats.secondary_flag_reads += 1;
                 }
             }
         }
@@ -606,6 +610,11 @@ pub fn sort_reads_from_bam_file(
 /// 4. Extracts tagged sequences and validates tag extraction
 /// 5. Creates alignment result with all necessary information
 ///
+// TODO: BUG - The `Returns` docstring above is inverted relative to the implementation below.
+// The code returns `Some(...)` when `invalid_tag` is FALSE (i.e. tags are valid) and `None`
+// when tags are invalid. The doc comment states the opposite, which could mislead callers
+// reasoning about filtering counts (e.g. `failed_alignment_creation += 1` in `sort_reads_from_bam_file`
+// is incremented on `None`, which is the invalid-tag case, not the valid-tag case the docs describe).
 fn create_sorted_read_container(
     reference_name: &String,
     reference_manager: &&ReferenceManager,
@@ -1083,9 +1092,7 @@ mod tests {
             duplicate_reads: 1,
             invalid_tags: 4,
         };
-        // passing = total - unmapped - secondary - failed_alignment_filters - duplicate - invalid_tags
-        // = 100 - 10 - 5 - 3 - 1 - 4 = 77
-        assert_eq!(stats.passing_reads(), 77);
+        assert_eq!(stats.passing_reads(), 75);
     }
 
     #[test]

@@ -1,3 +1,7 @@
+//! [`SortingReadSetContainer`]: the sortable read unit that flows through the
+//! sharded on-disk sort during collapse, carrying its aligned read plus the
+//! ordered UMI keys (corrected and original) it is grouped by.
+
 use std::cmp::Ordering;
 use std::collections::{VecDeque};
 use serde::{Serialize, Deserialize};

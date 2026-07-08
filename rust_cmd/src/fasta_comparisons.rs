@@ -1,3 +1,6 @@
+//! Base-comparison tables: IUPAC degenerate-base maps and known-base sets used
+//! to decide whether two bases match during alignment and tag extraction.
+
 use std::{collections::HashMap, hash::BuildHasherDefault};
 use nohash_hasher::NoHashHasher;
 

@@ -1,3 +1,8 @@
+//! Extracting tagged subsequences (UMIs, cell barcodes, static IDs) from an
+//! aligned read. Tag positions are marked by symbol characters embedded in the
+//! reference; this module also recovers soft-clipped bases and stretches an
+//! alignment back onto the full reference.
+
 use std::cmp::{min};
 use nohash_hasher::NoHashHasher;
 use noodles_sam::alignment::record::cigar::op::*;
@@ -103,15 +108,15 @@ pub fn recover_soft_clipped_align_sequences(
             Kind::SoftClip => {
                 match soft_clip_as_match {
                     SoftClipResolution::Clip => {
-                        // TODO: BUG - Uses `ref_pos` to index into `unaligned_read` instead of `read_pos`.
-                        // Soft clips consume read bases, not reference bases, so the correct slice is
-                        // `unaligned_read[read_pos..read_pos + len]`. Also, `ref_pos += len` is wrong
-                        // because soft clips do not advance the reference position.
-                        // just add dashes to the
-                        aligned_ref.extend(unaligned_read[ref_pos..ref_pos + len].to_vec());
+                        // Clamp to the reference end (a trailing clip can extend past it) and pad
+                        // the reference side so both aligned strings still grow by `len`.
+                        let ref_end = min(ref_pos + len, reference.len());
+                        let ref_taken = ref_end - ref_pos;
+                        aligned_ref.extend(reference[ref_pos..ref_end].to_vec());
+                        aligned_ref.extend(b"-".repeat(len - ref_taken));
                         aligned_read.extend(b"-".repeat(len));
                         read_pos += len;
-                        ref_pos += len;
+                        ref_pos = ref_end;
                     }
                     SoftClipResolution::MatchMismatch => {
                         if cigar_index == 0 {
@@ -134,10 +139,14 @@ pub fn recover_soft_clipped_align_sequences(
                             aligned_ref.extend(b"-".repeat(dashes));
                             aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
                             read_pos += len;
+                            // this branch consumes the rest of the reference; advance ref_pos so the
+                            // post-loop tail-fill does not re-emit the reference tail.
+                            ref_pos = reference.len();
                         } else {
                             aligned_read.extend(unaligned_read[read_pos..read_pos + len].to_vec());
                             aligned_ref.extend(reference[ref_pos..ref_pos + len].to_vec());
                             read_pos += len;
+                            ref_pos += len;
                         }
                     }
                     SoftClipResolution::Realign => {

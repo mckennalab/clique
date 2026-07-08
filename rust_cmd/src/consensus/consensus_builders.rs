@@ -1,7 +1,13 @@
+//! Turning a group of reads that share all their UMI tags into a single
+//! per-molecule consensus read, and writing it out with its annotation tags
+//! (read count, alignment rate, score, and the `ce` called-edit string).
+
 use crate::alignment::alignment_matrix::AlignmentTag;
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::{simplify_cigar_string, OutputAlignmentWriter};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
+use crate::read_strategies::sequence_layout::SequenceLayout;
+use crate::events::call_read_events;
 use crate::reference::fasta_reference::ReferenceManager;
 use counter::Counter;
 use rust_htslib::bam::record::CigarString;
@@ -35,6 +41,7 @@ pub fn write_corrected_reads(
     writer: &mut dyn OutputAlignmentWriter,
     levels: usize,
     reference_manager: &ReferenceManager,
+    read_structure: &SequenceLayout,
 ) {
     let mut processed_reads = 0;
 
@@ -47,6 +54,7 @@ pub fn write_corrected_reads(
 
         let new_read = create_consensus_sam_read(
             reference_manager,
+            read_structure,
             &0,
             &read_pile,
             &AffineScoring::default_dna(),
@@ -75,6 +83,7 @@ pub fn write_consensus_reads(
     writer: &mut dyn OutputAlignmentWriter,
     levels: usize,
     reference_manager: &ReferenceManager,
+    read_structure: &SequenceLayout,
     maximum_reads_before_downsampling: &usize,
     merge_strategy: &MergeStrategy,
 ) {
@@ -107,6 +116,7 @@ pub fn write_consensus_reads(
 
                     let new_read = create_consensus_sam_read(
                         reference_manager,
+                        read_structure,
                         maximum_reads_before_downsampling,
                         &my_buffered_reads,
                         &AffineScoring::default_dna(),
@@ -142,6 +152,7 @@ pub fn write_consensus_reads(
     if !buffered_reads.is_empty() {
         let new_read = create_consensus_sam_read(
             reference_manager,
+            read_structure,
             maximum_reads_before_downsampling,
             &buffered_reads,
             &score,
@@ -168,10 +179,33 @@ pub struct SamReadyOutput {
     pub added_tags: HashMap<[u8; 2], String>,
 }
 
+/// BAM tag under which called CRISPR edit events are recorded (McKenna
+/// per-target event string, targets joined by `_`). Uses a `c`-prefix to stay
+/// clear of the `e<symbol>` / `o<symbol>` extracted-UMI tag namespace.
+pub const EVENT_TAG: [u8; 2] = [b'c', b'e'];
+
+/// Call CRISPR edit events for the given aligned pair against the reference's
+/// declared targets and, if any targets exist, record them under [`EVENT_TAG`].
+fn insert_event_tag(
+    added_tags: &mut HashMap<[u8; 2], String>,
+    read_structure: &SequenceLayout,
+    reference_name: &str,
+    reference_aligned: &[u8],
+    read_aligned: &[u8],
+) {
+    if let Some(reference_record) = read_structure.references.get(reference_name) {
+        let events = call_read_events(reference_aligned, read_aligned, reference_record);
+        if !events.is_empty() {
+            added_tags.insert(EVENT_TAG, events);
+        }
+    }
+}
+
 
 #[allow(deprecated)]
 pub fn create_consensus_sam_read(
     reference_manager: &ReferenceManager,
+    read_structure: &SequenceLayout,
     maximum_reads_before_downsampling: &usize,
     buffered_reads: &VecDeque<SortingReadSetContainer>,
     _my_aff_score: &AffineScoring,
@@ -220,7 +254,10 @@ pub fn create_consensus_sam_read(
                     }
                 }).sum();
 
-                if valid > 1 {
+                // Skip the whole molecule if ANY read failed to merge: `add_alignment` mutates the
+                // candidate on its error path (pushing the read name and partial counts), so a
+                // tolerated failed read would pollute the consensus. Discarding is safer.
+                if valid >= 1 {
                     None
                 } else {
                     Some(candidate.to_consensus(&0.75))
@@ -230,7 +267,9 @@ pub fn create_consensus_sam_read(
 
         match consensus_reads {
             None => {
-                panic!("Unable to create consensus for reads: {:?}", buffered_reads);
+                // No usable consensus (a read failed to merge): skip this molecule. Both callers
+                // treat a `None` return as "skip", so this must not panic and abort the run.
+                return None;
             }
             Some(con) => {
                 let read_names = buffered_reads
@@ -250,6 +289,16 @@ pub fn create_consensus_sam_read(
 
 
                 added_tags.insert([b'a', b's'], con.score.to_string());
+
+                let consensus_ref_name = String::from_utf8_lossy(top_ref).into_owned();
+                insert_event_tag(
+                    &mut added_tags,
+                    read_structure,
+                    &consensus_ref_name,
+                    &con.reference_aligned,
+                    &con.read_aligned,
+                );
+
                 let new_sorting_read = buffered_reads
                     .get(0)
                     .unwrap()
@@ -272,6 +321,15 @@ pub fn create_consensus_sam_read(
 
 
         added_tags.insert([b'a', b's'], single_read.aligned_read.score.to_string());
+
+        insert_event_tag(
+            &mut added_tags,
+            read_structure,
+            &single_read.aligned_read.reference_name,
+            &single_read.aligned_read.reference_aligned,
+            &single_read.aligned_read.read_aligned,
+        );
+
         Some(SamReadyOutput { read: single_read, added_tags })
     }
 }

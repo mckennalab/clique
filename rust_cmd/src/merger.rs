@@ -1,3 +1,7 @@
+//! Merging the reads of a molecule (paired mates and/or overlapping long reads)
+//! into a single sequence, either by alignment-based overlap or by
+//! concatenation, according to the layout's merge strategy.
+
 use std::collections::HashMap;
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::align_two_strings;
@@ -52,7 +56,7 @@ pub fn merge_reads_by_concatenation(
             } => {
                     final_sequence
                         .extend(orient_sequence(reads.read_one.seq(), &orientation));
-                    final_sequence_quals.extend(reads.read_one.qual());
+                    final_sequence_quals.extend(orient_qualities(reads.read_one.qual(), &orientation));
                 
             },
             ReadPosition::Read2 {
@@ -64,7 +68,7 @@ pub fn merge_reads_by_concatenation(
                             reads.read_two.as_ref().unwrap().seq(),
                             &orientation,
                         ));
-                        final_sequence_quals.extend(reads.read_two.as_ref().unwrap().qual());
+                        final_sequence_quals.extend(orient_qualities(reads.read_two.as_ref().unwrap().qual(), &orientation));
                     }
             ReadPosition::Index1 {
                 
@@ -76,7 +80,7 @@ pub fn merge_reads_by_concatenation(
                             reads.index_one.as_ref().unwrap().seq(),
                             &orientation,
                         ));
-                        final_sequence_quals.extend(reads.index_one.as_ref().unwrap().qual());
+                        final_sequence_quals.extend(orient_qualities(reads.index_one.as_ref().unwrap().qual(), &orientation));
                 
                 
             }
@@ -89,7 +93,7 @@ pub fn merge_reads_by_concatenation(
                             reads.index_two.as_ref().unwrap().seq(),
                             &orientation,
                         ));
-                        final_sequence_quals.extend(reads.index_two.as_ref().unwrap().qual());
+                        final_sequence_quals.extend(orient_qualities(reads.index_two.as_ref().unwrap().qual(), &orientation));
                 
             }
             ReadPosition::Spacer { spacer_sequence } => {
@@ -120,6 +124,27 @@ pub fn orient_sequence(
         }
         AlignedReadOrientation::ReverseComplement => {
             reverse_complement(sequence)
+        }
+        AlignedReadOrientation::Unknown => {
+            panic!("We can't merge reads when the orientation is marked 'Unknown' in the yaml specification file");
+        }
+    }
+}
+
+/// Reorder a read's quality bytes to stay aligned with the bases produced by
+/// [`orient_sequence`] for the same orientation. Reverse and ReverseComplement
+/// both reverse the base order, so the qualities must be reversed too;
+/// Forward leaves them untouched.
+pub fn orient_qualities(
+    qualities: &[u8],
+    orientation: &AlignedReadOrientation,
+) -> Vec<u8> {
+    match orientation {
+        AlignedReadOrientation::Forward => qualities.to_vec(),
+        AlignedReadOrientation::Reverse | AlignedReadOrientation::ReverseComplement => {
+            let mut quals = qualities.to_vec();
+            quals.reverse();
+            quals
         }
         AlignedReadOrientation::Unknown => {
             panic!("We can't merge reads when the orientation is marked 'Unknown' in the yaml specification file");
@@ -270,10 +295,9 @@ impl UnifiedRead {
                     || strat == &MergeStrategy::ConcatenateBothForward =>
             {
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
-                self.seq = Some(
-                    merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure)
-                        .read_bases,
-                );
+                let rst = merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure);
+                self.seq = Some(rst.read_bases);
+                self.quals = Some(rst.read_quals);
             }
             ((true, false, false, false), _) => {
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
@@ -500,6 +524,22 @@ pub fn alignment_rate_and_consensus(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_orient_qualities_matches_orient_sequence() {
+        // regression (7/7/2026): quals must be reordered the same way bases are, so that base i
+        // and quality i stay paired after reorientation.
+        let quals = b"ABCD".to_vec();
+        assert_eq!(orient_qualities(&quals, &AlignedReadOrientation::Forward), b"ABCD".to_vec());
+        assert_eq!(orient_qualities(&quals, &AlignedReadOrientation::Reverse), b"DCBA".to_vec());
+        // ReverseComplement reverses base ORDER, so quals reverse (they are not complemented).
+        assert_eq!(
+            orient_qualities(&quals, &AlignedReadOrientation::ReverseComplement),
+            b"DCBA".to_vec()
+        );
+        // sanity: base order from orient_sequence is reversed for the same orientation.
+        assert_eq!(orient_sequence(b"ACGT", &AlignedReadOrientation::Reverse), b"TGCA".to_vec());
+    }
     use std::cmp::Ordering;
     use std::collections::BTreeMap;
 

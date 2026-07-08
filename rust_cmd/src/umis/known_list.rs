@@ -1,3 +1,7 @@
+//! Known-tag allowlists: [`FastaString`] wraps a sequence as a Hamming metric
+//! space and [`KnownList`] indexes an allowlist in a VP-tree for
+//! nearest-known-tag lookup.
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -127,7 +131,9 @@ impl KnownList {
             let corrected = self.correct_to_known_list(&padded_barcode, max_distance);
             match corrected.hits.len() {
                 1 => {
-                    corrections.insert(barcode.clone(), corrected.hits[0].clone());
+                    // Key on the padded barcode: `add_corrected` looks up with a key resized to
+                    // `tag.length` (== `string_length`), which matches `padded_barcode`.
+                    corrections.insert(padded_barcode.clone(), corrected.hits[0].clone());
                 }
                 _ => {
                     

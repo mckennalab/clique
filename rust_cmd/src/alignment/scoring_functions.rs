@@ -1,3 +1,6 @@
+//! Alignment scoring schemes and their traits: simple match/mismatch, convex
+//! gaps, affine gaps ([`AffineScoring`]), and inversion-aware scoring.
+
 use FASTA_N;
 
 /// Trait required to instantiate a Scoring instance

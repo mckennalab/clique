@@ -1,9 +1,13 @@
+//! Stretcher consensus: align every read in a group onto the reference and
+//! accumulate per-reference-position base and quality counts ([`NucCounts`]),
+//! then call the consensus base at each column.
+
 use std::fmt;
 use serde::{Deserialize, Serialize};
 use alignment::alignment_matrix::AlignmentTag;
 use alignment_functions::simplify_cigar_string;
 use crate::alignment::alignment_matrix::AlignmentResult;
-use crate::consensus::consensus_builders::{calculate_qual_scores, combine_qual_scores, prob_to_phred};
+use crate::consensus::consensus_builders::{combine_qual_scores, prob_to_phred};
 
 #[allow(dead_code)]
 const DEFAULT_QUAL_FOR_UNKNOWN_QUAL: u8 = 32u8;
@@ -146,8 +150,9 @@ impl NucCounts {
 
             let quals = vec![self.a_qual.as_slice(), self.c_qual.as_slice(), self.g_qual.as_slice(), self.t_qual.as_slice(), self.n_qual.as_slice()];
 
-            let mut allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &self.ref_base, &0.75);
-            let qual_normalized = calculate_qual_scores(&mut allele_props);
+            // `combine_qual_scores` already returns normalized probabilities (its final step is
+            // `calculate_qual_scores`), so use them directly rather than normalizing twice.
+            let allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &self.ref_base, &0.75);
             //println!("{:?}",qual_normalized);
             // TODO: BUG - `index_of_max` is computed from a 4-element array [a,c,g,t] so it can
             // only be 0-3. The match arm `4 => (b'N', ...)` is dead code. N counts are never
@@ -159,7 +164,7 @@ impl NucCounts {
                 .max_by(|(_, a), (_, b)| a.cmp(b))
                 .map(|(index, _)| index).unwrap();
 
-            let prob = prob_to_phred(&qual_normalized[index_of_max]);
+            let prob = prob_to_phred(&allele_props[index_of_max]);
             //println!("quals {:?} {:?} {:?} prop {} qual {}",allele_props,qual_normalized,quals,&qual_normalized[index_of_max],prob);
             match index_of_max {
                 0 => (b'A', Some(prob)),
@@ -278,12 +283,13 @@ impl AlignmentCandidate {
         let mut incoming_read_qual_index = 0;
 
 
-        let existing_ref_size = self.reference.len();
         self.read_names.push(alignment.read_name.clone());
         let read_qual = alignment.read_quals.clone().unwrap_or(alignment.read_aligned.iter().map(|_x: _| b'h').collect());
         //println!("*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- entry with {} {} ", u8s(&alignment.reference_aligned), u8s(&alignment.read_aligned));
 
-        while existing_index < existing_ref_size && incoming_ref_index < alignment.reference_aligned.len() {
+        // Use the live length: the `(Original, b'-')` arm inserts into `self.reference`, so we must
+        // keep walking to the (now shifted) trailing positions to still count this read's bases there.
+        while existing_index < self.reference.len() && incoming_ref_index < alignment.reference_aligned.len() {
             let incoming_ref_base = &alignment.reference_aligned[incoming_ref_index];
             let incoming_read_base = &alignment.read_aligned[incoming_ref_index];
 
@@ -293,6 +299,11 @@ impl AlignmentCandidate {
 
             match (existing_ref_base, incoming_ref_base) {
                 // we're in an insertion on both references -- we're not going to concern ourselves with resolving multiple paths and just record insertion bases
+                // TODO: BUG - This arm consumes a read base (via `counts.update(*incoming_read_base, ...)`) but
+                // never advances `incoming_read_qual_index` when that read base is non-gap. All subsequent qualities
+                // are then off-by-one (or more, cumulatively) for the rest of this alignment. Compare to the
+                // `ReferenceStatus::Original` arms below, which correctly guard `incoming_read_qual_index += 1` with
+                // `if *incoming_read_base != b'-'`.
                 (ReferenceStatus::Insertion { base: _, counts  }, b'-') => {
                     counts.update(*incoming_read_base, Some(*incoming_read_qual));
                     //println!("step1 {} {:?}", *incoming_read_base as char, counts);

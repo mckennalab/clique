@@ -1,10 +1,13 @@
+//! Bron–Kerbosch maximal-clique enumeration over a UMI similarity graph, used
+//! to group mutually-similar degenerate tags.
+
 use std::collections::HashSet;
 
 use petgraph::graphmap::{GraphMap, NodeTrait};
 use petgraph::Undirected;
 
 /// Implementation according to "Algorithm 457: Finding All Cliques of an Undirected Graph"
-/// by Bron and Kerbosch; http://doi.acm.org/10.1145/362342.362367
+/// by Bron and Kerbosch; <http://doi.acm.org/10.1145/362342.362367>
 ///
 /// connected is a symmetrical boolean matrix, N the number of nodes in the graph,
 /// values of the diagonal should be true.

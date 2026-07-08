@@ -1,3 +1,7 @@
+//! [`KnownLookup`]: a symspell-backed corrector built from a UMI
+//! configuration's known-sequence file, mapping an observed tag to a known one
+//! within a maximum edit distance.
+
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use symspell::{AsciiStringStrategy, SymSpell, Verbosity};

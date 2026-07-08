@@ -1,3 +1,7 @@
+//! Output writing: the [`OutputAlignmentWriter`] trait and its BAM
+//! implementation (via noodles), plus small pairwise-alignment and
+//! CIGAR-simplification helpers shared by the align and collapse paths.
+
 use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::SequenceLayout;

@@ -1,3 +1,7 @@
+//! [`SequenceCorrector`]: buffers the reads of one UMI group (spilling to disk
+//! when large), then corrects their tags — clustering degenerate tags to a
+//! consensus, or matching known tags to an allowlist — before the next level.
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use std::hash::BuildHasherDefault;
@@ -264,12 +268,20 @@ impl SequenceCorrector {
 
                 // TODO: wrong for known list
                 // case 1 -- manually create the known list -- pad if too short
-                let mut kn = self.hash_map.iter().next().unwrap().0.clone();
-                if kn.len() < self.tag.length {
-                    debug!("resize {} {}", self.tag.length, u8s(&kn));
-                    kn.resize(self.tag.length, b'-');
-                    debug!("resized {} {}", self.tag.length, u8s(&kn));
-                }
+                // Key the correction exactly as `add_corrected` looks it up: gapless, resized to
+                // `tag.length` (pad short, TRUNCATE long). Otherwise a tag longer than `tag.length`
+                // is stored full-length here but looked up truncated, missed, and panics.
+                let mut kn: Vec<u8> = self
+                    .hash_map
+                    .iter()
+                    .next()
+                    .unwrap()
+                    .0
+                    .clone()
+                    .into_iter()
+                    .filter(|x| *x != b'-')
+                    .collect();
+                kn.resize(self.tag.length, b'-');
                 knowns.insert(kn.clone(), kn);
 
                 knowns
@@ -282,9 +294,10 @@ impl SequenceCorrector {
                     .map(|x| {
                         let mut ns: Vec<u8> =
                             x.0.clone().into_iter().filter(|x| *x != b'-').collect();
-                        if ns.len() < self.tag.length {
-                            ns.resize(self.tag.length, b'-');
-                        }
+                        // Resize to exactly `tag.length` (pad short, TRUNCATE long) so these keys
+                        // match the truncated lookup key built in `add_corrected`; a longer tag
+                        // otherwise clustered under its full-length string is never found (panic).
+                        ns.resize(self.tag.length, b'-');
                         if ns.len() > max_length {
                             max_length = ns.len();
                         }
@@ -345,6 +358,9 @@ impl SequenceCorrector {
             .filter(|x| *x != b'-')
             .collect::<Vec<u8>>();
 
+        // Normalize the lookup key to exactly `tag.length` (pad short, truncate long). The
+        // correction maps (`correct_degenerate_list` and the trie known-list) build their keys the
+        // same way, so this matches on both paths.
         key_to_be_corrected.resize(self.tag.length, b'-');
 
         let corrected = match (self.tag.sort_type, final_correction.get(&key_to_be_corrected)) {
@@ -444,10 +460,8 @@ impl SequenceCorrector {
         let mut read_count: usize = 0;
         let mut unbuffered_reads = 0;
 
-        // TODO: BUG - ProgressBar is initialized with `read_count` which is 0 at this point.
-        // Should be `self.processed_sequences as u64` for meaningful progress display.
         let mut bar: Option<ProgressBar> = match self.processed_sequences > 100000 {
-            true => Some(ProgressBar::new(read_count.clone() as u64)),
+            true => Some(ProgressBar::new(self.processed_sequences as u64)),
             false => None,
         };
 

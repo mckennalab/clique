@@ -1,3 +1,5 @@
+//! Small DNA primitives: FASTA base validity checks and edit-distance helpers.
+
 use crate::fasta_comparisons::DEGENERATEBASES;
 
 #[allow(dead_code)]
@@ -6,7 +8,11 @@ pub fn edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
 
     let mut dist: usize = 0;
     for i in 0..str1.len() {
-        if !((DEGENERATEBASES.get(&str1[i]).is_some() && DEGENERATEBASES.get(&str1[i]).unwrap().contains_key(&str2[i])) ||
+        // Equal bases always match (DEGENERATEBASES maps a degenerate code only to its A/C/G/T
+        // constituents, never to itself, so 'N' vs 'N' needs this explicit check); otherwise a
+        // match requires one base's degenerate expansion to contain the other.
+        if !(str1[i] == str2[i] ||
+            (DEGENERATEBASES.get(&str1[i]).is_some() && DEGENERATEBASES.get(&str1[i]).unwrap().contains_key(&str2[i])) ||
             (DEGENERATEBASES.get(&str2[i]).is_some() && DEGENERATEBASES.get(&str2[i]).unwrap().contains_key(&str1[i]))) {
             dist += 1;
         }
@@ -36,6 +42,16 @@ pub fn simple_edit_distance(str1: &Vec<u8>, str2: &Vec<u8>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_edit_distance_identical_degenerate_bases() {
+        // regression (7/7/2026): identical degenerate codes must match (dist 0) rather than being
+        // counted as mismatches (DEGENERATEBASES doesn't map a code to itself).
+        assert_eq!(edit_distance(&b"N".to_vec(), &b"N".to_vec()), 0);
+        assert_eq!(edit_distance(&b"NRYSWK".to_vec(), &b"NRYSWK".to_vec()), 0);
+        let s = b"ACGTNRYK".to_vec();
+        assert_eq!(edit_distance(&s, &s), simple_edit_distance(&s, &s));
+    }
 
     #[test]
     fn test_edit_distance_identical() {
