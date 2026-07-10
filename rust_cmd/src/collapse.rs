@@ -17,7 +17,7 @@ use indicatif::ProgressBar;
 
 use noodles_bam as bam;
 use noodles_bam::{bai, Record};
-use noodles_sam::Header;
+use noodles_sam::{alignment::record::Flags, Header};
 
 use itertools::Itertools;
 use shardio::{Range, ShardReader, ShardWriter};
@@ -70,6 +70,8 @@ use FASTA_N;
 ///     &sequence_layout,
 ///     &"input.bam".to_string(),
 ///     &MergeStrategy::Consensus,
+///     &ReadOutputApproach::Collapse,
+///     &AlignmentFilterConfig::default(),
 /// );
 /// ```
 pub fn collapse(
@@ -79,6 +81,7 @@ pub fn collapse(
     bam_file: &String,
     merge_strategy: &MergeStrategy,
     output_approach: &ReadOutputApproach,
+    alignment_filter: &AlignmentFilterConfig,
 ) {
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
@@ -96,7 +99,14 @@ pub fn collapse(
         info!("processing reads from input BAM file: {}", bam_file);
 
         let sorted_reads_option =
-            sort_reads_from_bam_file(bam_file, &ref_name, &rm, read_structure, temp_directory);
+            sort_reads_from_bam_file(
+                bam_file,
+                &ref_name,
+                &rm,
+                read_structure,
+                temp_directory,
+                alignment_filter,
+            );
         read_count = sorted_reads_option.read_stats.passing_reads();
 
         let mut levels = 0;
@@ -249,6 +259,46 @@ impl ReferenceLookupTable {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AlignmentFilterConfig {
+    pub min_aligned_bases: usize,
+    pub min_aligned_identical_proportion: f64,
+}
+
+impl AlignmentFilterConfig {
+    pub fn new(min_aligned_bases: usize, min_aligned_identical_proportion: f64) -> Self {
+        assert!(
+            min_aligned_identical_proportion.is_finite()
+                && (0.0..=1.0).contains(&min_aligned_identical_proportion),
+            "Minimum aligned identity must be between 0.0 and 1.0"
+        );
+        Self {
+            min_aligned_bases,
+            min_aligned_identical_proportion,
+        }
+    }
+
+    fn for_reference(&self, reference: &ReferenceRecord) -> AlignmentCheck {
+        let alignable_reference_bases = reference
+            .sequence
+            .as_bytes()
+            .iter()
+            .filter(|base| **base > 59 && **base != FASTA_N)
+            .count();
+
+        AlignmentCheck {
+            min_aligned_bases: self.min_aligned_bases.min(alignable_reference_bases),
+            min_aligned_identical_proportion: self.min_aligned_identical_proportion,
+        }
+    }
+}
+
+impl Default for AlignmentFilterConfig {
+    fn default() -> Self {
+        Self::new(45, 0.8)
+    }
+}
+
 trait AlignmentFilter {
     fn keep(&self, read: &SortingReadSetContainer) -> bool;
 }
@@ -275,6 +325,10 @@ impl AlignmentFilter for AlignmentCheck {
                     }
                 }
             });
+
+        if alignable_bases == 0 {
+            return false;
+        }
 
         let ret = (alignment_count as f64 / alignable_bases as f64
             >= self.min_aligned_identical_proportion)
@@ -354,6 +408,7 @@ pub struct BamReadFiltering {
     total_reads: usize,
     unmapped_flag_reads: usize,
     secondary_flag_reads: usize,
+    supplementary_flag_reads: usize,
     failed_alignment_filters: usize,
     failed_alignment_creation: usize,
     duplicate_reads: usize,
@@ -365,10 +420,25 @@ impl BamReadFiltering {
         self.total_reads
             - self.unmapped_flag_reads
             - self.secondary_flag_reads
+            - self.supplementary_flag_reads
             - self.failed_alignment_filters
             - self.failed_alignment_creation
             - self.duplicate_reads
             - self.invalid_tags
+    }
+
+    fn count_flag_exclusion(&mut self, flags: Flags) -> bool {
+        if flags.is_unmapped() {
+            self.unmapped_flag_reads += 1;
+        } else if flags.is_secondary() {
+            self.secondary_flag_reads += 1;
+        } else if flags.is_supplementary() {
+            self.supplementary_flag_reads += 1;
+        } else {
+            return false;
+        }
+
+        true
     }
 
     pub fn results(&self, filters_counts: &HashMap<String, u64>) {
@@ -377,10 +447,11 @@ impl BamReadFiltering {
             .map(|x| format!("Name: {} failed {}", x.0.clone(), x.1))
             .join(", ");
         info!(
-            "Total reads processed: {}, Unmapped: {}, Secondary: {}, [Failed: {}, Failed alignment filters: {}, Duplicate: {}, Invalid_tags: {}, Passing: {} filter summary {}",
+            "Total reads processed: {}, Unmapped: {}, Secondary: {}, Supplementary: {}, [Failed: {}, Failed alignment filters: {}, Duplicate: {}, Invalid_tags: {}, Passing: {} filter summary {}",
             self.total_reads,
             self.unmapped_flag_reads,
             self.secondary_flag_reads,
+            self.supplementary_flag_reads,
             self.failed_alignment_creation,
             self.failed_alignment_filters,
             self.duplicate_reads,
@@ -417,6 +488,7 @@ pub struct SortedReadsFromBam {
 /// # Filtering Criteria
 /// * Excludes unmapped reads (unmapped flag set)
 /// * Excludes secondary alignments
+/// * Excludes supplementary alignments
 /// * Applies alignment quality filters (minimum aligned bases and identity proportion)
 /// * Validates UMI tag extraction
 ///
@@ -436,6 +508,7 @@ pub fn sort_reads_from_bam_file(
     reference_manager: &ReferenceManager,
     read_structure: &SequenceLayout,
     temp_directory: &mut InstanceLivedTempDir,
+    alignment_filter: &AlignmentFilterConfig,
 ) -> SortedReadsFromBam {
 
     let aligned_temp = temp_directory.temp_file("bam.reads.sorted.sharded");
@@ -446,6 +519,8 @@ pub fn sort_reads_from_bam_file(
 
     let mut read_stats = BamReadFiltering::default();
 
+    let reference_config = read_structure.references.get(reference_name).unwrap();
+    let alignment_check = alignment_filter.for_reference(reference_config);
     let filters: Vec<(String, &dyn AlignmentFilter)> = vec![
         /*(
             "FlankingDegenerateBaseFilter".to_string(),
@@ -456,10 +531,7 @@ pub fn sort_reads_from_bam_file(
         ),*/
         (
             "AlignmentCheck".to_string(),
-            &AlignmentCheck {
-                min_aligned_bases: 45,
-                min_aligned_identical_proportion: 0.8,
-            },
+            &alignment_check,
         ),
     ];
     let mut filter_counts: HashMap<String, u64> = HashMap::default();
@@ -500,8 +572,6 @@ pub fn sort_reads_from_bam_file(
             .unwrap()
             .sequence
             .clone();
-
-        let reference_config = read_structure.references.get(reference_name).unwrap();
 
         let records: Box<dyn Iterator<Item = std::io::Result<Record>> + '_> =
             if let Some(index) = index.as_ref() {
@@ -559,7 +629,7 @@ pub fn sort_reads_from_bam_file(
             
             read_count += 1;
             
-            if !record.flags().is_secondary() && !record.flags().is_unmapped() {
+            if !read_stats.count_flag_exclusion(record.flags()) {
                 let read = create_sorted_read_container(
                     reference_name,
                     &reference_manager,
@@ -596,14 +666,6 @@ pub fn sort_reads_from_bam_file(
                     None => {
                         read_stats.failed_alignment_creation += 1;
                     }
-                }
-            } else {
-                // Count each excluded record in exactly one bucket so `passing_reads()` does not
-                // double-subtract a record that is somehow both unmapped and secondary.
-                if record.flags().is_unmapped() {
-                    read_stats.unmapped_flag_reads += 1;
-                } else if record.flags().is_secondary() {
-                    read_stats.secondary_flag_reads += 1;
                 }
             }
         }
@@ -1174,6 +1236,7 @@ mod tests {
             &reference_manager,
             &layout,
             &mut processing_directory,
+            &AlignmentFilterConfig::default(),
         );
 
         assert_eq!(result.read_stats.total_reads, 1);
@@ -1282,6 +1345,7 @@ mod tests {
             total_reads: 100,
             unmapped_flag_reads: 10,
             secondary_flag_reads: 5,
+            supplementary_flag_reads: 0,
             failed_alignment_filters: 3,
             failed_alignment_creation: 2,
             duplicate_reads: 1,
@@ -1296,6 +1360,7 @@ mod tests {
             total_reads: 50,
             unmapped_flag_reads: 0,
             secondary_flag_reads: 0,
+            supplementary_flag_reads: 0,
             failed_alignment_filters: 0,
             failed_alignment_creation: 0,
             duplicate_reads: 0,
@@ -1310,6 +1375,7 @@ mod tests {
             total_reads: 10,
             unmapped_flag_reads: 4,
             secondary_flag_reads: 3,
+            supplementary_flag_reads: 0,
             failed_alignment_filters: 1,
             failed_alignment_creation: 0,
             duplicate_reads: 1,
@@ -1323,6 +1389,31 @@ mod tests {
         let stats = BamReadFiltering::default();
         assert_eq!(stats.total_reads, 0);
         assert_eq!(stats.passing_reads(), 0);
+    }
+
+    #[test]
+    fn test_bam_read_filtering_excludes_supplementary_once() {
+        let mut stats = BamReadFiltering {
+            total_reads: 2,
+            ..Default::default()
+        };
+
+        assert!(stats.count_flag_exclusion(Flags::SUPPLEMENTARY));
+        assert!(stats.count_flag_exclusion(
+            Flags::SECONDARY | Flags::SUPPLEMENTARY,
+        ));
+
+        assert_eq!(stats.supplementary_flag_reads, 1);
+        assert_eq!(stats.secondary_flag_reads, 1);
+        assert_eq!(stats.passing_reads(), 0);
+    }
+
+    #[test]
+    fn test_bam_read_filtering_keeps_primary_alignment() {
+        let mut stats = BamReadFiltering::default();
+
+        assert!(!stats.count_flag_exclusion(Flags::empty()));
+        assert_eq!(stats.supplementary_flag_reads, 0);
     }
 
     #[test]
@@ -1403,6 +1494,48 @@ mod tests {
         };
 
         assert!(alignment_check.keep(&fake_read_alignment));
+    }
+
+    #[test]
+    fn test_default_alignment_filter_supports_short_references() {
+        let reference = ReferenceRecord {
+            sequence: "0000AAAAAAAAAAAA".to_string(),
+            umi_configurations: BTreeMap::new(),
+            targets: vec![],
+            target_types: vec![],
+            target_locations: Some(vec![]),
+        };
+        let alignment_check = AlignmentFilterConfig::default().for_reference(&reference);
+        let fake_read_alignment = SortingReadSetContainer::empty_tags(AlignmentResult {
+            reference_name: "short".to_string(),
+            read_name: "read".to_string(),
+            reference_aligned: vec![FASTA_A; 12],
+            read_aligned: vec![FASTA_A; 12],
+            read_quals: None,
+            cigar_string: vec![],
+            path: vec![],
+            score: 0.0,
+            reference_start: 0,
+            read_start: 0,
+            bounding_box: None,
+        });
+
+        assert_eq!(alignment_check.min_aligned_bases, 12);
+        assert!(alignment_check.keep(&fake_read_alignment));
+    }
+
+    #[test]
+    fn test_alignment_filter_thresholds_are_configurable() {
+        let config = AlignmentFilterConfig::new(20, 0.95);
+
+        assert_eq!(config.min_aligned_bases, 20);
+        assert_eq!(config.min_aligned_identical_proportion, 0.95);
+    }
+
+    #[test]
+    #[should_panic(expected = "between 0.0 and 1.0")]
+    fn test_alignment_filter_rejects_invalid_identity() {
+        AlignmentFilterConfig::new(20, 1.1);
     }
 
     #[test]

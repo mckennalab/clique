@@ -106,7 +106,7 @@ use clap::ValueEnum;
 use nanoid::nanoid;
 use consensus::consensus_builders::{MergeStrategy, ReadOutputApproach};
 use crate::alignment_functions::align_reads;
-use crate::collapse::collapse;
+use crate::collapse::{collapse, AlignmentFilterConfig};
 use crate::read_strategies::sequence_layout::SequenceLayout;
 use crate::reference::fasta_reference::ReferenceManager;
 
@@ -221,6 +221,14 @@ enum Cmd {
         #[clap(long, default_value = "0")]
         max_deletion: usize,
 
+        /// Minimum number of aligned non-UMI bases (capped to the reference's available bases).
+        #[clap(long, default_value = "45")]
+        min_aligned_bases: usize,
+
+        /// Minimum identity among aligned non-UMI bases, from 0.0 to 1.0.
+        #[clap(long, default_value = "0.8")]
+        min_aligned_identity: f64,
+
         /// Only correct UMI/tag sequences; do not build consensus reads.
         #[clap(long, action=clap::ArgAction::SetTrue)]
         correct_only: bool,
@@ -321,6 +329,8 @@ fn main() {
             find_inversions: _,
             fast_reference_lookup: _,
             max_deletion: _,
+            min_aligned_bases,
+            min_aligned_identity,
             correct_only: correction_only,
 
         } => {
@@ -338,6 +348,10 @@ fn main() {
                     ReadOutputApproach::Collapse
                 }
             };
+            let alignment_filter = AlignmentFilterConfig::new(
+                *min_aligned_bases,
+                *min_aligned_identity,
+            );
 
             collapse(outbam,
                      &mut tmp,
@@ -345,6 +359,7 @@ fn main() {
                      inbam,
                      &MergeStrategy::Stretcher, // TODO parameterize,
                      &correction,
+                     &alignment_filter,
             );
         },
 
