@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn test_100k_by_100k_lookup() {
         let configuration = UMIConfiguration{
-            symbol: '#',
+            symbol: '0',
             file: Some(String::from("test_data/100K-february-2018.txt")),
             reverse_complement_sequences: None,
             sort_type: KnownTag,
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn test_3M_by_100K_lookup() {
         let configuration = UMIConfiguration{
-            symbol: '#',
+            symbol: '0',
             file: Some(String::from("test_data/3M-february-2018.txt")),
             sort_type: KnownTag,
             length: 16,
@@ -131,7 +131,7 @@ mod tests {
     fn test_simple_exact_correction() {
 
         let configuration = UMIConfiguration{
-            symbol: '#',
+            symbol: '0',
             file: Some(String::from("test_data/just_sequences_500.txt")),
             reverse_complement_sequences: None,
             sort_type: KnownTag,

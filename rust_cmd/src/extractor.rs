@@ -4,10 +4,8 @@
 //! alignment back onto the full reference.
 
 use std::cmp::{min};
-use nohash_hasher::NoHashHasher;
 use noodles_sam::alignment::record::cigar::op::*;
-use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::hash::BuildHasherDefault;
+use std::collections::{BTreeMap, VecDeque};
 use FASTA_UNSET;
 use utils::base_utils::is_valid_fasta_base;
 use utils::read_utils::u8s;
@@ -20,24 +18,6 @@ use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout, U
 
 pub const REFERENCE_CHAR: u8 = b'R';
 pub const READ_CHAR: u8 = b'E';
-
-lazy_static! {
-    pub static ref SPECIAL_CHARACTERS: HashMap::<u8, bool, BuildHasherDefault<NoHashHasher<u8>>> = {
-        let mut hashedvalues: HashMap<u8, bool, BuildHasherDefault<NoHashHasher<u8>>> =
-            HashMap::with_capacity_and_hasher(10, BuildHasherDefault::default());
-        hashedvalues.insert(b'0', true);
-        hashedvalues.insert(b'1', true);
-        hashedvalues.insert(b'2', true);
-        hashedvalues.insert(b'3', true);
-        hashedvalues.insert(b'4', true);
-        hashedvalues.insert(b'5', true);
-        hashedvalues.insert(b'6', true);
-        hashedvalues.insert(b'7', true);
-        hashedvalues.insert(b'8', true);
-        hashedvalues.insert(b'9', true);
-        hashedvalues
-    };
-}
 
 pub fn error_out_on_unknown_base(base: &u8) {
     panic!(
@@ -294,13 +274,13 @@ pub fn extract_tagged_sequences(aligned_read: &[u8], aligned_ref: &[u8]) -> BTre
                     .or_insert_with(Vec::new)
                     .push(read_base.clone());
             }
-            (false, _y, false) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
+            (false, _y, false) if reference_base.is_ascii_digit() => {
                 special_values
                     .entry(*reference_base)
                     .or_insert_with(Vec::new)
                     .push(read_base.clone());
             }
-            (false, _y, true) if SPECIAL_CHARACTERS.contains_key(reference_base) => {
+            (false, _y, true) if reference_base.is_ascii_digit() => {
                 special_values
                     .entry(next_extractor_ref)
                     .or_insert_with(Vec::new)
@@ -365,7 +345,7 @@ pub fn extract_tag_sequences(
             .umi_configurations
             .iter()
             .map(|(umi_name, umi_obj)| {
-                let ets_hit = ets.get(&umi_obj.symbol.to_string().as_bytes()[0]);
+                let ets_hit = ets.get(&(umi_obj.symbol as u8));
 
                 match ets_hit {
                     Some(e) => {

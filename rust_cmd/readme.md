@@ -57,7 +57,7 @@ Each UMI configuration contains:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `symbol` | Char | Required | Symbol used in the reference to mark this UMI |
+| `symbol` | Char | Required | Unique ASCII digit (`0`-`9`) used in the reference and BAM tag |
 | `file` | String | Optional | Path to file containing known sequences (one per line, no header) |
 | `reverse_complement_sequences` | Boolean | Optional | Whether to reverse complement sequences from the file |
 | `sort_type` | Enum | Required | Either `KnownTag` or `DegenerateTag` |
@@ -95,24 +95,25 @@ reads:
     orientation: Forward
 references:
   shorter_reference:
-    sequence: "ATCG"
+    sequence: "0000000000000000ATCG111111111111222222222222"
     targets: ["ATCG"]
     target_types: ["Cas9WT"]
     umi_configurations:
       cell_id:
-        symbol: '*'
+        symbol: '0'
+        file: "cell_barcodes.txt"
         sort_type: "KnownTag"
         length: 16
         order: 0
         max_distance: 2
       cell_umi:
-        symbol: '&'
+        symbol: '1'
         sort_type: "DegenerateTag"
         length: 12
         order: 1
         max_distance: 2
       static_id:
-        symbol: '$'
+        symbol: '2'
         sort_type: "DegenerateTag"
         length: 12
         order: 2
@@ -122,6 +123,7 @@ references:
 ## Validation Rules
 
 - UMI configurations must have sequential order numbers starting at 0
+- UMI symbols must be unique ASCII digits (`0`-`9`), allowing at most 10 UMIs per reference
 - Target sequences and target type lists must be the same length
 - Target sequences must be found within the reference sequence
 - Reference sequence must contain all symbols used in UMI configurations

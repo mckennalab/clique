@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
 use serde::{Serialize,Deserialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum UMISortType {
@@ -48,7 +48,15 @@ impl SequenceLayout {
 
         let mut deserialized_map: SequenceLayout = serde_yaml::from_str(&yaml_contents).expect("Unable to de-yaml your input file");
 
-        for reference in deserialized_map.references.values_mut() {
+        for (reference_name, reference) in deserialized_map.references.iter_mut() {
+
+            SequenceLayout::validate_umi_symbols(&reference.umi_configurations)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Invalid UMI configuration for reference '{}': {}",
+                        reference_name, error
+                    )
+                });
 
             // Collect UMI `order` values. UMI names are BTreeMap keys and thus already unique --
             // duplicate YAML keys are dropped by serde during deserialization, so a name-collision
@@ -79,11 +87,41 @@ impl SequenceLayout {
     ///    * ref_bases - the reference sequence, as a vector of bases
     ///
     pub fn validate_reference_sequence(ref_bases: &[u8], configurations: &BTreeMap<String,UMIConfiguration>) -> bool {
+        if SequenceLayout::validate_umi_symbols(configurations).is_err() {
+            return false;
+        }
+
         let existing_bases = ref_bases.iter().map(|base| (char::from(*base), true)).collect::<BTreeMap<_, _>>();
 
         configurations.iter().map(|(_name,umi_config)| {
             existing_bases.contains_key(&umi_config.symbol)
         }).all(|x| x)
+    }
+
+    /// UMI symbols are embedded in both the reference and the second byte of
+    /// `eX`/`oX` SAM tags. ASCII digits are the only characters that are both
+    /// unambiguous reference markers and valid in that SAM tag position.
+    pub fn validate_umi_symbols(
+        configurations: &BTreeMap<String, UMIConfiguration>,
+    ) -> Result<(), String> {
+        let mut seen = BTreeSet::new();
+
+        for (name, configuration) in configurations {
+            if !configuration.symbol.is_ascii_digit() {
+                return Err(format!(
+                    "UMI '{}' uses unsupported symbol '{}'; symbols must be unique ASCII digits 0-9",
+                    name, configuration.symbol
+                ));
+            }
+            if !seen.insert(configuration.symbol) {
+                return Err(format!(
+                    "UMI '{}' reuses symbol '{}'; symbols must be unique within a reference",
+                    name, configuration.symbol
+                ));
+            }
+        }
+
+        Ok(())
     }
 
 }
@@ -229,7 +267,7 @@ mod tests {
             SequenceLayout::from_yaml(&String::from("test_data/test_layout.yaml"));
         assert!(configuration.references.contains_key("shorter_reference"));
         assert!(configuration.references.get("shorter_reference").unwrap().umi_configurations.contains_key("cell_id"));
-        assert_eq!(configuration.references.get("shorter_reference").unwrap().umi_configurations.get("cell_id").unwrap().symbol,'*');
+        assert_eq!(configuration.references.get("shorter_reference").unwrap().umi_configurations.get("cell_id").unwrap().symbol,'0');
     }
 
 
@@ -250,7 +288,7 @@ mod tests {
     fn test_validate_reference_sequence_all_present() {
         let mut configs = BTreeMap::new();
         configs.insert("umi1".to_string(), UMIConfiguration {
-            symbol: '*',
+            symbol: '0',
             file: None,
             reverse_complement_sequences: None,
             sort_type: UMISortType::DegenerateTag,
@@ -263,8 +301,8 @@ mod tests {
             minimum_collapsing_difference: None,
             levenshtein_distance: None,
         });
-        // Reference contains '*', so validation should pass
-        let ref_bases = b"ACGT*ACGT";
+        // Reference contains '0', so validation should pass
+        let ref_bases = b"ACGT0ACGT";
         assert!(SequenceLayout::validate_reference_sequence(ref_bases, &configs));
     }
 
@@ -272,7 +310,7 @@ mod tests {
     fn test_validate_reference_sequence_missing_symbol() {
         let mut configs = BTreeMap::new();
         configs.insert("umi1".to_string(), UMIConfiguration {
-            symbol: '#',
+            symbol: '1',
             file: None,
             reverse_complement_sequences: None,
             sort_type: UMISortType::DegenerateTag,
@@ -294,7 +332,7 @@ mod tests {
     fn test_validate_reference_sequence_multiple_configs() {
         let mut configs = BTreeMap::new();
         configs.insert("umi1".to_string(), UMIConfiguration {
-            symbol: '*',
+            symbol: '0',
             file: None,
             reverse_complement_sequences: None,
             sort_type: UMISortType::DegenerateTag,
@@ -308,7 +346,7 @@ mod tests {
             levenshtein_distance: None,
         });
         configs.insert("umi2".to_string(), UMIConfiguration {
-            symbol: '#',
+            symbol: '1',
             file: None,
             reverse_complement_sequences: None,
             sort_type: UMISortType::KnownTag,
@@ -321,13 +359,47 @@ mod tests {
             minimum_collapsing_difference: None,
             levenshtein_distance: None,
         });
-        // Only has '*', not '#'
-        let ref_bases = b"ACG*TACGT";
+        // Only has '0', not '1'
+        let ref_bases = b"ACG0TACGT";
         assert!(!SequenceLayout::validate_reference_sequence(ref_bases, &configs));
 
         // Has both
-        let ref_bases2 = b"ACG*T#ACGT";
+        let ref_bases2 = b"ACG0T1ACGT";
         assert!(SequenceLayout::validate_reference_sequence(ref_bases2, &configs));
+    }
+
+    #[test]
+    fn test_validate_umi_symbols_rejects_punctuation_and_duplicates() {
+        let config = UMIConfiguration {
+            symbol: '0',
+            file: None,
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::DegenerateTag,
+            length: 8,
+            order: 0,
+            pad: None,
+            max_distance: 1,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance: None,
+        };
+        let mut configs = BTreeMap::new();
+        configs.insert("umi_1".to_string(), config.clone());
+        assert!(SequenceLayout::validate_umi_symbols(&configs).is_ok());
+
+        configs.get_mut("umi_1").unwrap().symbol = '*';
+        assert!(SequenceLayout::validate_umi_symbols(&configs)
+            .unwrap_err()
+            .contains("unsupported symbol"));
+
+        configs.get_mut("umi_1").unwrap().symbol = '0';
+        let mut duplicate = config;
+        duplicate.order = 1;
+        configs.insert("umi_2".to_string(), duplicate);
+        assert!(SequenceLayout::validate_umi_symbols(&configs)
+            .unwrap_err()
+            .contains("reuses symbol"));
     }
 
     #[test]
