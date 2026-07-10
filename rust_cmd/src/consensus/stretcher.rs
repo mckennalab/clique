@@ -375,24 +375,20 @@ impl AlignmentCandidate {
                     }
 
                 }
-                ReferenceStatus::Insertion { base, counts } if counts.proportion(base,&self.read_names.len()) >= *gap_call_threshold => {
-                    //println!("added insert {} {}", *base as char, counts.proportion(base, &self.read_names.len()));
+                ReferenceStatus::Insertion { base: _, counts } => {
                     let base_qual = counts.consensus_base(gap_call_threshold);
-                    resulting_alignmented_ref.push(b'-');
-                    resulting_alignmented_read.push(base_qual.0);
+                    let consensus_support = counts.proportion(
+                        &base_qual.0,
+                        &self.read_names.len(),
+                    );
 
-                    match base_qual.0 {
-                        b'-' => {panic!("Can't insert a deletion")}
-                        _ => {
-                            cigar_tokens.push(AlignmentTag::Ins(1));
-                            // store the raw Phred quality (the SAM writer applies the +33 offset)
-                            resulting_alignmented_qual.push(base_qual.1.unwrap());
-                        }
+                    if base_qual.0 != b'-' && consensus_support >= *gap_call_threshold {
+                        resulting_alignmented_ref.push(b'-');
+                        resulting_alignmented_read.push(base_qual.0);
+                        cigar_tokens.push(AlignmentTag::Ins(1));
+                        // store the raw Phred quality (the SAM writer applies the +33 offset)
+                        resulting_alignmented_qual.push(base_qual.1.unwrap());
                     }
-                }
-                ReferenceStatus::Insertion { base: _, counts: _ } => {
-                    //println!("dropped insert {} {}", *base as char, counts.proportion(base,&self.read_names.len()));
-                    // do nothing, we're not going to include this gap in the reference as it's not supported by enough reads
                 }
             }
         });
@@ -575,6 +571,29 @@ mod tests {
         // Try adding alignment with different ref base - should error
         let result = candidate.add_alignment(&create_alignment_result("ACGT", "TCGT"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_insertion_consensus_uses_majority_allele_not_first() {
+        let mut candidate = AlignmentCandidate::new(b"ACGT", b"ref");
+        candidate
+            .add_alignment(&create_alignment_result("ACTGT", "AC-GT"))
+            .unwrap();
+        for _ in 0..3 {
+            candidate
+                .add_alignment(&create_alignment_result("ACAGT", "AC-GT"))
+                .unwrap();
+        }
+
+        let consensus = candidate.to_consensus(&0.75);
+
+        assert_eq!(consensus.reference_aligned, b"AC-GT");
+        assert_eq!(consensus.read_aligned, b"ACAGT");
+        assert_eq!(consensus.cigar_string, vec![
+            AlignmentTag::MatchMismatch(2),
+            AlignmentTag::Ins(1),
+            AlignmentTag::MatchMismatch(2),
+        ]);
     }
 
     fn create_alignment_result(read_bases: &str, ref_bases: &str) -> AlignmentResult {
