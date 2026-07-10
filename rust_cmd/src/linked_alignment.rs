@@ -6,7 +6,6 @@ use std::{str, cmp};
 
 use crate::fasta_comparisons::DEGENERATEBASES;
 
-use std::convert::TryFrom;
 use itertools::Itertools;
 use ndarray::Ix3;
 use FASTA_UNSET;
@@ -106,27 +105,29 @@ pub fn find_greedy_non_overlapping_segments(search_string: &[u8], reference: &[u
 
     while (position as i64) <= (search_string.len() as i64 - seeds.seed_size as i64) {
         let ref_positions = seeds.suffix_table.positions_internal(&search_string[position..(position + seeds.seed_size)]);
-        let mut longest_hit = 0;
-        // TODO: BUG - Two issues here:
-        // 1) When a longer hit is found, the previous shorter MatchedPosition is never removed
-        //    from `return_hits`, leaving duplicate/suboptimal overlapping entries.
-        // 2) `position` is advanced by `extended_hit_size` inside the loop AND unconditionally
-        //    by 1 after the loop, causing one base after each hit to be skipped as a seed start.
+        // Pick the single longest extension for this seed position (evaluated against a fixed
+        // `greatest_ref_pos` threshold), push it once, and advance past it -- rather than pushing
+        // every improving hit and double-advancing `position`.
+        let mut best: Option<(usize, usize)> = None; // (ref_start, length)
         for ref_position in ref_positions {
-            //println!("testing position {}", ref_position);
-            if ref_position >= &greatest_ref_pos {
+            if *ref_position >= greatest_ref_pos {
                 let extended_hit_size = extend_hit(search_string, position, reference, *ref_position as usize);
-                if extended_hit_size > longest_hit {
-                    return_hits.push(MatchedPosition { search_start: position, ref_start: *ref_position as usize, length: extended_hit_size });
-                    position += extended_hit_size;
-                    least_ref_pos = cmp::min(usize::try_from(*ref_position).unwrap(), least_ref_pos);
-                    greatest_ref_pos = cmp::max(ref_position + &(extended_hit_size as u32), greatest_ref_pos);
-                    longest_hit = extended_hit_size;
-                    //println!("taking position {} with greatest_ref_pos {} least {} longest {}", ref_position, greatest_ref_pos, least_ref_pos, longest_hit);
+                if best.map_or(true, |(_, len)| extended_hit_size > len) {
+                    best = Some((*ref_position as usize, extended_hit_size));
                 }
             }
         }
-        position += 1;
+        match best {
+            Some((ref_start, length)) if length > 0 => {
+                return_hits.push(MatchedPosition { search_start: position, ref_start, length });
+                least_ref_pos = cmp::min(ref_start, least_ref_pos);
+                greatest_ref_pos = cmp::max(ref_start as u32 + length as u32, greatest_ref_pos);
+                position += length;
+            }
+            _ => {
+                position += 1;
+            }
+        }
     }
     SharedSegments { start_position: least_ref_pos as usize, alignment_segments: return_hits }
 }
@@ -310,19 +311,14 @@ pub fn validate_cigar_string(reference: &Vec<u8>, read: &Vec<u8>, cigars: &Vec<A
     assert_eq!(cigar_pos, reference.len());
 }
 
-// TODO: BUG - The first match arm `!(FASTA_UNSET == *a) && FASTA_UNSET == *b` matches
-// deletions (ref=base, read=gap) but calls `match_mismatch(a, b)` and sets `in_indel = false`.
-// This means deletions are scored as match/mismatch operations instead of gap penalties.
-// Meanwhile, actual match/mismatch cases (both non-gap) fall through to arms 2/3, which apply
-// gap_extend/gap_open scoring. The first arm's condition should be
-// `!(FASTA_UNSET == *a) && !(FASTA_UNSET == *b)` to correctly catch match/mismatch cases.
 #[allow(dead_code)]
 pub fn calculate_score_from_strings(reference: &Vec<u8>, read: &Vec<u8>, my_aff_score: &AffineScoring) -> f64 {
     assert_eq!(reference.len(), read.len());
     let mut in_indel = false;
     reference.iter().zip(read.iter()).map(|(a, b)| {
         match (a, b, in_indel) {
-            (a, b, _) if !(FASTA_UNSET == *a) && FASTA_UNSET == *b => {
+            // both non-gap: a match/mismatch column (not part of an indel)
+            (a, b, _) if !(FASTA_UNSET == *a) && !(FASTA_UNSET == *b) => {
                 in_indel = false;
                 my_aff_score.match_mismatch(a, b)
             }

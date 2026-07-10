@@ -134,10 +134,7 @@ pub fn write_consensus_reads(
                             let mut processed_reads = processed_reads.lock().expect("Unable to lock processed read count");
                             let current_proc_read = *processed_reads;
                             *processed_reads += my_buffered_reads.len();
-                            // TODO: BUG - Mismatched divisors: left side divides by 100000, right side by 1000.
-                            // The right side advances 100x faster in floor-units, so this fires on nearly every batch.
-                            // Both sides should divide by the same value (e.g., 100000.0).
-                            if (*processed_reads as f64 / 100000.0).floor() - (current_proc_read as f64 / 1000.0).floor() >= 1.0 {
+                            if (*processed_reads as f64 / 100000.0).floor() - (current_proc_read as f64 / 100000.0).floor() >= 1.0 {
                                 info!("Processed {} reads into their consensus", processed_reads);
                             }
                         }
@@ -385,11 +382,6 @@ pub fn reference_read_to_cigar_string(
 }
 
 
-// TODO: BUG - `sequence_indexes[sequence_index] = sequence_index + ...` on line below uses
-// `sequence_index` (the array position of this sequence, e.g. 0, 1, 2) instead of the current
-// quality index `sequence_indexes[sequence_index]`. This means the quality score position for
-// each sequence is set to `array_index + 0_or_1` instead of being properly incremented through
-// the quality scores. It should be `sequence_indexes[sequence_index] += ...`.
 #[allow(dead_code)]
 pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
     assert_eq!(alignments.len() - 1, quality_scores.len());
@@ -403,9 +395,7 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
 
     let reference = alignments.get(0).unwrap();
 
-    // TODO: BUG - Off-by-one error: `0..ln-1` skips the last column of the alignment.
-    // Should be `0..ln` to process all positions. The last base is silently dropped.
-    (0..ln - 1).for_each(|index| {
+    (0..ln).for_each(|index| {
         let mut bases = Vec::new();
         let mut quals = Vec::new();
         let _ = &alignments[1..alignments.len()].iter().enumerate().for_each(|(sequence_index, x)| {
@@ -417,7 +407,7 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
                 _ => quality_scores[sequence_index][sequence_indexes[sequence_index]]
             };
 
-            sequence_indexes[sequence_index] = sequence_index + match base {
+            sequence_indexes[sequence_index] += match base {
                 b'-' => { 0 }
                 _ => { 1 }
             };

@@ -186,13 +186,14 @@ pub fn vantage_point_string_graph(input_list: &InputList, progress: bool) -> Str
             &(),
             RadiusBasedNeighborhood::new(input_list.max_dist.clone() as u32),
         );
-        // TODO: BUG - The VP tree returns indices into the original `input_list.strings` array
-        // (which may contain duplicates), but `*index` is used directly as a graph node ID.
-        // Graph node IDs are assigned sequentially to *unique* strings only. When duplicates
-        // exist, the VP tree index won't correspond to the correct graph node ID. Should look
-        // up the string at the VP tree index and then use `string_to_node` to get the node ID.
-        nearest.iter().for_each(|(index,dist)| {
-            graph.add_edge(*n, *index, *dist);
+        // The VP tree returns indices into `input_list.strings` (which may contain duplicates);
+        // map each back to its graph node id via the string, since node ids are assigned only to
+        // unique strings.
+        nearest.iter().for_each(|(candidate_index, dist)| {
+            let neighbor_string = &input_list.strings[*candidate_index as usize];
+            if let Some(neighbor_node) = string_to_node.get(neighbor_string) {
+                graph.add_edge(*n, *neighbor_node, *dist);
+            }
         });
         if index % 5000 == 0 && bar2.is_some() {
             bar2.as_ref().unwrap().inc(5000);

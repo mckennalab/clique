@@ -228,12 +228,6 @@ pub fn recover_soft_clipped_align_sequences(
 /// let result = stretch_sequence_to_alignment(aligned, native);
 /// // result would be b"AC-GT-A"
 /// ```
-/// TODO: BUG - The while loop condition `native_index < native_version.len()` causes the loop
-/// to exit as soon as all native bases are consumed, silently dropping any trailing gaps from
-/// the aligned version. For example, `stretch_sequence_to_alignment(b"ACGT-", b"ACGT")` returns
-/// `b"ACGT"` instead of `b"ACGT-"`. The result will be shorter than `aligned_version`, which
-/// can cause length mismatches when the result is used alongside the aligned reference downstream.
-/// The loop should continue processing remaining gap characters after native is exhausted.
 pub fn stretch_sequence_to_alignment(aligned_version: &[u8], native_version: &[u8]) -> Vec<u8> {
     assert!(
         aligned_version.len() >= native_version.len(),
@@ -245,17 +239,17 @@ pub fn stretch_sequence_to_alignment(aligned_version: &[u8], native_version: &[u
     let mut native_result = Vec::new();
     let mut native_index = 0;
     let mut aligned_index = 0;
-    while aligned_index < aligned_version.len() && native_index < native_version.len() {
-        if aligned_version.get(aligned_index).unwrap() == &b'-' {
-            aligned_index += 1;
+    // Walk the full aligned length so trailing gaps are preserved (result length ==
+    // aligned_version length); once native is exhausted, remaining columns must be gaps.
+    while aligned_index < aligned_version.len() {
+        if aligned_version[aligned_index] == b'-' || native_index >= native_version.len() {
             native_result.push(b'-');
         } else {
-            native_result.push(native_version.get(native_index).unwrap().clone());
-            aligned_index += 1;
+            native_result.push(native_version[native_index]);
             native_index += 1;
         }
+        aligned_index += 1;
     }
-    //assert!(aligned_index >= aligned_version.len() -1 && native_index >= native_version.len() -1);
     native_result
 }
 
@@ -577,11 +571,11 @@ mod tests {
 
     #[test]
     fn test_stretch_sequence_to_alignment_all_gaps() {
-        // When native is empty, loop exits immediately; trailing gaps are not emitted
+        // All-gap alignment with empty native: every column is a gap.
         let aligned = b"----";
         let native = b"";
         let result = stretch_sequence_to_alignment(aligned, native);
-        assert_eq!(result, b"".to_vec());
+        assert_eq!(result, b"----".to_vec());
     }
 
     #[test]
@@ -594,11 +588,11 @@ mod tests {
 
     #[test]
     fn test_stretch_sequence_to_alignment_trailing_gap() {
-        // Loop exits once native is consumed; trailing gaps after native are not emitted
+        // Trailing gaps after native is consumed are preserved (result length == aligned length).
         let aligned = b"ACGT-";
         let native = b"ACGT";
         let result = stretch_sequence_to_alignment(aligned, native);
-        assert_eq!(result, b"ACGT".to_vec());
+        assert_eq!(result, b"ACGT-".to_vec());
     }
 
     #[test]

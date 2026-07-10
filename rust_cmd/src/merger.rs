@@ -465,12 +465,11 @@ pub fn alignment_rate_and_consensus(
 
     for i in 0..alignment_1.len() {
         match (alignment_1[i], alignment_2[i]) {
-            // TODO: BUG - This arm matches when a == b INCLUDING when both are FASTA_UNSET
-            // (both gaps). In the gap-gap case, it incorrectly accesses qual_scores at the
-            // current quality position (which corresponds to the next non-gap base, not a gap)
-            // and increments both quality position counters. This corrupts quality position
-            // tracking for all subsequent bases. The arm should exclude the case where both
-            // are FASTA_UNSET, e.g.: `(a, b) if a == b && a != FASTA_UNSET =>`
+            // both gaps: emit a gap and consume no qualities (neither read has a base here).
+            // Handled before the `a == b` arm so gap-gap doesn't wrongly advance the qual indices.
+            (a, b) if a == FASTA_UNSET && b == FASTA_UNSET => {
+                resulting_alignment.push(a.clone());
+            }
             (a, b) if a == b => {
                 resulting_alignment.push(a.clone());
                 resulting_quality_scores.push(combine_phred_scores(

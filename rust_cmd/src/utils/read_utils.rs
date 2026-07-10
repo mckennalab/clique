@@ -71,21 +71,14 @@ pub fn reverse_complement(dna: &[u8]) -> Vec<u8> {
         })
         .collect()
 }
-// TODO: BUG - `choose_multiple` samples WITHOUT replacement from the `bases` vector of length 4.
-// This means if `length` > 4, it will only return 4 elements (the entire vector), silently
-// truncating the output. For `length` <= 4, it returns a subset without repeats, which means
-// it cannot generate sequences like "AAAA". This should use `choose` with replacement in a loop,
-// or use `(0..length).map(|_| *bases.choose(&mut rng).unwrap()).collect()`.
 pub fn random_sequence(length: usize) -> String {
     let bases = vec![b'A', b'C', b'G', b'T'];
     let mut rng = rng();
 
+    // Sample with replacement so `length` can exceed 4 and repeats (e.g. "AAAA") are possible.
     String::from_utf8(
-        bases
-            .iter()
-            .choose_multiple(&mut rng, length)
-            .iter()
-            .map(|c| **c)
+        (0..length)
+            .map(|_| *bases.iter().choose(&mut rng).unwrap())
             .collect::<Vec<u8>>(),
     )
     .unwrap()
@@ -137,6 +130,14 @@ pub fn fake_reads(full_length: usize, permutation_leader_size: usize) -> Vec<Rea
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_random_sequence_length() {
+        // regression: sampling with replacement so length can exceed the 4-base alphabet.
+        assert_eq!(random_sequence(10).len(), 10);
+        assert_eq!(random_sequence(0).len(), 0);
+        assert!(random_sequence(20).bytes().all(|b| b"ACGT".contains(&b)));
+    }
 
     #[test]
     fn test_all_combinations_lengths() {

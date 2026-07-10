@@ -201,8 +201,7 @@ impl <'a, 's, 't>ReferenceManager<'a, 's, 't> {
 
         }
 
-        // TODO: BUG - `kmer_length` is hardcoded to 0 instead of using the `kmer_size` parameter.
-        UniqueKmerLookup{ kmer_length: 0, kmer_to_reference: unique_kmer_to_reference, reference_to_kmer: reference_to_unique, all_have_unique_mappings: all_unique }
+        UniqueKmerLookup{ kmer_length: *kmer_size, kmer_to_reference: unique_kmer_to_reference, reference_to_kmer: reference_to_unique, all_have_unique_mappings: all_unique }
     }
 
     pub fn match_references(&self, read: ReadSetContainer) -> Vec<&Reference<'s, 't>> {

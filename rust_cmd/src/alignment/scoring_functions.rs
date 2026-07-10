@@ -155,11 +155,6 @@ impl InversionScoring {
     }
 }
 
-// TODO: BUG - ConvexScoring::gap() ignores the `gap_score` and `gap_extend` fields entirely.
-// It only uses `gap_open + log10(length)`. The `gap_score` and `gap_extend` fields are defined
-// but never used, which is likely an oversight. Also, `gap(0)` will return `-Infinity`
-// because `log10(0.0) = -Infinity`.
-
 #[cfg(test)]
 mod tests {
     use super::*;

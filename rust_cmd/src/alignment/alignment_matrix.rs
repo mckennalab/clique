@@ -590,13 +590,11 @@ fn update_3d_score_local(alignment: &mut Alignment<Ix3>, sequence1: &[u8], seque
         alignment.scores[[x, y, 0]] = best_match.0;
         alignment.traceback[[x, y, 0]] = best_match.1;
     }
-    // TODO: BUG - Unlike `update_3d_score` below, this function does not apply `gap_multiplier` to
-    // the gap-extend penalty when continuing an existing gap. Lines 591 and 602 use bare
-    // `scoring_function.gap_extend()` instead of `scoring_function.gap_extend() * gap_multiplier`.
-    // This makes terminal gap extensions more expensive than intended when `final_gap_multiplier < 1.0`.
     {
+        // Apply `gap_multiplier` to the gap-extend transition too (as `x1` does for open), so
+        // terminal gap extensions are consistently discounted when `final_gap_multiplier < 1.0`.
         let best_gap_x = three_way_max_and_direction(
-            &(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend()),
+            &(alignment.scores[[x - 1, y, 1]] + scoring_function.gap_extend() * gap_multiplier),
             &(alignment.scores[[x - 1, y, 2]] + x1),
             &(alignment.scores[[x - 1, y, 0]] + x1));
 
@@ -607,7 +605,7 @@ fn update_3d_score_local(alignment: &mut Alignment<Ix3>, sequence1: &[u8], seque
     {
         let best_gap_y = three_way_max_and_direction(
             &(alignment.scores[[x, y - 1, 1]] + x1),
-            &(alignment.scores[[x, y - 1, 2]] + (scoring_function.gap_extend())),
+            &(alignment.scores[[x, y - 1, 2]] + (scoring_function.gap_extend() * gap_multiplier)),
             &(alignment.scores[[x, y - 1, 0]] + x1));
 
 
@@ -765,13 +763,13 @@ impl AlignmentResult {
             .set_sequence(seq.as_bytes().into())
             .set_cigar(Cigar::from_iter(self.cigar_string.iter().map(|m| m.to_op()).into_iter()).clone())
             .set_alignment_start(noodles_core::Position::new(self.reference_start+1).unwrap())
-            // TODO: BUG - Quality scores from `self.read_quals` are thrown away: both match arms produce the
-            // same hardcoded `vec![b'H'; seq.len()]`, so the Some branch never uses its `_x`. The real qual
-            // computation is commented out. Also, `b'H'` is ASCII 72, which noodles writes as raw Phred 72
-            // (above the Illumina max of 93 but still a nonsense value) rather than the intended Phred ~39.
+            // Use the read's own (raw Phred) qualities when they line up with the emitted
+            // sequence, clamped to the SAM maximum of 93; otherwise fall back to a flat Q40.
             .set_quality_scores(match &self.read_quals {
-                Some(_x) => { QualityScores::from(vec![b'H'; seq.len()]) }, //QualityScores::from(x.clone().iter().map(|x| u8::from(min(128,max(33,*x)))).collect::<Vec<u8>>()) }
-                None => { QualityScores::from(vec![b'H'; seq.len()]) }
+                Some(x) if x.len() == seq.len() => {
+                    QualityScores::from(x.iter().map(|q| (*q).min(93)).collect::<Vec<u8>>())
+                }
+                _ => { QualityScores::from(vec![40u8; seq.len()]) }
             })
             .set_reference_sequence_id(*reference_id as usize)
             .set_flags(Flags::empty())

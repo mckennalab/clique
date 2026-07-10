@@ -154,11 +154,9 @@ impl NucCounts {
             // `calculate_qual_scores`), so use them directly rather than normalizing twice.
             let allele_props = combine_qual_scores(bases.as_slice(), quals.as_slice(), &self.ref_base, &0.75);
             //println!("{:?}",qual_normalized);
-            // TODO: BUG - `index_of_max` is computed from a 4-element array [a,c,g,t] so it can
-            // only be 0-3. The match arm `4 => (b'N', ...)` is dead code. N counts are never
-            // considered when picking the consensus base even if N is the most frequent.
-            // Should be `[self.a, self.c, self.g, self.t, self.n]`.
-            let index_of_max: usize = [self.a, self.c, self.g, self.t]
+            // Include N so a position dominated by N calls N (index 4) rather than a spurious
+            // minority real base; the `4 => (b'N', ...)` arm below is now reachable.
+            let index_of_max: usize = [self.a, self.c, self.g, self.t, self.n]
                 .iter()
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.cmp(b))
@@ -299,17 +297,17 @@ impl AlignmentCandidate {
 
             match (existing_ref_base, incoming_ref_base) {
                 // we're in an insertion on both references -- we're not going to concern ourselves with resolving multiple paths and just record insertion bases
-                // TODO: BUG - This arm consumes a read base (via `counts.update(*incoming_read_base, ...)`) but
-                // never advances `incoming_read_qual_index` when that read base is non-gap. All subsequent qualities
-                // are then off-by-one (or more, cumulatively) for the rest of this alignment. Compare to the
-                // `ReferenceStatus::Original` arms below, which correctly guard `incoming_read_qual_index += 1` with
-                // `if *incoming_read_base != b'-'`.
                 (ReferenceStatus::Insertion { base: _, counts  }, b'-') => {
                     counts.update(*incoming_read_base, Some(*incoming_read_qual));
                     //println!("step1 {} {:?}", *incoming_read_base as char, counts);
 
                     incoming_ref_index += 1;
                     existing_index += 1;
+                    // advance the quality index for the consumed read base (as the Original arms
+                    // do), otherwise subsequent qualities are cumulatively off-by-one.
+                    if *incoming_read_base != b'-' {
+                        incoming_read_qual_index += 1;
+                    }
                 }
                 // an existing insertion to the reference but the new read isn't an insertion -- just skip over it
                 (ReferenceStatus::Insertion { base: _, counts: _ }, _new_ref) => {
@@ -370,7 +368,8 @@ impl AlignmentCandidate {
                     match base_and_qual.0 {
                         b'-' => {cigar_tokens.push(AlignmentTag::Del(1))}
                         _ => {
-                            resulting_alignmented_qual.push(base_and_qual.1.unwrap() + 33);
+                            // store the raw Phred quality (the SAM writer applies the +33 offset)
+                            resulting_alignmented_qual.push(base_and_qual.1.unwrap());
                             cigar_tokens.push(AlignmentTag::MatchMismatch(1));
                         }
                     }
@@ -386,7 +385,8 @@ impl AlignmentCandidate {
                         b'-' => {panic!("Can't insert a deletion")}
                         _ => {
                             cigar_tokens.push(AlignmentTag::Ins(1));
-                            resulting_alignmented_qual.push(base_qual.1.unwrap() + 33);
+                            // store the raw Phred quality (the SAM writer applies the +33 offset)
+                            resulting_alignmented_qual.push(base_qual.1.unwrap());
                         }
                     }
                 }

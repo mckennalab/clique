@@ -600,8 +600,9 @@ pub fn sort_reads_from_bam_file(
 /// * `record` - The BAM record to process
 ///
 /// # Returns
-/// * `Some(SortingReadSetContainer)` - If tag extraction fails (valid tags not extracted)
-/// * `None` - If valid tags were extracted successfully
+/// * `Some(SortingReadSetContainer)` - if valid tags were extracted
+/// * `None` - if tag extraction failed (invalid tags); the caller counts this as
+///   `failed_alignment_creation`
 ///
 /// # Process
 /// 1. Extracts sequence, alignment position, CIGAR string, and quality scores from BAM record
@@ -609,12 +610,6 @@ pub fn sort_reads_from_bam_file(
 /// 3. Stretches alignment to match reference sequence
 /// 4. Extracts tagged sequences and validates tag extraction
 /// 5. Creates alignment result with all necessary information
-///
-// TODO: BUG - The `Returns` docstring above is inverted relative to the implementation below.
-// The code returns `Some(...)` when `invalid_tag` is FALSE (i.e. tags are valid) and `None`
-// when tags are invalid. The doc comment states the opposite, which could mislead callers
-// reasoning about filtering counts (e.g. `failed_alignment_creation += 1` in `sort_reads_from_bam_file`
-// is incremented on `None`, which is the invalid-tag case, not the valid-tag case the docs describe).
 fn create_sorted_read_container(
     reference_name: &String,
     reference_manager: &&ReferenceManager,

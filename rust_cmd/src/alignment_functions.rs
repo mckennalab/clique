@@ -41,22 +41,19 @@ use ::{Aligner as RustAligner, FASTA_UNSET};
 
 /// Compute the affine alignment score between `a` and `b` with the given substitution,
 /// gap-open, and gap-extend penalties.
-// TODO: BUG - This function accepts `mismatch`, `gap_open`, and `gap_extend` parameters but ignores
-// all three. The scoring closure hardcodes 1/-1 instead of using `mismatch`, and the aligner
-// hardcodes -5/-1 instead of using `gap_open`/`gap_extend`. Additionally, the N-base check is
-// one-directional: `a == b'N'` is checked but `b == b'N'` is not, so N in the reference is
-// treated as a mismatch (inconsistent with AffineScoring::match_mismatch which checks both).
 #[allow(dead_code)]
 fn rust_bio_alignment(
     read: &[u8],
     reference: &[u8],
-    _mismatch: &i32,
-    _gap_open: &i32,
-    _gap_extend: &i32
+    mismatch: &i32,
+    gap_open: &i32,
+    gap_extend: &i32
 ) -> Vec<AlignmentOperation> {
-    let score = |a: u8, b: u8| if a == b || a == b'N' { 1i32 } else { -1i32 };
-    // gap open score: -5, gap extension score: -1
-    let mut aligner = Aligner::with_capacity(read.len(), reference.len(), -5, -1, &score);
+    // A match rewards +1; mismatch and gap penalties come from the (positive-magnitude)
+    // parameters, applied as negative costs. `N` matches either base (symmetric check).
+    let mismatch_penalty = -mismatch.abs();
+    let score = |a: u8, b: u8| if a == b || a == b'N' || b == b'N' { 1i32 } else { mismatch_penalty };
+    let mut aligner = Aligner::with_capacity(read.len(), reference.len(), -gap_open.abs(), -gap_extend.abs(), &score);
     let alignment = aligner.global(reference,read);
     // x is global (target sequence) and y is local (reference sequence)
     alignment.operations
@@ -145,7 +142,9 @@ pub fn align_reads(
             let name = &String::from_utf8(xx.name().clone()).unwrap();
 
             let seq_len = &xx.seq().len();
-            let qual = Some(xx.quals.as_ref().unwrap().clone());
+            // FASTQ qualities are ASCII Phred+33; strip the offset to raw Phred for the aligned
+            // read (the BAM writer re-applies +33 on output).
+            let qual = Some(xx.quals.as_ref().unwrap().iter().map(|b| b.saturating_sub(33)).collect::<Vec<u8>>());
             if seq_len < &max_read_size {
                 let aligned = align_to_reference_choices(
                     name,
@@ -556,10 +555,8 @@ pub fn align_to_reference_choices(
             None
         }
         1 => {
-            // TODO: BUG - Hardcodes reference key as 0. The `references` BTreeMap may not have key 0
-            // if the single reference was inserted with a different key. Should use
-            // `rm.references.values().next().unwrap()` instead.
-            let ref_base = &rm.references.get(&0).unwrap();
+            // exactly one reference: take the sole entry (its map key is not guaranteed to be 0).
+            let ref_base = &rm.references.values().next().unwrap();
             let ref_name = String::from_utf8(ref_base.name.clone()).unwrap();
             let (forward_oriented_seq, oriented_quals) = if !read_structure.known_strand {
                 let orientation =
