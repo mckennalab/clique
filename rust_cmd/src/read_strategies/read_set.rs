@@ -62,7 +62,7 @@ unsafe impl Send for ReadIterator {}
 unsafe impl Sync for ReadIterator {}
 
 pub struct ReadIterator {
-    read_one: Option<Records<BufReader<Reader>>>,
+    read_one: Records<BufReader<Reader>>,
     read_two: Option<Records<BufReader<Reader>>>,
     index_one: Option<Records<BufReader<Reader>>>,
     index_two: Option<Records<BufReader<Reader>>>,
@@ -79,12 +79,10 @@ impl ReadIterator
                index_1: Option<PathBuf>,
                index_2: Option<PathBuf>,
     ) -> ReadIterator {
-        let r_one = ReadIterator::open_reader(&Some(&read_1));
-        if r_one.is_none() { panic!("Unable to open input file"); }
-
-        let read2 = if read_2.is_some() { ReadIterator::open_reader(&Some(&read_2.clone().unwrap())) } else { None };
-        let index1 = if index_1.is_some() { ReadIterator::open_reader(&Some(&index_1.clone().unwrap())) } else { None };
-        let index2 = if index_2.is_some() { ReadIterator::open_reader(&Some(&index_2.clone().unwrap())) } else { None };
+        let r_one = ReadIterator::open_reader(&read_1, "read 1");
+        let read2 = ReadIterator::open_optional_reader(read_2, "read 2");
+        let index1 = ReadIterator::open_optional_reader(index_1, "index 1");
+        let index2 = ReadIterator::open_optional_reader(index_2, "index 2");
 
         ReadIterator {
             read_one: r_one,
@@ -96,13 +94,107 @@ impl ReadIterator
         }
     }
 
-    fn open_reader(check_path: &Option<&PathBuf>) -> Option<Records<BufReader<Reader>>> {
-        if check_path.is_some() && check_path.as_ref().unwrap().exists() {
-            info!("Opening file: {:?}", check_path);
-            Some(FqReader::new(Reader::from_path(check_path.unwrap()).unwrap()).records())
-        } else {
-            info!("Unable to open file: {:?}", check_path);
-            None
+    fn open_reader(path: &PathBuf, label: &str) -> Records<BufReader<Reader>> {
+        if !path.exists() {
+            panic!("Unable to open {} FASTQ file: {}", label, path.display());
+        }
+
+        info!("Opening {} file: {}", label, path.display());
+        let reader = Reader::from_path(path).unwrap_or_else(|error| {
+            panic!(
+                "Unable to open {} FASTQ file {}: {:?}",
+                label,
+                path.display(),
+                error
+            )
+        });
+        FqReader::new(reader).records()
+    }
+
+    fn open_optional_reader(
+        path: Option<PathBuf>,
+        label: &str,
+    ) -> Option<Records<BufReader<Reader>>> {
+        match path {
+            None => None,
+            Some(path) if path == PathBuf::from("NONE") => None,
+            Some(path) => Some(ReadIterator::open_reader(&path, label)),
+        }
+    }
+
+    fn canonical_read_id(id: &str) -> &str {
+        id.strip_suffix("/1")
+            .or_else(|| id.strip_suffix("/2"))
+            .or_else(|| id.strip_suffix("/3"))
+            .or_else(|| id.strip_suffix("/4"))
+            .unwrap_or(id)
+    }
+
+    fn validate_record(record: &Record, label: &str, record_number: usize) {
+        if let Err(error) = record.check() {
+            panic!(
+                "Invalid {} FASTQ record {}: {}",
+                label, record_number, error
+            );
+        }
+    }
+
+    fn next_companion(
+        reader: &mut Option<Records<BufReader<Reader>>>,
+        label: &str,
+        expected_id: &str,
+        record_number: usize,
+    ) -> Option<Record> {
+        let records = match reader.as_mut() {
+            None => return None,
+            Some(records) => records,
+        };
+        let record = match records.next() {
+            Some(Ok(record)) => record,
+            Some(Err(error)) => panic!(
+                "Unable to parse {} FASTQ record {}: {:?}",
+                label, record_number, error
+            ),
+            None => panic!(
+                "{} FASTQ ended before read 1 at record {}",
+                label, record_number
+            ),
+        };
+        ReadIterator::validate_record(&record, label, record_number);
+
+        let actual_id = ReadIterator::canonical_read_id(record.id());
+        if actual_id != expected_id {
+            panic!(
+                "FASTQ identifiers differ at record {}: read 1 is '{}', {} is '{}'",
+                record_number,
+                expected_id,
+                label,
+                actual_id
+            );
+        }
+
+        Some(record)
+    }
+
+    fn assert_companion_exhausted(
+        reader: &mut Option<Records<BufReader<Reader>>>,
+        label: &str,
+        reads_processed: usize,
+    ) {
+        if let Some(records) = reader.as_mut() {
+            match records.next() {
+                None => {}
+                Some(Ok(record)) => panic!(
+                    "{} FASTQ contains extra record '{}' after read 1 ended at {} records",
+                    label,
+                    record.id(),
+                    reads_processed
+                ),
+                Some(Err(error)) => panic!(
+                    "Unable to parse {} FASTQ after read 1 ended at {} records: {:?}",
+                    label, reads_processed, error
+                ),
+            }
         }
     }
 
@@ -111,25 +203,65 @@ impl Iterator for ReadIterator {
     type Item = ReadSetContainer;
 
     fn next(&mut self) -> Option<ReadSetContainer> {
-        let next_read_one = self.read_one.as_mut().unwrap().next();
-        if next_read_one.is_some() {
-            match next_read_one.unwrap() {
-                Ok(v) => {
-                    Some(ReadSetContainer {
-                        read_one: v,
-                        read_two: unwrap_reader(&mut self.read_two),
-                        index_one: unwrap_reader(&mut self.index_one),
-                        index_two: unwrap_reader(&mut self.index_two),
-                    })
-                }
-                Err(e) => {
-                    println!("error parsing header: {:?}", e);
-                    None
-                }
+        match self.read_one.next() {
+            Some(Ok(read_one)) => {
+                let record_number = self.reads_processed + 1;
+                ReadIterator::validate_record(&read_one, "read 1", record_number);
+                let expected_id = ReadIterator::canonical_read_id(read_one.id()).to_string();
+                let read_two = ReadIterator::next_companion(
+                    &mut self.read_two,
+                    "read 2",
+                    &expected_id,
+                    record_number,
+                );
+                let index_one = ReadIterator::next_companion(
+                    &mut self.index_one,
+                    "index 1",
+                    &expected_id,
+                    record_number,
+                );
+                let index_two = ReadIterator::next_companion(
+                    &mut self.index_two,
+                    "index 2",
+                    &expected_id,
+                    record_number,
+                );
+                self.reads_processed += 1;
+
+                Some(ReadSetContainer {
+                    read_one,
+                    read_two,
+                    index_one,
+                    index_two,
+                })
             }
-        } else {
-            info!("Done processing reads");
-            None
+            Some(Err(error)) => {
+                self.broken_reads += 1;
+                panic!(
+                    "Unable to parse read 1 FASTQ record {}: {:?}",
+                    self.reads_processed + 1,
+                    error
+                );
+            }
+            None => {
+                ReadIterator::assert_companion_exhausted(
+                    &mut self.read_two,
+                    "read 2",
+                    self.reads_processed,
+                );
+                ReadIterator::assert_companion_exhausted(
+                    &mut self.index_one,
+                    "index 1",
+                    self.reads_processed,
+                );
+                ReadIterator::assert_companion_exhausted(
+                    &mut self.index_two,
+                    "index 2",
+                    self.reads_processed,
+                );
+                info!("Done processing {} reads", self.reads_processed);
+                None
+            }
         }
     }
 
@@ -140,9 +272,140 @@ mod tests {
     use super::*;
     use bio::io::fastq::Record;
     use serde_yaml;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     fn make_record(id: &str, seq: &[u8], qual: &[u8]) -> Record {
         Record::with_attrs(id, None, seq, qual)
+    }
+
+    fn write_fastq(contents: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    #[test]
+    fn test_read_iterator_validates_paired_records() {
+        let read_one = write_fastq("@spot/1\nACGT\n+\nHHHH\n");
+        let read_two = write_fastq("@spot/2\nTGCA\n+\nIIII\n");
+        let mut iterator = ReadIterator::new(
+            read_one.path().to_path_buf(),
+            Some(read_two.path().to_path_buf()),
+            None,
+            None,
+        );
+
+        let record = iterator.next().unwrap();
+        assert_eq!(record.read_one.id(), "spot/1");
+        assert_eq!(record.read_two.unwrap().id(), "spot/2");
+        assert!(iterator.next().is_none());
+        assert_eq!(iterator.reads_processed, 1);
+    }
+
+    #[test]
+    fn test_read_iterator_accepts_none_sentinel() {
+        let read_one = write_fastq("@spot\nACGT\n+\nHHHH\n");
+        let iterator = ReadIterator::new(
+            read_one.path().to_path_buf(),
+            Some(PathBuf::from("NONE")),
+            Some(PathBuf::from("NONE")),
+            Some(PathBuf::from("NONE")),
+        );
+
+        assert_eq!(iterator.count(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "FASTQ identifiers differ")]
+    fn test_read_iterator_rejects_mismatched_ids() {
+        let read_one = write_fastq("@spot_a\nACGT\n+\nHHHH\n");
+        let read_two = write_fastq("@spot_b\nTGCA\n+\nIIII\n");
+        let mut iterator = ReadIterator::new(
+            read_one.path().to_path_buf(),
+            Some(read_two.path().to_path_buf()),
+            None,
+            None,
+        );
+
+        iterator.next();
+    }
+
+    #[test]
+    #[should_panic(expected = "ended before read 1")]
+    fn test_read_iterator_rejects_shorter_companion() {
+        let read_one = write_fastq(
+            "@spot_1\nACGT\n+\nHHHH\n@spot_2\nACGT\n+\nHHHH\n",
+        );
+        let read_two = write_fastq("@spot_1\nTGCA\n+\nIIII\n");
+        let mut iterator = ReadIterator::new(
+            read_one.path().to_path_buf(),
+            Some(read_two.path().to_path_buf()),
+            None,
+            None,
+        );
+
+        assert!(iterator.next().is_some());
+        iterator.next();
+    }
+
+    #[test]
+    #[should_panic(expected = "contains extra record")]
+    fn test_read_iterator_rejects_longer_companion() {
+        let read_one = write_fastq("@spot_1\nACGT\n+\nHHHH\n");
+        let read_two = write_fastq(
+            "@spot_1\nTGCA\n+\nIIII\n@spot_2\nTGCA\n+\nIIII\n",
+        );
+        let mut iterator = ReadIterator::new(
+            read_one.path().to_path_buf(),
+            Some(read_two.path().to_path_buf()),
+            None,
+            None,
+        );
+
+        assert!(iterator.next().is_some());
+        iterator.next();
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid read 1 FASTQ record")]
+    fn test_read_iterator_rejects_malformed_read_one() {
+        let read_one = write_fastq("@spot\nACGT\n+\nHHH\n");
+        let mut iterator = ReadIterator::new(read_one.path().to_path_buf(), None, None, None);
+
+        iterator.next();
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid read 2 FASTQ record")]
+    fn test_read_iterator_rejects_malformed_companion() {
+        let read_one = write_fastq("@spot\nACGT\n+\nHHHH\n");
+        let read_two = write_fastq("@spot\nTGCA\n+\nIII\n");
+        let mut iterator = ReadIterator::new(
+            read_one.path().to_path_buf(),
+            Some(read_two.path().to_path_buf()),
+            None,
+            None,
+        );
+
+        iterator.next();
+    }
+
+    #[test]
+    #[should_panic(expected = "Unable to open read 2 FASTQ file")]
+    fn test_read_iterator_rejects_missing_companion_path() {
+        let read_one = write_fastq("@spot\nACGT\n+\nHHHH\n");
+        let missing_read_two = NamedTempFile::new().unwrap();
+        let missing_read_two_path = missing_read_two.path().to_path_buf();
+        drop(missing_read_two);
+
+        ReadIterator::new(
+            read_one.path().to_path_buf(),
+            Some(missing_read_two_path),
+            None,
+            None,
+        );
     }
 
     #[test]
@@ -218,25 +481,5 @@ mod tests {
         assert_eq!(deserialized.read_one.id(), "r1");
         assert_eq!(deserialized.read_two.as_ref().unwrap().id(), "r2");
         assert!(deserialized.index_one.is_none());
-    }
-}
-
-/// A helper function to manage unwrapping reads, which has a lot of layers
-pub fn unwrap_reader(read: &mut Option<Records<BufReader<Reader>>>) -> Option<Record> {
-    match read
-    {
-        Some(ref mut read_pointer) => {
-            let next = read_pointer.next();
-            match next {
-                Some(rp) => {
-                    match rp {
-                        Ok(x) => Some(x),
-                        Err(_) => None,
-                    }
-                }
-                None => None,
-            }
-        }
-        None => None,
     }
 }
