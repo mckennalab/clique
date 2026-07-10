@@ -469,6 +469,64 @@ pub struct AlignmentWithRef {
     ref_sequence: Vec<u8>,
 }
 
+fn alignment_score(candidate: &AlignmentWithRef) -> f64 {
+    candidate
+        .alignment
+        .as_ref()
+        .map(|alignment| alignment.score)
+        .unwrap_or(f64::NEG_INFINITY)
+}
+
+fn select_best_alignment(
+    forward: Option<AlignmentWithRef>,
+    reverse_complemented: Option<AlignmentWithRef>,
+) -> Option<AlignmentWithRef> {
+    match (forward, reverse_complemented) {
+        (Some(forward), Some(reverse_complemented)) => {
+            if alignment_score(&reverse_complemented) > alignment_score(&forward) {
+                Some(reverse_complemented)
+            } else {
+                Some(forward)
+            }
+        }
+        (Some(forward), None) => Some(forward),
+        (None, Some(reverse_complemented)) => Some(reverse_complemented),
+        (None, None) => None,
+    }
+}
+
+fn search_multiple_references(
+    read_name: &String,
+    read: &Vec<u8>,
+    qual_sequence: Option<Vec<u8>>,
+    rm: &ReferenceManager,
+    fast_lookup: bool,
+    alignment_mat: &mut Alignment<Ix3>,
+    my_aff_score: &AffineScoring,
+) -> Option<AlignmentWithRef> {
+    if fast_lookup {
+        quick_alignment_search(
+            read_name,
+            read,
+            qual_sequence,
+            rm,
+            alignment_mat,
+            my_aff_score,
+            &0.90,
+        )
+    } else {
+        exhaustive_alignment_search(
+            read_name,
+            read,
+            qual_sequence,
+            rm,
+            alignment_mat,
+            my_aff_score,
+            None,
+        )
+    }
+}
+
 /// Aligns two DNA or RNA sequences using affine alignment or a specialized alignment with anchors.
 ///
 /// This function aligns two sequences represented by `Vec<FastaBase>` using either affine alignment
@@ -616,26 +674,43 @@ pub fn align_to_reference_choices(
             })
         }
         x if x > 1 => {
-            if *fast_lookup {
-                quick_alignment_search(
+            if read_structure.known_strand {
+                search_multiple_references(
                     read_name,
                     read,
                     qual_sequence,
-                    &rm,
+                    rm,
+                    *fast_lookup,
                     alignment_mat,
                     my_aff_score,
-                    &0.90,
-                ) // TODO: parameterize this
-            } else {
-                exhaustive_alignment_search(
-                    read_name,
-                    read,
-                    qual_sequence,
-                    &rm,
-                    alignment_mat,
-                    my_aff_score,
-                    None,
                 )
+            } else {
+                let forward = search_multiple_references(
+                    read_name,
+                    read,
+                    qual_sequence.clone(),
+                    rm,
+                    *fast_lookup,
+                    alignment_mat,
+                    my_aff_score,
+                );
+
+                let reverse_complemented_read = reverse_complement(read);
+                let reverse_complemented_qualities = qual_sequence.map(|mut qualities| {
+                    qualities.reverse();
+                    qualities
+                });
+                let reverse_complemented = search_multiple_references(
+                    read_name,
+                    &reverse_complemented_read,
+                    reverse_complemented_qualities,
+                    rm,
+                    *fast_lookup,
+                    alignment_mat,
+                    my_aff_score,
+                );
+
+                select_best_alignment(forward, reverse_complemented)
             }
         }
         x => {
@@ -932,12 +1007,106 @@ mod tests {
         create_scoring_record_3d, AlignmentTag, AlignmentType,
     };
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
-    use crate::alignment_functions::{cigar_to_alignment, exhaustive_alignment_search, simplify_cigar_string};
+    use crate::alignment_functions::{
+        align_to_reference_choices, cigar_to_alignment, exhaustive_alignment_search,
+        simplify_cigar_string,
+    };
     use crate::read_strategies::sequence_layout::{
-        AlignedReadOrientation, ReadPosition, SequenceLayout,
+        AlignedReadOrientation, ReadPosition, ReferenceRecord, SequenceLayout,
     };
     use crate::reference::fasta_reference::ReferenceManager;
+    use crate::utils::read_utils::reverse_complement;
     use bio::alignment::AlignmentOperation;
+
+    fn multi_reference_layout(known_strand: bool) -> SequenceLayout {
+        let mut references = BTreeMap::new();
+        references.insert(
+            "forward_reference".to_string(),
+            ReferenceRecord {
+                sequence: "TTTTAAAACCCCGGGG".to_string(),
+                umi_configurations: BTreeMap::new(),
+                targets: vec![],
+                target_types: vec![],
+                target_locations: None,
+            },
+        );
+        references.insert(
+            "reverse_reference".to_string(),
+            ReferenceRecord {
+                sequence: "ACGTCAGTGGATCCAA".to_string(),
+                umi_configurations: BTreeMap::new(),
+                targets: vec![],
+                target_types: vec![],
+                target_locations: None,
+            },
+        );
+
+        SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 {
+                orientation: AlignedReadOrientation::Forward,
+            }],
+            known_strand,
+            references,
+        }
+    }
+
+    #[test]
+    fn test_multi_reference_unknown_strand_checks_reverse_complement() {
+        let layout = multi_reference_layout(false);
+        let reference = layout
+            .references
+            .get("reverse_reference")
+            .unwrap()
+            .sequence
+            .as_bytes()
+            .to_vec();
+        let read = reverse_complement(&reference);
+        let qualities = (0..read.len() as u8).collect::<Vec<u8>>();
+        let mut expected_qualities = qualities.clone();
+        expected_qualities.reverse();
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let affine_score = AffineScoring::default_dna();
+        let inversion_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        for fast_lookup in [true, false] {
+            let mut alignment_matrix = create_scoring_record_3d(
+                reference_manager.longest_ref + 1,
+                read.len() + 1,
+                AlignmentType::Affine,
+                false,
+            );
+            let result = align_to_reference_choices(
+                &"reverse_read".to_string(),
+                &read,
+                Some(qualities.clone()),
+                &reference_manager,
+                &fast_lookup,
+                &layout,
+                &mut alignment_matrix,
+                &affine_score,
+                &inversion_score,
+                &false,
+                2.0,
+                0,
+                &read.len(),
+            )
+            .expect("reverse-complemented read should align");
+            let alignment = result.alignment.expect("alignment should be present");
+
+            assert_eq!(result.ref_name, b"reverse_reference");
+            assert_eq!(alignment.read_aligned, reference);
+            assert_eq!(alignment.read_quals, Some(expected_qualities.clone()));
+        }
+    }
 
     #[test]
     fn test_find_best_reference() {
