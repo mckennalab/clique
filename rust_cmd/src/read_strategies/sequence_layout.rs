@@ -143,6 +143,13 @@ pub struct UMIConfiguration {
     pub levenshtein_distance: Option<bool>,
 }
 
+impl UMIConfiguration {
+    /// Known-tag correction uses Levenshtein distance unless explicitly disabled.
+    pub fn uses_levenshtein_distance(&self) -> bool {
+        self.levenshtein_distance.unwrap_or(true)
+    }
+}
+
 
 #[derive(Debug, PartialEq, Hash, Serialize, Deserialize, Clone, Eq)]
 pub enum TargetType {
@@ -377,6 +384,30 @@ mod tests {
     #[test]
     fn test_umi_padding_variants() {
         assert_ne!(UMIPadding::Left, UMIPadding::Right);
+    }
+
+    #[test]
+    fn test_levenshtein_distance_defaults_to_true() {
+        let mut config = UMIConfiguration {
+            symbol: '0',
+            file: Some("known_tags.txt".to_string()),
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::KnownTag,
+            length: 8,
+            order: 0,
+            pad: None,
+            max_distance: 1,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance: None,
+        };
+
+        assert!(config.uses_levenshtein_distance());
+        config.levenshtein_distance = Some(true);
+        assert!(config.uses_levenshtein_distance());
+        config.levenshtein_distance = Some(false);
+        assert!(!config.uses_levenshtein_distance());
     }
 
     /*

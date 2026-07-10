@@ -788,31 +788,37 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> LookupCollection 
     read_structure
         .references
         .iter()
-        .for_each(|(_name, reference)| {
+        .for_each(|(reference_name, reference)| {
             reference
                 .umi_configurations
                 .iter()
-                .for_each(|(_name, config)| match &config.file {
-                    None => {}
-                    Some(x) => {
-                        if config.levenshtein_distance.is_none() || config.levenshtein_distance.unwrap() == true {
+                .for_each(|(umi_name, config)| match (&config.sort_type, &config.file) {
+                    (UMISortType::KnownTag, None) => {
+                        panic!(
+                            "KnownTag UMI '{}' for reference '{}' must specify an allowlist file",
+                            umi_name, reference_name
+                        );
+                    }
+                    (UMISortType::KnownTag, Some(filename)) => {
+                        if config.uses_levenshtein_distance() {
                             let known_lookup = extract_known_list(config, &8);
 
                             let mut trie = Trie::new(config.length);
 
                             info!(
                                 "creating known lookup tree for file {}",
-                                config.file.clone().unwrap().clone()
+                                filename
                             );
                             known_lookup.iter().for_each(|sequence| {
                                 trie.insert(sequence, None, &config.max_distance);
                             });
                             debug!("creating kn");
-                            ret_trie.insert(x.clone(), trie);
+                            ret_trie.insert(filename.clone(), trie);
                         } else {
-                            ret_known_lookup.insert(x.clone(), KnownList::new(config));
+                            ret_known_lookup.insert(filename.clone(), KnownList::new(config));
                         }
                     }
+                    (UMISortType::DegenerateTag, _) => {}
                 })
         });
 
@@ -929,22 +935,21 @@ pub fn sort_level(
                         false => {
                             // write the previous bin, and add the current read to the next bin
                             match tag.sort_type {
-                                UMISortType::KnownTag => match tag.levenshtein_distance {
-                                    Some(true) => {
+                                UMISortType::KnownTag => {
+                                    if tag.uses_levenshtein_distance() {
                                         output_reads += bin.close_trie_known_list(
                                             &mut sender,
                                             tag,
                                             known_sequence_lists,
                                         );
-                                    }
-                                    None | Some(false) => {
+                                    } else {
                                         output_reads += bin.close_hamming_known_list(
                                             &mut sender,
                                             tag,
                                             known_sequence_lists,
                                         );
                                     }
-                                },
+                                }
                                 UMISortType::DegenerateTag => {
                                     output_reads += bin.close_degenerate_list(&mut sender);
                                 }
@@ -961,16 +966,15 @@ pub fn sort_level(
     match current_sorting_bin {
         None => {}
         Some(mut bin) => match tag.sort_type {
-            UMISortType::KnownTag => match tag.levenshtein_distance {
-                Some(true) => {
+            UMISortType::KnownTag => {
+                if tag.uses_levenshtein_distance() {
                     output_reads +=
                         bin.close_trie_known_list(&mut sender, tag, known_sequence_lists);
-                }
-                None | Some(false) => {
+                } else {
                     output_reads +=
                         bin.close_hamming_known_list(&mut sender, tag, known_sequence_lists);
                 }
-            },
+            }
             UMISortType::DegenerateTag => {
                 output_reads += bin.close_degenerate_list(&mut sender);
             }
@@ -1000,10 +1004,76 @@ pub fn sort_level(
 mod tests {
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
+    use std::collections::BTreeMap;
 
     const FASTA_A: u8 = b'A';
     #[allow(dead_code)]
     const FASTA_T: u8 = b'T';
+
+    fn known_tag_layout(file: Option<&str>, levenshtein_distance: Option<bool>) -> SequenceLayout {
+        let mut umi_configurations = BTreeMap::new();
+        umi_configurations.insert(
+            "cell_id".to_string(),
+            UMIConfiguration {
+                symbol: '0',
+                file: file.map(str::to_string),
+                reverse_complement_sequences: None,
+                sort_type: UMISortType::KnownTag,
+                length: 16,
+                order: 0,
+                pad: None,
+                max_distance: 1,
+                maximum_subsequences: None,
+                max_gaps: None,
+                minimum_collapsing_difference: None,
+                levenshtein_distance,
+            },
+        );
+
+        let mut references = BTreeMap::new();
+        references.insert(
+            "reference".to_string(),
+            ReferenceRecord {
+                sequence: "0000000000000000".to_string(),
+                umi_configurations,
+                targets: vec![],
+                target_types: vec![],
+                target_locations: Some(vec![]),
+            },
+        );
+
+        SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![],
+            known_strand: true,
+            references,
+        }
+    }
+
+    #[test]
+    fn test_known_lookup_defaults_to_levenshtein() {
+        let filename = "test_data/subset_barcode_list_500.txt";
+        let lookups = get_known_level_lookups(&known_tag_layout(Some(filename), None));
+
+        assert!(lookups.ret_trie.contains_key(filename));
+        assert!(!lookups.ret_known_lookup.contains_key(filename));
+    }
+
+    #[test]
+    fn test_known_lookup_uses_hamming_when_explicitly_disabled() {
+        let filename = "test_data/subset_barcode_list_500.txt";
+        let lookups = get_known_level_lookups(&known_tag_layout(Some(filename), Some(false)));
+
+        assert!(!lookups.ret_trie.contains_key(filename));
+        assert!(lookups.ret_known_lookup.contains_key(filename));
+    }
+
+    #[test]
+    #[should_panic(expected = "must specify an allowlist file")]
+    fn test_known_lookup_requires_file() {
+        get_known_level_lookups(&known_tag_layout(None, None));
+    }
 
     /// Generates a consensus sequence from multiple input sequences.
     ///

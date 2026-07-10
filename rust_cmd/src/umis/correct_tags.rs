@@ -404,24 +404,21 @@ impl SequenceCorrector {
         tag: &UMIConfiguration,
         lookup_collection: &mut LookupCollection,
     ) -> usize {
-        
-        match tag.levenshtein_distance {
-            Some(true) => {
-                let mut trie = lookup_collection
-                    .ret_trie
-                    .get_mut(&tag.file.clone().unwrap().clone());
-                let trie = trie
-                    .as_mut()
-                    .unwrap();
-                let final_correction = self.correct_known_list(trie);
-                info!("Closing and writing corrections...");
-                self.close_and_write_to_shard_writer(sender, final_correction)
-            }
-            None | Some(false) => {
-                panic!("Calling a trie when you should of called a known list")
-            }
+        if !tag.uses_levenshtein_distance() {
+            panic!("Called trie correction for a Hamming-distance known list");
         }
-        
+
+        let filename = tag
+            .file
+            .as_ref()
+            .expect("KnownTag UMI must specify an allowlist file");
+        let trie = lookup_collection
+            .ret_trie
+            .get_mut(filename)
+            .unwrap_or_else(|| panic!("Unable to find trie lookup for {}", filename));
+        let final_correction = self.correct_known_list(trie);
+        info!("Closing and writing corrections...");
+        self.close_and_write_to_shard_writer(sender, final_correction)
     }
 
     pub fn close_hamming_known_list(
@@ -430,26 +427,24 @@ impl SequenceCorrector {
         tag: &UMIConfiguration,
         lookup_collection: &mut LookupCollection,
     ) -> usize {
-        match tag.levenshtein_distance {
-            Some(false) => {
-                let mut kl = lookup_collection
-                    .ret_known_lookup
-                    .get_mut(&tag.file.clone().unwrap().clone());
-                let kl = kl
-                    .as_mut()
-                    .unwrap();
-                let final_correction = kl.correct_all(
-                    &(self.hash_map.iter().map(|(ky,_vl)| ky.clone()).collect::<Vec<Vec<u8>>>()),
-                    &(self.tag.max_distance as u32),
-                );
-                info!("Closing and writing corrections...");
-                self.close_and_write_to_shard_writer(sender, final_correction)
-            }
-            None | Some(true) => {
-                panic!("Calling a trie when you should of called a known list")
-            }
+        if tag.uses_levenshtein_distance() {
+            panic!("Called Hamming correction for a Levenshtein-distance known list");
         }
-        
+
+        let filename = tag
+            .file
+            .as_ref()
+            .expect("KnownTag UMI must specify an allowlist file");
+        let known_list = lookup_collection
+            .ret_known_lookup
+            .get_mut(filename)
+            .unwrap_or_else(|| panic!("Unable to find Hamming lookup for {}", filename));
+        let final_correction = known_list.correct_all(
+            &self.hash_map.keys().cloned().collect::<Vec<Vec<u8>>>(),
+            &(self.tag.max_distance as u32),
+        );
+        info!("Closing and writing corrections...");
+        self.close_and_write_to_shard_writer(sender, final_correction)
     }
 
     fn close_and_write_to_shard_writer(
