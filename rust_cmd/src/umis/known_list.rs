@@ -78,6 +78,7 @@ pub struct KnownList {
     vantage_tree: Tree<FastaString>,
     string_length: usize,
     exact_matches: HashMap<FastaString, BestF32Hits>,
+    approximate_matches: HashMap<(FastaString, u32), BestF32Hits>,
     input_list: Vec<FastaString>,
 }
 
@@ -106,6 +107,7 @@ impl KnownList {
             vantage_tree,
             string_length,
             exact_matches,
+            approximate_matches: HashMap::new(),
             input_list,
         }
     }
@@ -152,18 +154,36 @@ impl KnownList {
 
         match self.exact_matches.get(&string_rep) {
             None => {
+                let cache_key = (string_rep.clone(), *max_distance);
+                if let Some(cached) = self.approximate_matches.get(&cache_key) {
+                    return cached.clone();
+                }
+
                 let nearest = self.vantage_tree.find_nearest_custom(
                     &string_rep,
                     &(),
                     RadiusBasedNeighborhood::new(*max_distance),
                 );
 
+                let min_distance = nearest
+                    .values()
+                    .copied()
+                    .min()
+                    .unwrap_or_else(|| max_distance.saturating_add(1));
+                let mut hits = nearest
+                    .iter()
+                    .filter(|(_, distance)| **distance == min_distance)
+                    .map(|(id, _)| self.input_list[*id as usize].fa_u8.clone())
+                    .collect::<Vec<_>>();
+                hits.sort();
+                hits.dedup();
+
                 let ret = BestF32Hits {
-                    hits: nearest.iter().map(|(id, _dist)| self.input_list.get(*id as usize).unwrap().fa_u8.clone()).collect(),
-                    distance: nearest.iter().map(|(_id, dist)| *dist).next().unwrap_or(max_distance + 1),
+                    hits,
+                    distance: min_distance,
                 };
 
-                self.exact_matches.insert(string_rep.clone(), ret.clone());
+                self.approximate_matches.insert(cache_key, ret.clone());
                 ret
             }
             Some(x) => {
@@ -191,6 +211,35 @@ mod tests {
         umis::known_list::{KnownList},
     };
     use super::*;
+
+    fn known_list_from_sequences(sequences: Vec<Vec<u8>>) -> KnownList {
+        let string_length = sequences.first().unwrap().len();
+        let input_list = sequences
+            .into_iter()
+            .map(FastaString::new)
+            .collect::<Vec<_>>();
+        let vantage_tree = vpsearch::Tree::new(&input_list);
+        let exact_matches = input_list
+            .iter()
+            .map(|entry| {
+                (
+                    entry.clone(),
+                    BestF32Hits {
+                        hits: vec![entry.fa_u8.clone()],
+                        distance: 0,
+                    },
+                )
+            })
+            .collect();
+
+        KnownList {
+            vantage_tree,
+            string_length,
+            exact_matches,
+            approximate_matches: HashMap::new(),
+            input_list,
+        }
+    }
 
     #[test]
     fn test_fasta_string_new() {
@@ -285,6 +334,51 @@ mod tests {
         };
         let cloned = hit.clone();
         assert_eq!(hit, cloned);
+    }
+
+    #[test]
+    fn test_known_list_selects_unique_nearest_hit() {
+        let mut known_list =
+            known_list_from_sequences(vec![b"AAAA".to_vec(), b"AATT".to_vec()]);
+        let barcode = b"AAAC".to_vec();
+
+        let result = known_list.correct_to_known_list(&barcode, &2);
+        assert_eq!(result.hits, vec![b"AAAA".to_vec()]);
+        assert_eq!(result.distance, 1);
+
+        let corrections = known_list.correct_all(&vec![barcode.clone()], &2);
+        assert_eq!(corrections.get(&barcode), Some(&b"AAAA".to_vec()));
+    }
+
+    #[test]
+    fn test_known_list_preserves_nearest_hit_ties() {
+        let mut known_list =
+            known_list_from_sequences(vec![b"AAAA".to_vec(), b"AAAT".to_vec()]);
+        let barcode = b"AAAC".to_vec();
+
+        let result = known_list.correct_to_known_list(&barcode, &2);
+        assert_eq!(
+            result.hits,
+            vec![b"AAAA".to_vec(), b"AAAT".to_vec()]
+        );
+        assert_eq!(result.distance, 1);
+
+        assert!(known_list.correct_all(&vec![barcode], &2).is_empty());
+    }
+
+    #[test]
+    fn test_known_list_cache_respects_max_distance() {
+        let mut known_list = known_list_from_sequences(vec![b"AAAA".to_vec()]);
+        let barcode = b"AAAC".to_vec();
+
+        assert_eq!(
+            known_list.correct_to_known_list(&barcode, &1).hits,
+            vec![b"AAAA".to_vec()]
+        );
+
+        let outside_exact_radius = known_list.correct_to_known_list(&barcode, &0);
+        assert!(outside_exact_radius.hits.is_empty());
+        assert_eq!(outside_exact_radius.distance, 1);
     }
 
     #[test]
