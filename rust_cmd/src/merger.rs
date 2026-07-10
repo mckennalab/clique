@@ -301,20 +301,19 @@ impl UnifiedRead {
             }
             ((true, false, false, false), _) => {
                 self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
-                let sq: Vec<u8> = self.underlying_reads
-                    .read_one
-                    .seq()
-                    .iter()
-                    .map(|x| *x)
-                    .collect();
-                
+                let orientation = self
+                    .read_index_to_orientation
+                    .get(&0)
+                    .unwrap_or(&AlignedReadOrientation::Forward);
+
                 self.seq = Some(orient_sequence(
-                    sq.as_slice(),
-                    self.read_index_to_orientation.get(&0).unwrap_or(&AlignedReadOrientation::Forward)));
-                
-                self.quals = Some(
-                    self.underlying_reads.read_one.qual().to_vec()
-                )
+                    self.underlying_reads.read_one.seq(),
+                    orientation,
+                ));
+                self.quals = Some(orient_qualities(
+                    self.underlying_reads.read_one.qual(),
+                    orientation,
+                ));
             }
             _ => {
                 panic!(
@@ -539,6 +538,31 @@ mod tests {
         // sanity: base order from orient_sequence is reversed for the same orientation.
         assert_eq!(orient_sequence(b"ACGT", &AlignedReadOrientation::Reverse), b"TGCA".to_vec());
     }
+
+    #[test]
+    fn test_single_end_reverse_orientations_reverse_qualities() {
+        let cases = vec![
+            (AlignedReadOrientation::Reverse, b"CTGA".to_vec()),
+            (AlignedReadOrientation::ReverseComplement, b"GACT".to_vec()),
+        ];
+
+        for (orientation, expected_sequence) in cases {
+            let record = Record::with_attrs("single", None, b"AGTC", b"ABCD");
+            let read_set = ReadSetContainer::new_from_read1(record);
+            let layout = SequenceLayout {
+                aligner: None,
+                merge: None,
+                reads: vec![ReadPosition::Read1 { orientation }],
+                known_strand: true,
+                references: Default::default(),
+            };
+            let mut unified = UnifiedRead::new(layout, read_set);
+
+            assert_eq!(unified.seq(), &expected_sequence);
+            assert_eq!(unified.quals.as_ref().unwrap(), b"DCBA");
+        }
+    }
+
     use std::cmp::Ordering;
     use std::collections::BTreeMap;
 
