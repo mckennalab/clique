@@ -50,6 +50,7 @@ Each reference record contains:
 | `umi_configurations` | Map | UMI configurations (key is UMI name) |
 | `targets` | Array | List of target sequence strings |
 | `target_types` | Array | List of target types (must match length of targets) |
+| `target_locations` | Array | Optional zero-based target starts; required to disambiguate a specific repeated occurrence |
 
 ### UMI Configurations
 
@@ -125,6 +126,7 @@ references:
 - UMI configurations must have sequential order numbers starting at 0
 - UMI symbols must be unique ASCII digits (`0`-`9`), allowing at most 10 UMIs per reference
 - Target sequences and target type lists must be the same length
+- Target locations, when supplied, must match the target list length and reference sequence
 - Target sequences must be found within the reference sequence
 - Reference sequence must contain all symbols used in UMI configurations
 

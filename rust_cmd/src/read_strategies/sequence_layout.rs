@@ -217,14 +217,78 @@ pub struct ReferenceRecord {
 impl ReferenceRecord {
 
     pub fn fill_and_validate_target_positions(&mut self) {
-        assert!(self.target_locations.is_none());
-        let mut positions = Vec::new();
+        if let Some(positions) = self.target_locations.as_ref() {
+            assert_eq!(
+                positions.len(),
+                self.targets.len(),
+                "Target locations and target sequence lists must be the same length"
+            );
 
-        self.targets.iter().for_each(|target|
-            positions.push(match self.sequence.find(target.as_str()) {
-                Some(x) => x,
-                None => {panic!("Unable to find target {} in reference {}, please check your target sequences", target, self.sequence)}
-            }));
+            for (index, (target, start)) in self.targets.iter().zip(positions).enumerate() {
+                assert!(!target.is_empty(), "Target {} must not be empty", index);
+                let end = start.checked_add(target.len()).unwrap_or_else(|| {
+                    panic!("Target {} location overflows the reference", index)
+                });
+                assert_eq!(
+                    self.sequence.as_bytes().get(*start..end),
+                    Some(target.as_bytes()),
+                    "Target '{}' at location {} does not match reference sequence",
+                    target,
+                    start
+                );
+            }
+            return;
+        }
+
+        let mut positions = Vec::with_capacity(self.targets.len());
+        let mut next_search_start = BTreeMap::new();
+
+        for target in &self.targets {
+            assert!(!target.is_empty(), "Target sequences must not be empty");
+            let search_start = *next_search_start.get(target).unwrap_or(&0);
+            let position = self
+                .sequence
+                .as_bytes()
+                .get(search_start..)
+                .and_then(|suffix| {
+                    suffix
+                        .windows(target.len())
+                        .position(|window| window == target.as_bytes())
+                })
+                .map(|relative| search_start + relative)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Unable to find occurrence of target {} at or after position {} in reference {}, please specify target_locations",
+                        target,
+                        search_start,
+                        self.sequence
+                    )
+                });
+
+            positions.push(position);
+            next_search_start.insert(target.clone(), position + 1);
+        }
+
+        for (target, search_start) in next_search_start {
+            let additional_position = self
+                .sequence
+                .as_bytes()
+                .get(search_start..)
+                .and_then(|suffix| {
+                    suffix
+                        .windows(target.len())
+                        .position(|window| window == target.as_bytes())
+                })
+                .map(|relative| search_start + relative);
+
+            if let Some(position) = additional_position {
+                panic!(
+                    "Target '{}' has an additional occurrence at position {}; please specify target_locations",
+                    target,
+                    position
+                );
+            }
+        }
 
         self.target_locations = Some(positions);
     }
@@ -281,6 +345,64 @@ mod tests {
     #[should_panic]
     fn test_basic_yaml_readback_invalid_ordering2() {
         SequenceLayout::from_yaml(&String::from("test_data/test_layout_invalid2.yaml"));
+    }
+
+    #[test]
+    fn test_repeated_targets_infer_successive_occurrences() {
+        let mut reference = ReferenceRecord {
+            sequence: "AAAACCCCAAAA".to_string(),
+            umi_configurations: BTreeMap::new(),
+            targets: vec!["AAAA".to_string(), "AAAA".to_string()],
+            target_types: vec![TargetType::Cas9WT, TargetType::Cas9WT],
+            target_locations: None,
+        };
+
+        reference.fill_and_validate_target_positions();
+
+        assert_eq!(reference.target_locations, Some(vec![0, 8]));
+    }
+
+    #[test]
+    fn test_explicit_target_locations_are_preserved() {
+        let mut reference = ReferenceRecord {
+            sequence: "AAAACCCCAAAA".to_string(),
+            umi_configurations: BTreeMap::new(),
+            targets: vec!["AAAA".to_string(), "AAAA".to_string()],
+            target_types: vec![TargetType::Cas9WT, TargetType::Cas9WT],
+            target_locations: Some(vec![8, 0]),
+        };
+
+        reference.fill_and_validate_target_positions();
+
+        assert_eq!(reference.target_locations, Some(vec![8, 0]));
+    }
+
+    #[test]
+    #[should_panic(expected = "additional occurrence")]
+    fn test_ambiguous_target_requires_explicit_location() {
+        let mut reference = ReferenceRecord {
+            sequence: "AAAACCCCAAAA".to_string(),
+            umi_configurations: BTreeMap::new(),
+            targets: vec!["AAAA".to_string()],
+            target_types: vec![TargetType::Cas9WT],
+            target_locations: None,
+        };
+
+        reference.fill_and_validate_target_positions();
+    }
+
+    #[test]
+    #[should_panic(expected = "does not match reference sequence")]
+    fn test_explicit_target_locations_must_match_reference() {
+        let mut reference = ReferenceRecord {
+            sequence: "AAAACCCCAAAA".to_string(),
+            umi_configurations: BTreeMap::new(),
+            targets: vec!["AAAA".to_string()],
+            target_types: vec![TargetType::Cas9WT],
+            target_locations: Some(vec![4]),
+        };
+
+        reference.fill_and_validate_target_positions();
     }
 
 
