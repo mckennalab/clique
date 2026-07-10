@@ -400,7 +400,9 @@ pub struct SortedReadsFromBam {
 ///
 /// This function reads aligned reads from a BAM file, filters them based on quality criteria,
 /// extracts UMI tag information, and writes the valid reads to a temporary sharded file for
-/// further processing. Only primary, mapped reads that pass alignment filters are retained.
+/// further processing. Indexed BAMs use a region query; unindexed BAMs are streamed and filtered
+/// by reference ID so output from `align` can be passed directly to `collapse`. Only primary,
+/// mapped reads that pass alignment filters are retained.
 ///
 /// # Arguments
 /// * `bam_file` - Path to the input BAM file
@@ -441,8 +443,6 @@ pub fn sort_reads_from_bam_file(
     let mut reader = bam::io::reader::Builder::default()
         .build_from_path(bam_file)
         .unwrap();
-    let mut bai_file = bam_file.clone();
-    bai_file.push_str(".bai");
 
     let mut read_stats = BamReadFiltering::default();
 
@@ -466,8 +466,24 @@ pub fn sort_reads_from_bam_file(
     //filter_counts.insert("FlankingDegenerateBaseFilter".to_string(), 0);
     filter_counts.insert("AlignmentCheck".to_string(), 0);
 
-    let index = bai::fs::read(bai_file).expect("Unable to open BAM BAI file");
     let header = reader.read_header().unwrap();
+    let bai_path = PathBuf::from(format!("{}.bai", bam_file));
+    let index = if bai_path.exists() {
+        Some(bai::fs::read(&bai_path).unwrap_or_else(|error| {
+            panic!(
+                "Unable to read BAM index {}: {}",
+                bai_path.display(),
+                error
+            )
+        }))
+    } else {
+        warn!(
+            "No BAM index found at {}; scanning the input for reference '{}'",
+            bai_path.display(),
+            reference_name
+        );
+        None
+    };
     {
         let mut sharded_output: ShardWriter<SortingReadSetContainer> =
             ShardWriter::new(&aligned_temp, 32, 256, 1 << 16).unwrap();
@@ -487,12 +503,37 @@ pub fn sort_reads_from_bam_file(
 
         let reference_config = read_structure.references.get(reference_name).unwrap();
 
-        let region = &reference_name.parse().expect("Unable to parse chromosome");
+        let records: Box<dyn Iterator<Item = std::io::Result<Record>> + '_> =
+            if let Some(index) = index.as_ref() {
+                let region = reference_name.parse().expect("Unable to parse chromosome");
+                Box::new(
+                    reader
+                        .query(&header, index, &region)
+                        .expect("Unable to parse out region information"),
+                )
+            } else {
+                let reference_lookup = ReferenceLookupTable::new(reference_manager, &header);
+                let bam_reference_id = *reference_lookup
+                    .bam_reference_name_to_id
+                    .get(reference_name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Reference '{}' is not present in BAM header",
+                            reference_name
+                        )
+                    });
 
-        let records = reader
-            .query(&header, &index, &region)
-            .map(Box::new)
-            .expect("Unable to parse out region information");
+                Box::new(reader.records().filter_map(move |result| match result {
+                    Ok(record) => match record.reference_sequence_id().transpose() {
+                        Ok(Some(reference_id)) if reference_id == bam_reference_id => {
+                            Some(Ok(record))
+                        }
+                        Ok(_) => None,
+                        Err(error) => Some(Err(error)),
+                    },
+                    Err(error) => Some(Err(error)),
+                }))
+            };
 
         warn!("fetching reads for reference {} ", reference_name);
         let mut read_count = 0;
@@ -1004,6 +1045,7 @@ pub fn sort_level(
 mod tests {
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
+    use crate::alignment_manager::OutputAlignmentWriter;
     use std::collections::BTreeMap;
 
     const FASTA_A: u8 = b'A';
@@ -1049,6 +1091,94 @@ mod tests {
             known_strand: true,
             references,
         }
+    }
+
+    fn unindexed_bam_layout() -> SequenceLayout {
+        let references = [
+            ("reference_a", "A".repeat(50)),
+            ("reference_b", "C".repeat(50)),
+        ]
+        .iter()
+        .map(|(name, sequence)| {
+            (
+                name.to_string(),
+                ReferenceRecord {
+                    sequence: sequence.clone(),
+                    umi_configurations: BTreeMap::new(),
+                    targets: vec![],
+                    target_types: vec![],
+                    target_locations: Some(vec![]),
+                },
+            )
+        })
+        .collect();
+
+        SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![],
+            known_strand: true,
+            references,
+        }
+    }
+
+    fn aligned_read(reference_name: &str, read_name: &str, base: u8) -> SortingReadSetContainer {
+        SortingReadSetContainer::empty_tags(AlignmentResult {
+            reference_name: reference_name.to_string(),
+            read_name: read_name.to_string(),
+            reference_aligned: vec![base; 50],
+            read_aligned: vec![base; 50],
+            read_quals: Some(vec![40; 50]),
+            cigar_string: vec![AlignmentTag::MatchMismatch(50)],
+            path: vec![],
+            score: 50.0,
+            reference_start: 0,
+            read_start: 0,
+            bounding_box: None,
+        })
+    }
+
+    #[test]
+    fn test_sort_reads_accepts_unindexed_unsorted_bam() {
+        let layout = unindexed_bam_layout();
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let output_directory = tempfile::tempdir().unwrap();
+        let bam_path = output_directory.path().join("aligned.bam");
+        let bai_path = PathBuf::from(format!("{}.bai", bam_path.display()));
+        std::fs::write(&bai_path, b"stale index").unwrap();
+
+        {
+            let mut writer = BamFileAlignmentWriter::new(&bam_path, &reference_manager);
+            writer
+                .write_read(
+                    &aligned_read("reference_b", "read_b", b'C'),
+                    &HashMap::new(),
+                )
+                .unwrap();
+            writer
+                .write_read(
+                    &aligned_read("reference_a", "read_a", b'A'),
+                    &HashMap::new(),
+                )
+                .unwrap();
+            writer.close().unwrap();
+        }
+
+        let bam_file = bam_path.to_string_lossy().into_owned();
+        assert!(!bai_path.exists());
+
+        let mut processing_directory = InstanceLivedTempDir::new().unwrap();
+        let result = sort_reads_from_bam_file(
+            &bam_file,
+            &"reference_a".to_string(),
+            &reference_manager,
+            &layout,
+            &mut processing_directory,
+        );
+
+        assert_eq!(result.read_stats.total_reads, 1);
+        assert_eq!(result.read_stats.passing_reads(), 1);
+        assert!(result.bam.is_some());
     }
 
     #[test]

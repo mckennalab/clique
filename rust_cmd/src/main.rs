@@ -205,7 +205,7 @@ enum Cmd {
         #[clap(long, default_value = "NONE")]
         temp_dir: String,
 
-        /// Input aligned, indexed BAM (produced by `align`).
+        /// Input aligned BAM. A `<BAM>.bai` index is used when available.
         #[clap(long)]
         input_bam_file: String,
 

@@ -14,6 +14,7 @@ use noodles_sam::Header;
 use noodles_util::alignment;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fs;
 
 use std::io::Result;
 use std::num::NonZeroUsize;
@@ -80,6 +81,19 @@ impl<'a> BamFileAlignmentWriter<'a> {
         path: &PathBuf,
         reference_manager: &ReferenceManager<'a, 'a, 'a>,
     ) -> BamFileAlignmentWriter<'a> {
+        let mut index_path = path.as_os_str().to_os_string();
+        index_path.push(".bai");
+        let index_path = PathBuf::from(index_path);
+        match fs::remove_file(&index_path) {
+            Ok(()) => warn!("Removed stale BAM index {}", index_path.display()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!(
+                "Unable to remove stale BAM index {}: {}",
+                index_path.display(),
+                error
+            ),
+        }
+
         // Collect and sort by key
         let mut sorted: Vec<_> = reference_manager.references.iter().collect();
         sorted.sort_by_key(|&(k, _)| k);
