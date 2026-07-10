@@ -12,7 +12,6 @@ use crate::reference::fasta_reference::ReferenceManager;
 use counter::Counter;
 use rust_htslib::bam::record::CigarString;
 use shardio::{Range, ShardReader};
-use std::cmp;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
@@ -181,6 +180,21 @@ pub struct SamReadyOutput {
 /// clear of the `e<symbol>` / `o<symbol>` extracted-UMI tag namespace.
 pub const EVENT_TAG: [u8; 2] = [b'c', b'e'];
 
+/// Select the reads actually consumed by consensus generation. A zero limit
+/// disables downsampling, as used by the corrected-read output path.
+fn select_reads_for_consensus<'a>(
+    buffered_reads: &'a VecDeque<SortingReadSetContainer>,
+    maximum_reads_before_downsampling: usize,
+) -> Vec<&'a SortingReadSetContainer> {
+    let limit = if maximum_reads_before_downsampling == 0 {
+        buffered_reads.len()
+    } else {
+        maximum_reads_before_downsampling.min(buffered_reads.len())
+    };
+
+    buffered_reads.iter().take(limit).collect()
+}
+
 /// Call CRISPR edit events for the given aligned pair against the reference's
 /// declared targets and, if any targets exist, record them under [`EVENT_TAG`].
 fn insert_event_tag(
@@ -208,16 +222,22 @@ pub fn create_consensus_sam_read(
     _my_aff_score: &AffineScoring,
     merge_strategy: &MergeStrategy,
 ) -> Option<SamReadyOutput> {
-    let mut added_tags = HashMap::new();
-    added_tags.insert([b'r', b'c'], buffered_reads.len().to_string());
-    added_tags.insert(
-        [b'd', b'c'],
-        cmp::min(*maximum_reads_before_downsampling, buffered_reads.len()).to_string(),
+    assert!(
+        !buffered_reads.is_empty(),
+        "Cannot create a consensus from an empty read collection"
+    );
+    let consensus_reads = select_reads_for_consensus(
+        buffered_reads,
+        *maximum_reads_before_downsampling,
     );
 
-    if buffered_reads.len() > 1 {
+    let mut added_tags = HashMap::new();
+    added_tags.insert([b'r', b'c'], buffered_reads.len().to_string());
+    added_tags.insert([b'd', b'c'], consensus_reads.len().to_string());
+
+    if consensus_reads.len() > 1 {
         let consensus_reference = Counter::<Vec<u8>, usize>::init(
-            buffered_reads
+            consensus_reads
                 .iter()
                 .map(|x| x.aligned_read.reference_name.clone().as_bytes().to_vec())
                 .collect::<Vec<Vec<u8>>>(),
@@ -234,7 +254,7 @@ pub fn create_consensus_sam_read(
             )
             .unwrap();
 
-        let consensus_reads = match merge_strategy {
+        let consensus_alignment = match merge_strategy {
             MergeStrategy::StrictConsensus => {
                 unimplemented!("Removing SPOA");
             }
@@ -244,7 +264,7 @@ pub fn create_consensus_sam_read(
             MergeStrategy::Stretcher => {
                 let mut candidate = crate::consensus::stretcher::AlignmentCandidate::new(reference_pointer.sequence.as_slice(), reference_pointer.name.as_slice());
 
-                let valid: usize = buffered_reads.iter().map(|x| {
+                let valid: usize = consensus_reads.iter().map(|x| {
                     match candidate.add_alignment(&x.aligned_read) {
                         Ok(_) => { 0 }
                         Err(_) => { 1 }
@@ -262,14 +282,14 @@ pub fn create_consensus_sam_read(
             }
         };
 
-        match consensus_reads {
+        match consensus_alignment {
             None => {
                 // No usable consensus (a read failed to merge): skip this molecule. Both callers
                 // treat a `None` return as "skip", so this must not panic and abort the run.
                 return None;
             }
             Some(con) => {
-                let read_names = buffered_reads
+                let read_names = consensus_reads
                     .iter()
                     .map(|x| x.aligned_read.read_name.clone())
                     .collect::<Vec<String>>();
@@ -296,16 +316,13 @@ pub fn create_consensus_sam_read(
                     &con.read_aligned,
                 );
 
-                let new_sorting_read = buffered_reads
-                    .get(0)
-                    .unwrap()
-                    .with_new_alignment(con);
+                let new_sorting_read = consensus_reads[0].with_new_alignment(con);
 
                 Some(SamReadyOutput { read: new_sorting_read, added_tags })
             }
         }
     } else {
-        let single_read = buffered_reads.get(0).unwrap().clone();
+        let single_read = (*consensus_reads[0]).clone();
         added_tags.insert([b'a', b'r'], single_read.aligned_read.read_name.clone());
         added_tags.insert(
             [b'r', b'm'],
@@ -529,20 +546,99 @@ pub fn calculate_qual_scores(allele_props: &mut [f64; 5]) -> [f64; 5] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alignment::alignment_matrix::AlignmentResult;
+    use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
+    use crate::read_strategies::sequence_layout::ReferenceRecord;
     use rust_htslib::bam::record::Cigar;
+    use std::collections::{BTreeMap, VecDeque};
 
-    #[cfg(feature = "spoa")]
-    use std::collections::VecDeque;
     #[cfg(feature = "spoa")]
     use FASTA_A;
     #[cfg(feature = "spoa")]
     use read_strategies::read_disk_sorter::CorrectedKey;
     #[cfg(feature = "spoa")]
-    use crate::alignment::alignment_matrix::AlignmentResult;
-    #[cfg(feature = "spoa")]
-    use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
-    #[cfg(feature = "spoa")]
     use utils::read_utils::u8s;
+
+    fn downsampling_layout() -> SequenceLayout {
+        let mut references = BTreeMap::new();
+        references.insert(
+            "reference".to_string(),
+            ReferenceRecord {
+                sequence: "AAAA".to_string(),
+                umi_configurations: BTreeMap::new(),
+                targets: vec![],
+                target_types: vec![],
+                target_locations: Some(vec![]),
+            },
+        );
+
+        SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![],
+            known_strand: true,
+            references,
+        }
+    }
+
+    fn downsampling_read(read_name: &str, bases: &[u8]) -> SortingReadSetContainer {
+        SortingReadSetContainer::empty_tags(AlignmentResult {
+            reference_name: "reference".to_string(),
+            read_name: read_name.to_string(),
+            reference_aligned: b"AAAA".to_vec(),
+            read_aligned: bases.to_vec(),
+            read_quals: Some(vec![40; bases.len()]),
+            cigar_string: vec![AlignmentTag::MatchMismatch(bases.len())],
+            path: vec![],
+            score: 4.0,
+            reference_start: 0,
+            read_start: 0,
+            bounding_box: None,
+        })
+    }
+
+    #[test]
+    fn test_consensus_downsampling_caps_consumed_reads() {
+        let layout = downsampling_layout();
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 2, 1);
+        let mut reads = VecDeque::new();
+        reads.push_back(downsampling_read("included_1", b"AAAA"));
+        reads.push_back(downsampling_read("included_2", b"AAAA"));
+        for index in 0..6 {
+            reads.push_back(downsampling_read(
+                &format!("excluded_{}", index),
+                b"TTTT",
+            ));
+        }
+
+        let result = create_consensus_sam_read(
+            &reference_manager,
+            &layout,
+            &2,
+            &reads,
+            &AffineScoring::default_dna(),
+            &MergeStrategy::Stretcher,
+        )
+        .unwrap();
+
+        assert_eq!(result.read.aligned_read.read_aligned, b"AAAA");
+        assert_eq!(result.added_tags.get(&[b'r', b'c']).unwrap(), "8");
+        assert_eq!(result.added_tags.get(&[b'd', b'c']).unwrap(), "2");
+        assert_eq!(
+            result.added_tags.get(&[b'a', b'r']).unwrap(),
+            "included_1,included_2"
+        );
+    }
+
+    #[test]
+    fn test_zero_downsampling_limit_uses_all_reads() {
+        let reads = VecDeque::from(vec![
+            downsampling_read("read_1", b"AAAA"),
+            downsampling_read("read_2", b"AAAA"),
+        ]);
+
+        assert_eq!(select_reads_for_consensus(&reads, 0).len(), 2);
+    }
 
     #[cfg(feature = "spoa")]
     fn create_test_alignment_result(
