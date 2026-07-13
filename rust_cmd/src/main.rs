@@ -172,6 +172,7 @@ mod alignment_functions;
 
 mod reference {
     pub mod fasta_reference;
+    pub mod discriminating;
 }
 
 /// Aligner selection. Currently informational: the affine-gap aligner is used

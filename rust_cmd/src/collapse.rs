@@ -727,7 +727,10 @@ fn create_sorted_read_container(
     let zero_based_start_pos = one_based_start_pos - 1;
     let cigar = record.cigar();
     let read_name = record.name().unwrap();
-    let read_qual = record.quality_scores().iter().collect();
+    let read_quals = match record.quality_scores().iter().collect::<Vec<u8>>() {
+        qualities if qualities.is_empty() => None,
+        qualities => Some(qualities),
+    };
     let ref_slice = reference_sequence.as_slice();
 
     let aligned_read = recover_soft_clipped_align_sequences(
@@ -759,7 +762,7 @@ fn create_sorted_read_container(
             aligned_read: AlignmentResult {
                 reference_name: reference_name.clone(),
                 read_aligned: aligned_read.aligned_read,
-                read_quals: Some(read_qual),
+                read_quals,
                 cigar_string: cigar
                     .iter()
                     .map(|op| AlignmentTag::from(op.unwrap()))

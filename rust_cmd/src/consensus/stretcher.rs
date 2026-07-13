@@ -9,7 +9,6 @@ use alignment_functions::simplify_cigar_string;
 use crate::alignment::alignment_matrix::AlignmentResult;
 use crate::consensus::consensus_builders::{combine_qual_scores, prob_to_phred};
 
-#[allow(dead_code)]
 const DEFAULT_QUAL_FOR_UNKNOWN_QUAL: u8 = 32u8;
 
 #[derive(Clone, Serialize, Deserialize, Hash)]
@@ -282,7 +281,15 @@ impl AlignmentCandidate {
 
 
         self.read_names.push(alignment.read_name.clone());
-        let read_qual = alignment.read_quals.clone().unwrap_or(alignment.read_aligned.iter().map(|_x: _| b'h').collect());
+        let expected_read_qual_len = alignment
+            .read_aligned
+            .iter()
+            .filter(|base| **base != b'-')
+            .count();
+        let read_qual = match &alignment.read_quals {
+            Some(qualities) if qualities.len() == expected_read_qual_len => qualities.clone(),
+            _ => vec![DEFAULT_QUAL_FOR_UNKNOWN_QUAL; expected_read_qual_len],
+        };
         //println!("*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*- entry with {} {} ", u8s(&alignment.reference_aligned), u8s(&alignment.read_aligned));
 
         // Use the live length: the `(Original, b'-')` arm inserts into `self.reference`, so we must
@@ -561,6 +568,22 @@ mod tests {
         let conc = candidate.to_consensus(&0.75);
         assert_eq!(u8s(&conc.reference_aligned), ref_bases);
         assert_eq!(u8s(&conc.read_aligned), read_bases);
+    }
+
+    #[test]
+    fn test_alignment_candidate_handles_missing_quality_scores() {
+        let mut candidate = AlignmentCandidate::new(b"ACGT", b"ref");
+        let mut empty_qualities = create_alignment_result("ACGT", "ACGT");
+        empty_qualities.read_quals = Some(Vec::new());
+        let mut missing_qualities = create_alignment_result("ACGT", "ACGT");
+        missing_qualities.read_quals = None;
+
+        candidate.add_alignment(&empty_qualities).unwrap();
+        candidate.add_alignment(&missing_qualities).unwrap();
+        let consensus = candidate.to_consensus(&0.75);
+
+        assert_eq!(consensus.read_aligned, b"ACGT");
+        assert_eq!(consensus.read_quals.unwrap().len(), 4);
     }
 
     #[test]
