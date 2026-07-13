@@ -34,7 +34,6 @@ use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use consensus::consensus_builders::get_reference_alignment_rate;
 use extractor::extract_tagged_sequences;
 use itertools::Itertools;
-use reference::fasta_reference::Reference;
 use utils::read_utils::{reverse_complement, u8s};
 use ::{Aligner as RustAligner, FASTA_UNSET};
 
@@ -779,6 +778,18 @@ pub fn align_to_reference_choices(
 ///
 /// // Process `result` here
 /// ```
+const MIN_DISTINCT_UNIQUE_KMER_HITS: usize = 3;
+
+fn has_confident_kmer_support(
+    winner_hits: usize,
+    informative_hits: usize,
+    match_threshold: f64,
+) -> bool {
+    informative_hits > 0
+        && winner_hits >= MIN_DISTINCT_UNIQUE_KMER_HITS
+        && winner_hits as f64 / informative_hits as f64 > match_threshold
+}
+
 fn quick_alignment_search(
     read_name: &String,
     read: &Vec<u8>,
@@ -791,18 +802,15 @@ fn quick_alignment_search(
     let read_u8 = read;
     let read_kmers = ReferenceManager::sequence_to_kmers(&read_u8, &rm.kmer_size, &rm.kmer_skip);
 
-    let max_ref = read_kmers
+    let mut seen_kmers = HashSet::new();
+    let reference_votes = read_kmers
         .iter()
-        .map(|(kmer, _c)| rm.unique_kmers.kmer_to_reference.get(kmer))
-        .flatten()
+        .filter(|(kmer, _count)| seen_kmers.insert(kmer.as_slice()))
+        .filter_map(|(kmer, _count)| rm.unique_kmers.kmer_to_reference.get(kmer))
         .counts();
 
-    let count: f64 = max_ref.iter().map(|(_x, y)| y).sum::<usize>() as f64;
-    let proportions = max_ref
-        .iter()
-        .map(|(x, y)| (x, *y as f64 / count))
-        .collect::<Vec<(&&Reference, f64)>>();
-    let max_ref = proportions.iter().max_by(|x, y| x.1.total_cmp(&y.1));
+    let informative_hits = reference_votes.values().sum::<usize>();
+    let max_ref = reference_votes.iter().max_by_key(|(_reference, hits)| *hits);
 
     match max_ref {
         None => {
@@ -817,30 +825,24 @@ fn quick_alignment_search(
                 None,
             )
         }
-        Some(x) => match x.1 {
-            prop if prop > *match_threshold => {
-                let ref_name = String::from_utf8(x.0.name.clone()).unwrap();
+        Some((reference, winner_hits)) => {
+            if has_confident_kmer_support(*winner_hits, informative_hits, *match_threshold) {
+                let ref_name = String::from_utf8(reference.name.clone()).unwrap();
                 Some(AlignmentWithRef {
                     alignment: Some(align_two_strings_passed_matrix(
                         &ref_name,
                         read_name,
-                        &x.0.sequence,
+                        &reference.sequence,
                         read,
                         qual_sequence,
                         my_aff_score,
                         alignment_mat,
                         &read.len(),
                     )),
-                    ref_name: x.0.name.clone(),
-                    ref_sequence: x.0.sequence.clone(),
+                    ref_name: reference.name.clone(),
+                    ref_sequence: reference.sequence.clone(),
                 })
-            }
-            _ => {
-                let ref_names: HashSet<Vec<u8>> = proportions
-                    .iter()
-                    .map(|(x, _y)| x.name.clone())
-                    .into_iter()
-                    .collect();
+            } else {
                 exhaustive_alignment_search(
                     read_name,
                     read,
@@ -848,10 +850,10 @@ fn quick_alignment_search(
                     rm,
                     alignment_mat,
                     my_aff_score,
-                    Some(ref_names),
+                    None,
                 )
             }
-        },
+        }
     }
 }
 
@@ -1009,7 +1011,7 @@ mod tests {
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
     use crate::alignment_functions::{
         align_to_reference_choices, cigar_to_alignment, exhaustive_alignment_search,
-        simplify_cigar_string,
+        has_confident_kmer_support, quick_alignment_search, simplify_cigar_string,
     };
     use crate::read_strategies::sequence_layout::{
         AlignedReadOrientation, ReadPosition, ReferenceRecord, SequenceLayout,
@@ -1106,6 +1108,58 @@ mod tests {
             assert_eq!(alignment.read_aligned, reference);
             assert_eq!(alignment.read_quals, Some(expected_qualities.clone()));
         }
+    }
+
+    #[test]
+    fn test_fast_lookup_falls_back_on_single_unique_kmer_hit() {
+        let layout = multi_reference_layout(true);
+        let read = layout
+            .references
+            .get("reverse_reference")
+            .unwrap()
+            .sequence
+            .as_bytes()
+            .to_vec();
+        let mut reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let false_reference = reference_manager
+            .references
+            .values()
+            .find(|reference| reference.name == b"forward_reference")
+            .unwrap()
+            .clone();
+
+        reference_manager.unique_kmers.kmer_to_reference.clear();
+        reference_manager
+            .unique_kmers
+            .kmer_to_reference
+            .insert(read[..8].to_vec(), false_reference);
+
+        let mut alignment_matrix = create_scoring_record_3d(
+            reference_manager.longest_ref + 1,
+            read.len() + 1,
+            AlignmentType::Affine,
+            false,
+        );
+        let result = quick_alignment_search(
+            &"sparse_evidence_read".to_string(),
+            &read,
+            None,
+            &reference_manager,
+            &mut alignment_matrix,
+            &AffineScoring::default_dna(),
+            &0.90,
+        )
+        .expect("exhaustive fallback should find a reference");
+
+        assert_eq!(result.ref_name, b"reverse_reference");
+    }
+
+    #[test]
+    fn test_fast_lookup_requires_three_distinct_dominant_hits() {
+        assert!(!has_confident_kmer_support(1, 1, 0.90));
+        assert!(!has_confident_kmer_support(2, 2, 0.90));
+        assert!(has_confident_kmer_support(3, 3, 0.90));
+        assert!(!has_confident_kmer_support(9, 10, 0.90));
     }
 
     #[test]
