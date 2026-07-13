@@ -47,7 +47,7 @@ fn rust_bio_alignment(
     mismatch: &i32,
     gap_open: &i32,
     gap_extend: &i32
-) -> Vec<AlignmentOperation> {
+) -> (Vec<AlignmentOperation>, i32) {
     // A match rewards +1; mismatch and gap penalties come from the (positive-magnitude)
     // parameters, applied as negative costs. `N` matches either base (symmetric check).
     let mismatch_penalty = -mismatch.abs();
@@ -55,7 +55,7 @@ fn rust_bio_alignment(
     let mut aligner = Aligner::with_capacity(read.len(), reference.len(), -gap_open.abs(), -gap_extend.abs(), &score);
     let alignment = aligner.global(reference,read);
     // x is global (target sequence) and y is local (reference sequence)
-    alignment.operations
+    (alignment.operations, alignment.score)
 }
 
 pub fn align_reads(
@@ -616,8 +616,44 @@ pub fn align_to_reference_choices(
             let ref_base = &rm.references.values().next().unwrap();
             let ref_name = String::from_utf8(ref_base.name.clone()).unwrap();
             let (forward_oriented_seq, oriented_quals) = if !read_structure.known_strand {
-                let orientation =
-                    orient_by_longest_segment(&read, &ref_base.sequence, &ref_base.suffix_table).0;
+                let orientation_search =
+                    orient_by_longest_segment(&read, &ref_base.sequence, &ref_base.suffix_table);
+                let forward_seed_score = orientation_search
+                    .1
+                    .alignment_segments
+                    .iter()
+                    .map(|segment| segment.length)
+                    .sum::<usize>();
+                let reverse_seed_score = orientation_search
+                    .2
+                    .alignment_segments
+                    .iter()
+                    .map(|segment| segment.length)
+                    .sum::<usize>();
+                let orientation = match forward_seed_score.cmp(&reverse_seed_score) {
+                    std::cmp::Ordering::Greater => true,
+                    std::cmp::Ordering::Less => false,
+                    std::cmp::Ordering::Equal => {
+                        let reverse_complemented = reverse_complement(&read);
+                        let forward_score = rust_bio_alignment(
+                            &ref_base.sequence,
+                            read,
+                            &4,
+                            &10,
+                            &1,
+                        )
+                        .1;
+                        let reverse_score = rust_bio_alignment(
+                            &ref_base.sequence,
+                            &reverse_complemented,
+                            &4,
+                            &10,
+                            &1,
+                        )
+                        .1;
+                        forward_score >= reverse_score
+                    }
+                };
                 if orientation {
                     (read.clone(), qual_sequence)
                 } else {
@@ -630,7 +666,7 @@ pub fn align_to_reference_choices(
                 (read.clone(), qual_sequence)
             };
 
-            let alignment = rust_bio_alignment(&ref_base.sequence, &forward_oriented_seq, &4, &10, &1);
+            let alignment = rust_bio_alignment(&ref_base.sequence, &forward_oriented_seq, &4, &10, &1).0;
             //println!("{}", alignment);
 
             let alignment = cigar_to_alignment(
@@ -1006,7 +1042,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::alignment::alignment_matrix::{
-        create_scoring_record_3d, AlignmentTag, AlignmentType,
+        create_scoring_record_3d, AlignmentResult, AlignmentTag, AlignmentType,
     };
     use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
     use crate::alignment_functions::{
@@ -1052,6 +1088,110 @@ mod tests {
             known_strand,
             references,
         }
+    }
+
+    fn align_single_unknown_strand(
+        reference: &str,
+        read: Vec<u8>,
+        qualities: Vec<u8>,
+    ) -> AlignmentResult {
+        let mut references = BTreeMap::new();
+        references.insert(
+            "reference".to_string(),
+            ReferenceRecord {
+                sequence: reference.to_string(),
+                umi_configurations: BTreeMap::new(),
+                targets: vec![],
+                target_types: vec![],
+                target_locations: None,
+            },
+        );
+        let layout = SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 {
+                orientation: AlignedReadOrientation::Forward,
+            }],
+            known_strand: false,
+            references,
+        };
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let mut alignment_matrix = create_scoring_record_3d(
+            reference_manager.longest_ref + 1,
+            read.len() + 1,
+            AlignmentType::Affine,
+            false,
+        );
+        let inversion_score = InversionScoring {
+            match_score: 9.0,
+            mismatch_score: -21.0,
+            gap_open: -25.0,
+            gap_extend: -1.0,
+            inversion_penalty: -40.0,
+            min_inversion_length: 20,
+        };
+
+        align_to_reference_choices(
+            &"read".to_string(),
+            &read,
+            Some(qualities),
+            &reference_manager,
+            &false,
+            &layout,
+            &mut alignment_matrix,
+            &AffineScoring::default_dna(),
+            &inversion_score,
+            &false,
+            2.0,
+            0,
+            &read.len(),
+        )
+        .unwrap()
+        .alignment
+        .unwrap()
+    }
+
+    #[test]
+    fn test_single_reference_zero_seed_tie_uses_forward_alignment_score() {
+        let reference = b"AACGTA".to_vec();
+        let qualities = vec![10, 11, 12, 13, 14, 15];
+        let alignment = align_single_unknown_strand(
+            std::str::from_utf8(&reference).unwrap(),
+            reference.clone(),
+            qualities.clone(),
+        );
+
+        assert_eq!(alignment.read_aligned, reference);
+        assert_eq!(alignment.read_quals, Some(qualities));
+    }
+
+    #[test]
+    fn test_single_reference_zero_seed_tie_uses_reverse_alignment_score() {
+        let reference = b"AACGTA".to_vec();
+        let read = reverse_complement(&reference);
+        let qualities = vec![10, 11, 12, 13, 14, 15];
+        let mut expected_qualities = qualities.clone();
+        expected_qualities.reverse();
+        let alignment = align_single_unknown_strand(
+            std::str::from_utf8(&reference).unwrap(),
+            read,
+            qualities,
+        );
+
+        assert_eq!(alignment.read_aligned, reference);
+        assert_eq!(alignment.read_quals, Some(expected_qualities));
+    }
+
+    #[test]
+    fn test_single_reference_full_score_tie_keeps_forward_quality_order() {
+        let qualities = vec![10, 11, 12, 13];
+        let alignment = align_single_unknown_strand(
+            "ACGT",
+            b"ACGT".to_vec(),
+            qualities.clone(),
+        );
+
+        assert_eq!(alignment.read_quals, Some(qualities));
     }
 
     #[test]

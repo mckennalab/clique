@@ -31,7 +31,7 @@ pub fn orient_by_longest_segment(search_string: &Vec<u8>, reference: &Vec<u8>, s
     let rev_score_mp = find_greedy_non_overlapping_segments(&bio::alphabets::dna::revcomp(search_string), reference, seeds);
     let rev_score: usize = rev_score_mp.alignment_segments.clone().into_iter().map(|p| p.length).sum();
 
-    (fwd_score > rev_score, fwd_score_mp, rev_score_mp)
+    (fwd_score >= rev_score, fwd_score_mp, rev_score_mp)
 }
 
 
@@ -765,5 +765,4 @@ mod tests {
 
     }*/
 }
-
 
