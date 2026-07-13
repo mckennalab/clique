@@ -20,6 +20,7 @@ use crate::read_strategies::read_set::ReadIterator;
 use crate::reference::fasta_reference::ReferenceManager;
 use crate::reference::discriminating::DiscriminatingClassifier;
 use crate::reference::idf::IdfIndex;
+use crate::reference::poa::PoaGraph;
 use ndarray::Ix3;
 use std::time::Instant;
 use bio::alignment::AlignmentOperation;
@@ -60,6 +61,14 @@ fn rust_bio_alignment(
     (alignment.operations, alignment.score)
 }
 
+/// POA is the default router only for panels with at most this many references
+/// (above this, building the graph is not worth it — the k-mer router is used).
+const POA_DEFAULT_MAX_REFS: usize = 256;
+/// A panel is "compact" (references share enough structure for POA to be the
+/// right tool) when its graph has at most this many nodes per base of the longest
+/// reference. Diverse panels blow past this and fall back to the k-mer router.
+const POA_COMPACT_FACTOR: usize = 4;
+
 pub fn align_reads(
     read_structure: &SequenceLayout,
     rm: &ReferenceManager,
@@ -76,6 +85,9 @@ pub fn align_reads(
     discriminating_min_margin: usize,
     use_kmer_idf: bool,
     kmer_idf_min_margin: f64,
+    use_poa: bool,
+    poa_min_margin: usize,
+    no_poa_default: bool,
 ) {
     let read_iterator = ReadIterator::new(
         PathBuf::from(&read1),
@@ -186,6 +198,60 @@ pub fn align_reads(
     };
     let idf_index = idf_index.as_ref();
 
+    // POA-graph router. It is the DEFAULT for compact multi-reference panels
+    // (near-identical / indel-recording, where references share structure), and
+    // can be forced with --poa-classifier. It falls back to the k-mer router for
+    // large or diverse panels (a graph would explode and the k-mer/IDF router is
+    // the right tool there), when another router flag is set, or via
+    // --no-poa-default.
+    let explicit_router = use_poa || use_kmer_idf || use_discriminating;
+    let want_poa = use_poa || (!explicit_router && !no_poa_default);
+    let poa_graph = if want_poa && rm.references.len() >= 2 {
+        if !use_poa && rm.references.len() > POA_DEFAULT_MAX_REFS {
+            info!(
+                "Panel has {} references (> {}); using the k-mer router instead of the POA default.",
+                rm.references.len(), POA_DEFAULT_MAX_REFS
+            );
+            None
+        } else {
+            let compact_limit = POA_COMPACT_FACTOR * rm.longest_ref.max(1);
+            match PoaGraph::from_reference_manager(rm, poa_min_margin) {
+                // Explicit --poa-classifier bypasses the compactness gate.
+                Ok(graph)
+                    if graph.is_discriminable() && (use_poa || graph.node_count() <= compact_limit) =>
+                {
+                    info!(
+                        "POA-graph reference router enabled ({}): {} nodes ({} backbone, {} branch) over {} references, min margin {}",
+                        if use_poa { "requested" } else { "default for a compact panel" },
+                        graph.node_count(), graph.backbone_node_count(), graph.branch_node_count(), graph.n_refs(), poa_min_margin
+                    );
+                    Some(graph)
+                }
+                Ok(graph) => {
+                    let reason = if !graph.is_discriminable() {
+                        "the panel has no branch nodes".to_string()
+                    } else {
+                        format!("the panel is not compact ({} nodes > {} = {}x the {}-bp longest reference)",
+                            graph.node_count(), compact_limit, POA_COMPACT_FACTOR, rm.longest_ref)
+                    };
+                    if use_poa {
+                        warn!("POA requested but {}; using the k-mer router.", reason);
+                    } else {
+                        info!("Not using the POA default ({}); using the k-mer router.", reason);
+                    }
+                    None
+                }
+                Err(e) => {
+                    warn!("Could not build the POA graph ({}); using the k-mer router.", e);
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+    let poa_graph = poa_graph.as_ref();
+
     read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
         STORE.with(|arc_mtx| {
             let mut local_alignment = arc_mtx.lock().unwrap();
@@ -217,6 +283,7 @@ pub fn align_reads(
                     seq_len,
                     discriminating_classifier,
                     idf_index,
+                    poa_graph,
                 );
 
                 match aligned {
@@ -230,6 +297,7 @@ pub fn align_reads(
                         let _orig_ref_seq = alignment_obj.ref_sequence;
                         let classification = alignment_obj.classification;
                         let idf_info = alignment_obj.idf_info;
+                        let poa_info = alignment_obj.poa_info;
                         match results {
                             None => {
                                 // TODO: we should track this and provide a final summary
@@ -289,6 +357,16 @@ pub fn align_reads(
                                     added_tags.insert([b'i', b'm'], format!("{:.3}", info.margin_ratio));
                                     added_tags.insert([b'i', b'k'], info.informative_kmers.to_string());
                                     added_tags.insert([b'i', b'a'], (info.ambiguous as u8).to_string());
+                                }
+
+                                // POA-classifier confidence, when it made the call:
+                                // pb = branch-votes for the best ref, pm = top-2 margin,
+                                // pi = discriminating columns matched, pa = 1 if ambiguous.
+                                if let Some(info) = &poa_info {
+                                    added_tags.insert([b'p', b'b'], info.best_score.to_string());
+                                    added_tags.insert([b'p', b'm'], info.margin.to_string());
+                                    added_tags.insert([b'p', b'i'], info.informative_columns.to_string());
+                                    added_tags.insert([b'p', b'a'], (info.ambiguous as u8).to_string());
                                 }
 
                                 added_tags
@@ -570,6 +648,19 @@ pub struct IdfInfo {
     pub ambiguous: bool,
 }
 
+/// Confidence attached to a reference call made by the POA-graph classifier.
+#[derive(Clone, Debug)]
+pub struct PoaInfo {
+    /// Branch-votes for the chosen reference.
+    pub best_score: usize,
+    /// Top-2 branch-vote margin.
+    pub margin: usize,
+    /// Discriminating columns the read matched.
+    pub informative_columns: usize,
+    /// True when the margin was below the configured floor (a near-tie call).
+    pub ambiguous: bool,
+}
+
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct AlignmentWithRef {
@@ -580,6 +671,8 @@ pub struct AlignmentWithRef {
     classification: Option<DiscriminatingInfo>,
     /// Set when the reference was routed by the IDF-weighted k-mer index.
     idf_info: Option<IdfInfo>,
+    /// Set when the reference was chosen by the POA-graph classifier.
+    poa_info: Option<PoaInfo>,
 }
 
 fn alignment_score(candidate: &AlignmentWithRef) -> f64 {
@@ -618,7 +711,36 @@ fn search_multiple_references(
     my_aff_score: &AffineScoring,
     classifier: Option<&DiscriminatingClassifier>,
     idf: Option<&IdfIndex>,
+    poa: Option<&PoaGraph>,
 ) -> Option<AlignmentWithRef> {
+    // POA-graph classifier (for near-identical panels): align the read to the
+    // reference graph and vote, at each discriminating column, for the references
+    // whose branch it took; then align to the chosen reference and attach the
+    // confidence. Takes precedence over the other routers when enabled.
+    if let Some(graph) = poa {
+        let cls = graph.classify_read(read);
+        let mut subset = HashSet::new();
+        subset.insert(cls.best.clone());
+        return exhaustive_alignment_search(
+            read_name,
+            read,
+            qual_sequence,
+            rm,
+            alignment_mat,
+            my_aff_score,
+            Some(subset),
+        )
+        .map(|mut awr| {
+            awr.poa_info = Some(PoaInfo {
+                best_score: cls.best_score,
+                margin: cls.margin,
+                informative_columns: cls.informative_columns,
+                ambiguous: cls.ambiguous,
+            });
+            awr
+        });
+    }
+
     // IDF-weighted k-mer router: pick the reference by summed IDF weight (the
     // shared backbone contributes 0). When the IDF call is ambiguous and a
     // discriminating classifier is available, defer the tie-break to it. Then
@@ -798,6 +920,7 @@ pub fn align_to_reference_choices(
     _max_indel: &usize,
     classifier: Option<&DiscriminatingClassifier>,
     idf: Option<&IdfIndex>,
+    poa: Option<&PoaGraph>,
 ) -> Option<AlignmentWithRef> {
     if read.len() < min_read_length {
         debug!(
@@ -915,6 +1038,7 @@ pub fn align_to_reference_choices(
                 ref_sequence: ref_base.sequence.clone(),
                 classification: None,
                 idf_info: None,
+                poa_info: None,
             })
         }
         x if x > 1 => {
@@ -929,6 +1053,7 @@ pub fn align_to_reference_choices(
                     my_aff_score,
                     classifier,
                     idf,
+                    poa,
                 )
             } else {
                 let forward = search_multiple_references(
@@ -941,6 +1066,7 @@ pub fn align_to_reference_choices(
                     my_aff_score,
                     classifier,
                     idf,
+                    poa,
                 );
 
                 let reverse_complemented_read = reverse_complement(read);
@@ -958,6 +1084,7 @@ pub fn align_to_reference_choices(
                     my_aff_score,
                     classifier,
                     idf,
+                    poa,
                 );
 
                 select_best_alignment(forward, reverse_complemented)
@@ -1094,6 +1221,7 @@ fn quick_alignment_search(
                     ref_sequence: reference.sequence.clone(),
                     classification: None,
                     idf_info: None,
+                    poa_info: None,
                 })
             } else {
                 exhaustive_alignment_search(
@@ -1167,6 +1295,7 @@ fn exhaustive_alignment_search(
                 ref_sequence: y.1.clone(),
                 classification: None,
                 idf_info: None,
+                poa_info: None,
             })
         }
     }
@@ -1369,6 +1498,7 @@ mod tests {
             &read.len(),
             None,
             None,
+            None,
         )
         .unwrap()
         .alignment
@@ -1446,6 +1576,7 @@ mod tests {
             &read.len(),
             None,
             None,
+            None,
         );
 
         assert!(result.is_none());
@@ -1497,6 +1628,7 @@ mod tests {
                 2.0,
                 0,
                 &read.len(),
+                None,
                 None,
                 None,
             )

@@ -174,6 +174,8 @@ mod reference {
     pub mod fasta_reference;
     pub mod discriminating;
     pub mod idf;
+    pub mod poa;
+    pub mod router_benchmark;
 }
 
 /// Aligner selection. Currently informational: the affine-gap aligner is used
@@ -294,6 +296,23 @@ enum Cmd {
         #[clap(long, default_value = "0.05")]
         kmer_idf_min_margin: f64,
 
+        /// Route each read with a partial-order-alignment (POA) graph of the
+        /// panel: align the read to the graph and vote, at each discriminating
+        /// column, for the reference whose branch it took. Best for near-identical
+        /// panels; emits pb/pm/pi/pa confidence BAM tags. Takes precedence over
+        /// the other routers when set.
+        #[clap(long, action=clap::ArgAction::SetTrue)]
+        poa_classifier: bool,
+
+        /// Minimum top-2 branch-vote margin for a confident POA call.
+        #[clap(long, default_value = "1")]
+        poa_min_margin: usize,
+
+        /// Disable the automatic POA default for compact multi-reference panels
+        /// (use the legacy k-mer reference search instead).
+        #[clap(long, action=clap::ArgAction::SetTrue)]
+        no_poa_default: bool,
+
     },
     /// Generate a read-structure YAML from an annotated GenBank file.
     GenbankToYaml {
@@ -404,6 +423,9 @@ fn main() {
             discriminating_min_margin,
             kmer_idf,
             kmer_idf_min_margin,
+            poa_classifier,
+            poa_min_margin,
+            no_poa_default,
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
@@ -424,7 +446,10 @@ fn main() {
                         *discriminating_classifier,
                         *discriminating_min_margin,
                         *kmer_idf,
-                        *kmer_idf_min_margin);
+                        *kmer_idf_min_margin,
+                        *poa_classifier,
+                        *poa_min_margin,
+                        *no_poa_default);
         }
 
         Cmd::GenbankToYaml {
