@@ -278,7 +278,16 @@ enum Cmd {
         #[clap(long, arg_enum, default_value_t = Aligner::WFA)]
         aligner: Aligner,
 
+        /// Select the reference for near-identical panels by comparing only the
+        /// columns where the panel references differ (discriminating positions),
+        /// emitting a top-2 margin confidence (dm/di/da BAM tags).
+        #[clap(long, action=clap::ArgAction::SetTrue)]
+        discriminating_classifier: bool,
 
+        /// Minimum top-2 margin at the discriminating positions for a confident
+        /// (non-ambiguous) reference call.
+        #[clap(long, default_value = "1")]
+        discriminating_min_margin: usize,
 
     },
     /// Generate a read-structure YAML from an annotated GenBank file.
@@ -375,6 +384,8 @@ fn main() {
             index2,
             threads,
             aligner,
+            discriminating_classifier,
+            discriminating_min_margin,
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
@@ -391,7 +402,9 @@ fn main() {
                         index1,
                         index2,
                         threads,
-                        aligner);
+                        aligner,
+                        *discriminating_classifier,
+                        *discriminating_min_margin);
         }
 
         Cmd::GenbankToYaml {

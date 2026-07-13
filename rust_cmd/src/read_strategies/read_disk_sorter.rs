@@ -70,13 +70,8 @@ impl Eq for SortingReadSetContainer {}
 
 impl PartialEq<Self> for SortingReadSetContainer {
     fn eq(&self, other: &Self) -> bool {
-        assert_eq!(self.ordered_sorting_keys.len(), other.ordered_sorting_keys.len(), "SortingReadSetContainer: mismatched number of sorting keys from {} and {}",self.ordered_sorting_keys.len(), other.ordered_sorting_keys.len());
-        for (a,b) in self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()) {
-            if !(a.0 == b.0 && a.1 == b.1) {
-                return false
-            }
-        }
-        true
+        self.aligned_read.reference_name == other.aligned_read.reference_name
+            && self.ordered_sorting_keys == other.ordered_sorting_keys
     }
 }
 
@@ -90,21 +85,10 @@ impl PartialOrd for SortingReadSetContainer {
 /// you could argue alphabetical, but we simply sort on their underlying bit encoding
 impl Ord for SortingReadSetContainer {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.aligned_read.reference_name.cmp(&other.aligned_read.reference_name) {
-            Ordering::Less => Ordering::Less,
-            Ordering::Equal => {
-                for (a, b) in self.ordered_sorting_keys.iter().zip(other.ordered_sorting_keys.iter()) {
-                    assert_eq!(a.0, b.0, "SortingReadSetContainer: mismatched sorting keys");
-                    match a.1.cmp(&b.1) {
-                        Ordering::Less => {return Ordering::Less}
-                        Ordering::Greater => {return Ordering::Greater}
-                        Ordering::Equal => {/* do nothing, someone else will solve our problem*/}
-                    }
-                }
-                Ordering::Equal
-            }
-            Ordering::Greater => Ordering::Greater,
-        }
+        self.aligned_read
+            .reference_name
+            .cmp(&other.aligned_read.reference_name)
+            .then_with(|| self.ordered_sorting_keys.cmp(&other.ordered_sorting_keys))
     }
 }
 
@@ -286,5 +270,61 @@ mod tests {
         assert_eq!(st1.cmp(&st2) == Ordering::Equal, true);
 
 
+    }
+
+    fn comparison_container(
+        reference_name: &str,
+        keys: Vec<(char, CorrectedKey)>,
+    ) -> SortingReadSetContainer {
+        SortingReadSetContainer {
+            ordered_sorting_keys: keys,
+            ordered_unsorted_keys: VecDeque::new(),
+            aligned_read: AlignmentResult {
+                reference_name: reference_name.to_string(),
+                read_name: "read".to_string(),
+                reference_aligned: vec![],
+                read_aligned: vec![],
+                read_quals: None,
+                cigar_string: vec![],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        }
+    }
+
+    fn comparison_key(symbol: char, corrected: &[u8]) -> (char, CorrectedKey) {
+        (
+            symbol,
+            CorrectedKey::new(symbol, corrected.to_vec(), corrected.to_vec()),
+        )
+    }
+
+    #[test]
+    fn test_sorting_container_equality_matches_ordering() {
+        let reference_a = comparison_container("reference_a", vec![comparison_key('0', b"AAAA")]);
+        let reference_b = comparison_container("reference_b", vec![comparison_key('0', b"AAAA")]);
+        let short_keys = comparison_container("reference_a", vec![comparison_key('0', b"AAAA")]);
+        let long_keys = comparison_container(
+            "reference_a",
+            vec![comparison_key('0', b"AAAA"), comparison_key('1', b"CCCC")],
+        );
+        let symbol_a = comparison_container("reference_a", vec![comparison_key('0', b"AAAA")]);
+        let symbol_b = comparison_container("reference_a", vec![comparison_key('1', b"AAAA")]);
+
+        for (left, right) in [
+            (&reference_a, &reference_b),
+            (&short_keys, &long_keys),
+            (&symbol_a, &symbol_b),
+        ] {
+            assert_eq!(left == right, left.cmp(right) == Ordering::Equal);
+            assert_ne!(left, right);
+        }
+
+        assert_eq!(reference_a.cmp(&reference_b), Ordering::Less);
+        assert_eq!(short_keys.cmp(&long_keys), Ordering::Less);
+        assert_eq!(symbol_a.cmp(&symbol_b), Ordering::Less);
     }
 }

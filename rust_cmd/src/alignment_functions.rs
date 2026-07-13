@@ -18,6 +18,7 @@ use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
 use crate::read_strategies::read_set::ReadIterator;
 use crate::reference::fasta_reference::ReferenceManager;
+use crate::reference::discriminating::DiscriminatingClassifier;
 use ndarray::Ix3;
 use std::time::Instant;
 use bio::alignment::AlignmentOperation;
@@ -70,6 +71,8 @@ pub fn align_reads(
     index2: &String,
     threads: &usize,
     _aligner: &RustAligner,
+    use_discriminating: bool,
+    discriminating_min_margin: usize,
 ) {
     let read_iterator = ReadIterator::new(
         PathBuf::from(&read1),
@@ -130,6 +133,32 @@ pub fn align_reads(
         false,
     );
 
+    // Optional discriminating-position classifier for near-identical panels
+    // (opt-in via --discriminating-classifier). Built once from the whole panel;
+    // disabled if there is <2 references or the panel has no discriminating columns.
+    let discriminating_classifier = if use_discriminating {
+        match DiscriminatingClassifier::from_reference_manager(rm, discriminating_min_margin) {
+            Ok(clf) if clf.n_positions() > 0 => {
+                info!(
+                    "Discriminating-position classifier enabled: anchor '{}', {} discriminating position(s), min margin {}",
+                    clf.anchor_name, clf.n_positions(), discriminating_min_margin
+                );
+                Some(clf)
+            }
+            Ok(_) => {
+                warn!("Discriminating classifier requested but the panel has no discriminating positions; using the default reference search.");
+                None
+            }
+            Err(e) => {
+                warn!("Could not build the discriminating classifier ({}); using the default reference search.", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let discriminating_classifier = discriminating_classifier.as_ref();
+
     read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
         STORE.with(|arc_mtx| {
             let mut local_alignment = arc_mtx.lock().unwrap();
@@ -159,6 +188,7 @@ pub fn align_reads(
                     *max_reference_multiplier as f64,
                     *min_read_length,
                     seq_len,
+                    discriminating_classifier,
                 );
 
                 match aligned {
@@ -170,6 +200,7 @@ pub fn align_reads(
                         let results = alignment_obj.alignment;
 
                         let _orig_ref_seq = alignment_obj.ref_sequence;
+                        let classification = alignment_obj.classification;
                         match results {
                             None => {
                                 // TODO: we should track this and provide a final summary
@@ -211,6 +242,15 @@ pub fn align_reads(
                                 });
 
                                 added_tags.insert([b'r', b'c'], 1.to_string());
+
+                                // Discriminating-position classifier confidence, when it made the call:
+                                // dm = top-2 margin, di = informative discriminating positions covered,
+                                // da = 1 if the call was ambiguous (near-tie) else 0.
+                                if let Some(info) = &classification {
+                                    added_tags.insert([b'd', b'm'], info.margin.to_string());
+                                    added_tags.insert([b'd', b'i'], info.informative_positions.to_string());
+                                    added_tags.insert([b'd', b'a'], (info.ambiguous as u8).to_string());
+                                }
 
                                 added_tags
                                     .insert([b'a', b'r'], read.aligned_read.read_name.clone());
@@ -460,12 +500,26 @@ pub fn align_two_strings_passed_matrix(
     //}
 }
 
+/// Confidence attached to a reference call made by the discriminating-position
+/// classifier (only present when that path selected the reference).
+#[derive(Clone, Debug)]
+pub struct DiscriminatingInfo {
+    /// Top-2 score gap at the discriminating positions.
+    pub margin: usize,
+    /// Discriminating positions the read covered with a real base.
+    pub informative_positions: usize,
+    /// True when the margin was below the configured minimum (a near-tie call).
+    pub ambiguous: bool,
+}
+
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct AlignmentWithRef {
     alignment: Option<AlignmentResult>,
     ref_name: Vec<u8>,
     ref_sequence: Vec<u8>,
+    /// Set when the reference was chosen by the discriminating-position classifier.
+    classification: Option<DiscriminatingInfo>,
 }
 
 fn alignment_score(candidate: &AlignmentWithRef) -> f64 {
@@ -502,7 +556,33 @@ fn search_multiple_references(
     fast_lookup: bool,
     alignment_mat: &mut Alignment<Ix3>,
     my_aff_score: &AffineScoring,
+    classifier: Option<&DiscriminatingClassifier>,
 ) -> Option<AlignmentWithRef> {
+    // Discriminating-position path (for near-identical panels): let the classifier
+    // pick the reference by comparing only the columns where the panel differs,
+    // then align the read to that single reference and attach the confidence.
+    if let Some(clf) = classifier {
+        let cls = clf.classify_read(read);
+        let mut subset = HashSet::new();
+        subset.insert(cls.best.clone().into_bytes());
+        return exhaustive_alignment_search(
+            read_name,
+            read,
+            qual_sequence,
+            rm,
+            alignment_mat,
+            my_aff_score,
+            Some(subset),
+        )
+        .map(|mut awr| {
+            awr.classification = Some(DiscriminatingInfo {
+                margin: cls.margin,
+                informative_positions: cls.informative_positions,
+                ambiguous: cls.ambiguous,
+            });
+            awr
+        });
+    }
     if fast_lookup {
         quick_alignment_search(
             read_name,
@@ -601,6 +681,7 @@ pub fn align_to_reference_choices(
     _max_reference_multiplier: f64,
     _min_read_length: usize,
     _max_indel: &usize,
+    classifier: Option<&DiscriminatingClassifier>,
 ) -> Option<AlignmentWithRef> {
     match rm.references.len() {
         0 => {
@@ -706,6 +787,7 @@ pub fn align_to_reference_choices(
                 alignment: Some(result),
                 ref_name: ref_base.name.clone(),
                 ref_sequence: ref_base.sequence.clone(),
+                classification: None,
             })
         }
         x if x > 1 => {
@@ -718,6 +800,7 @@ pub fn align_to_reference_choices(
                     *fast_lookup,
                     alignment_mat,
                     my_aff_score,
+                    classifier,
                 )
             } else {
                 let forward = search_multiple_references(
@@ -728,6 +811,7 @@ pub fn align_to_reference_choices(
                     *fast_lookup,
                     alignment_mat,
                     my_aff_score,
+                    classifier,
                 );
 
                 let reverse_complemented_read = reverse_complement(read);
@@ -743,6 +827,7 @@ pub fn align_to_reference_choices(
                     *fast_lookup,
                     alignment_mat,
                     my_aff_score,
+                    classifier,
                 );
 
                 select_best_alignment(forward, reverse_complemented)
@@ -877,6 +962,7 @@ fn quick_alignment_search(
                     )),
                     ref_name: reference.name.clone(),
                     ref_sequence: reference.sequence.clone(),
+                    classification: None,
                 })
             } else {
                 exhaustive_alignment_search(
@@ -948,6 +1034,7 @@ fn exhaustive_alignment_search(
                 alignment: Some(y.0.clone()),
                 ref_name: y.2.clone(),
                 ref_sequence: y.1.clone(),
+                classification: None,
             })
         }
     }
@@ -1145,6 +1232,7 @@ mod tests {
             2.0,
             0,
             &read.len(),
+            None,
         )
         .unwrap()
         .alignment
@@ -1240,6 +1328,7 @@ mod tests {
                 2.0,
                 0,
                 &read.len(),
+                None,
             )
             .expect("reverse-complemented read should align");
             let alignment = result.alignment.expect("alignment should be present");
