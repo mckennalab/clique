@@ -19,6 +19,7 @@ use crate::rayon::iter::ParallelIterator;
 use crate::read_strategies::read_set::ReadIterator;
 use crate::reference::fasta_reference::ReferenceManager;
 use crate::reference::discriminating::DiscriminatingClassifier;
+use crate::reference::idf::IdfIndex;
 use ndarray::Ix3;
 use std::time::Instant;
 use bio::alignment::AlignmentOperation;
@@ -73,6 +74,8 @@ pub fn align_reads(
     _aligner: &RustAligner,
     use_discriminating: bool,
     discriminating_min_margin: usize,
+    use_kmer_idf: bool,
+    kmer_idf_min_margin: f64,
 ) {
     let read_iterator = ReadIterator::new(
         PathBuf::from(&read1),
@@ -159,6 +162,30 @@ pub fn align_reads(
     };
     let discriminating_classifier = discriminating_classifier.as_ref();
 
+    // Optional IDF-weighted k-mer router (opt-in via --kmer-idf). Built once;
+    // disabled if there are <2 references or no discriminating k-mers.
+    let idf_index = if use_kmer_idf {
+        if rm.references.len() < 2 {
+            warn!("IDF router requested but there are fewer than 2 references; using the default reference search.");
+            None
+        } else {
+            let index = IdfIndex::from_reference_manager(rm, kmer_idf_min_margin);
+            if index.has_discriminating_kmers() {
+                info!(
+                    "IDF-weighted k-mer router enabled: {} references, min margin ratio {}",
+                    index.n_refs(), kmer_idf_min_margin
+                );
+                Some(index)
+            } else {
+                warn!("IDF router requested but no k-mer discriminates the panel; using the default reference search.");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let idf_index = idf_index.as_ref();
+
     read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
         STORE.with(|arc_mtx| {
             let mut local_alignment = arc_mtx.lock().unwrap();
@@ -189,6 +216,7 @@ pub fn align_reads(
                     *min_read_length,
                     seq_len,
                     discriminating_classifier,
+                    idf_index,
                 );
 
                 match aligned {
@@ -201,6 +229,7 @@ pub fn align_reads(
 
                         let _orig_ref_seq = alignment_obj.ref_sequence;
                         let classification = alignment_obj.classification;
+                        let idf_info = alignment_obj.idf_info;
                         match results {
                             None => {
                                 // TODO: we should track this and provide a final summary
@@ -250,6 +279,16 @@ pub fn align_reads(
                                     added_tags.insert([b'd', b'm'], info.margin.to_string());
                                     added_tags.insert([b'd', b'i'], info.informative_positions.to_string());
                                     added_tags.insert([b'd', b'a'], (info.ambiguous as u8).to_string());
+                                }
+
+                                // IDF-router confidence, when it made the call:
+                                // ib = best summed IDF weight, im = top-2 margin ratio,
+                                // ik = informative k-mers, ia = 1 if ambiguous else 0.
+                                if let Some(info) = &idf_info {
+                                    added_tags.insert([b'i', b'b'], format!("{:.3}", info.best_score));
+                                    added_tags.insert([b'i', b'm'], format!("{:.3}", info.margin_ratio));
+                                    added_tags.insert([b'i', b'k'], info.informative_kmers.to_string());
+                                    added_tags.insert([b'i', b'a'], (info.ambiguous as u8).to_string());
                                 }
 
                                 added_tags
@@ -512,6 +551,19 @@ pub struct DiscriminatingInfo {
     pub ambiguous: bool,
 }
 
+/// Confidence attached to a reference call made by the IDF-weighted k-mer router.
+#[derive(Clone, Debug)]
+pub struct IdfInfo {
+    /// Summed IDF weight for the chosen reference.
+    pub best_score: f64,
+    /// Top-2 relative margin `(best - second) / best`.
+    pub margin_ratio: f64,
+    /// Distinct read k-mers that hit a discriminating panel k-mer.
+    pub informative_kmers: usize,
+    /// True when the margin was below the configured floor (a near-tie call).
+    pub ambiguous: bool,
+}
+
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct AlignmentWithRef {
@@ -520,6 +572,8 @@ pub struct AlignmentWithRef {
     ref_sequence: Vec<u8>,
     /// Set when the reference was chosen by the discriminating-position classifier.
     classification: Option<DiscriminatingInfo>,
+    /// Set when the reference was routed by the IDF-weighted k-mer index.
+    idf_info: Option<IdfInfo>,
 }
 
 fn alignment_score(candidate: &AlignmentWithRef) -> f64 {
@@ -557,7 +611,62 @@ fn search_multiple_references(
     alignment_mat: &mut Alignment<Ix3>,
     my_aff_score: &AffineScoring,
     classifier: Option<&DiscriminatingClassifier>,
+    idf: Option<&IdfIndex>,
 ) -> Option<AlignmentWithRef> {
+    // IDF-weighted k-mer router: pick the reference by summed IDF weight (the
+    // shared backbone contributes 0). When the IDF call is ambiguous and a
+    // discriminating classifier is available, defer the tie-break to it. Then
+    // align the read to the chosen reference (or fall back to a full search when
+    // IDF found no discriminating signal) and attach the confidence.
+    if let Some(index) = idf {
+        let sc = index.score(read);
+        let mut refined_disc: Option<DiscriminatingInfo> = None;
+        let chosen: Option<Vec<u8>> = match &sc.best {
+            None => None, // no discriminating k-mers matched -> full fallback below
+            Some(best) => {
+                if sc.ambiguous {
+                    if let Some(clf) = classifier {
+                        let dc = clf.classify_read(read);
+                        refined_disc = Some(DiscriminatingInfo {
+                            margin: dc.margin,
+                            informative_positions: dc.informative_positions,
+                            ambiguous: dc.ambiguous,
+                        });
+                        Some(dc.best.into_bytes())
+                    } else {
+                        Some(best.clone())
+                    }
+                } else {
+                    Some(best.clone())
+                }
+            }
+        };
+        let subset = chosen.map(|name| {
+            let mut set = HashSet::new();
+            set.insert(name);
+            set
+        });
+        return exhaustive_alignment_search(
+            read_name,
+            read,
+            qual_sequence,
+            rm,
+            alignment_mat,
+            my_aff_score,
+            subset,
+        )
+        .map(|mut awr| {
+            awr.idf_info = Some(IdfInfo {
+                best_score: sc.best_score,
+                margin_ratio: sc.margin_ratio,
+                informative_kmers: sc.informative_kmers,
+                ambiguous: sc.ambiguous,
+            });
+            awr.classification = refined_disc.clone();
+            awr
+        });
+    }
+
     // Discriminating-position path (for near-identical panels): let the classifier
     // pick the reference by comparing only the columns where the panel differs,
     // then align the read to that single reference and attach the confidence.
@@ -682,6 +791,7 @@ pub fn align_to_reference_choices(
     min_read_length: usize,
     _max_indel: &usize,
     classifier: Option<&DiscriminatingClassifier>,
+    idf: Option<&IdfIndex>,
 ) -> Option<AlignmentWithRef> {
     if read.len() < min_read_length {
         debug!(
@@ -798,6 +908,7 @@ pub fn align_to_reference_choices(
                 ref_name: ref_base.name.clone(),
                 ref_sequence: ref_base.sequence.clone(),
                 classification: None,
+                idf_info: None,
             })
         }
         x if x > 1 => {
@@ -811,6 +922,7 @@ pub fn align_to_reference_choices(
                     alignment_mat,
                     my_aff_score,
                     classifier,
+                    idf,
                 )
             } else {
                 let forward = search_multiple_references(
@@ -822,6 +934,7 @@ pub fn align_to_reference_choices(
                     alignment_mat,
                     my_aff_score,
                     classifier,
+                    idf,
                 );
 
                 let reverse_complemented_read = reverse_complement(read);
@@ -838,6 +951,7 @@ pub fn align_to_reference_choices(
                     alignment_mat,
                     my_aff_score,
                     classifier,
+                    idf,
                 );
 
                 select_best_alignment(forward, reverse_complemented)
@@ -973,6 +1087,7 @@ fn quick_alignment_search(
                     ref_name: reference.name.clone(),
                     ref_sequence: reference.sequence.clone(),
                     classification: None,
+                    idf_info: None,
                 })
             } else {
                 exhaustive_alignment_search(
@@ -1045,6 +1160,7 @@ fn exhaustive_alignment_search(
                 ref_name: y.2.clone(),
                 ref_sequence: y.1.clone(),
                 classification: None,
+                idf_info: None,
             })
         }
     }
@@ -1243,6 +1359,7 @@ mod tests {
             0,
             &read.len(),
             None,
+            None,
         )
         .unwrap()
         .alignment
@@ -1319,6 +1436,7 @@ mod tests {
             read.len() + 1,
             &read.len(),
             None,
+            None,
         );
 
         assert!(result.is_none());
@@ -1370,6 +1488,7 @@ mod tests {
                 2.0,
                 0,
                 &read.len(),
+                None,
                 None,
             )
             .expect("reverse-complemented read should align");

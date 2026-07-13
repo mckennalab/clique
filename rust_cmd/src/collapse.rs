@@ -69,9 +69,11 @@ use FASTA_N;
 ///     &mut temp_dir,
 ///     &sequence_layout,
 ///     &"input.bam".to_string(),
-///     &MergeStrategy::Consensus,
+///     &MergeStrategy::Stretcher,
 ///     &ReadOutputApproach::Collapse,
 ///     &AlignmentFilterConfig::default(),
+///     &1,
+///     &40,
 /// );
 /// ```
 pub fn collapse(
@@ -85,7 +87,10 @@ pub fn collapse(
     processing_threads: &usize,
     maximum_reads_before_downsampling: &usize,
 ) {
-    assert!(*processing_threads > 0, "Collapse threads must be greater than zero");
+    assert!(
+        *processing_threads > 0,
+        "Collapse threads must be greater than zero"
+    );
 
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
@@ -1340,7 +1345,9 @@ mod tests {
         let config = layout.references["reference"].umi_configurations["cell_id"].clone();
         let lookups = get_known_level_lookups(&layout);
 
-        assert!(lookups.ret_trie.contains_key(&KnownLookupKey::from_config(&config)));
+        assert!(lookups
+            .ret_trie
+            .contains_key(&KnownLookupKey::from_config(&config)));
         assert!(lookups.ret_known_lookup.is_empty());
     }
 

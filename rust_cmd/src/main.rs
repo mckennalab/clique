@@ -282,6 +282,18 @@ enum Cmd {
         #[clap(long, default_value = "1")]
         discriminating_min_margin: usize,
 
+        /// Route each read to its reference with IDF-weighted k-mer scoring (the
+        /// shared backbone is down-weighted to zero), emitting margin-ratio
+        /// confidence (ib/im/ik/ia BAM tags). Combine with
+        /// --discriminating-classifier to use that as the tie-break on ambiguous
+        /// IDF calls.
+        #[clap(long, action=clap::ArgAction::SetTrue)]
+        kmer_idf: bool,
+
+        /// Minimum top-2 IDF margin ratio (best-second)/best for a confident call.
+        #[clap(long, default_value = "0.05")]
+        kmer_idf_min_margin: f64,
+
     },
     /// Generate a read-structure YAML from an annotated GenBank file.
     GenbankToYaml {
@@ -390,6 +402,8 @@ fn main() {
             aligner,
             discriminating_classifier,
             discriminating_min_margin,
+            kmer_idf,
+            kmer_idf_min_margin,
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
@@ -408,7 +422,9 @@ fn main() {
                         threads,
                         aligner,
                         *discriminating_classifier,
-                        *discriminating_min_margin);
+                        *discriminating_min_margin,
+                        *kmer_idf,
+                        *kmer_idf_min_margin);
         }
 
         Cmd::GenbankToYaml {
