@@ -173,7 +173,7 @@ impl SequenceCorrector {
             corrected_value.resize(self.tag.length, b'-');
             let corrected_key = corrected_value.clone();
 
-            if start < sorted_tags[0].0.len() {
+            if start < sorted_tags[sorted_tag_index].0.len() {
                 let rt = trie.chained_search(
                     start,
                     Some(future),
@@ -525,6 +525,47 @@ mod tests {
     use alignment::alignment_matrix::AlignmentResult;
     use read_strategies::sequence_layout::UMISortType;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_known_list_searches_tag_extending_previous_prefix() {
+        let tempfile = NamedTempFile::new().unwrap();
+        let config = UMIConfiguration {
+            symbol: '1',
+            file: Some("allowlist.txt".to_string()),
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::KnownTag,
+            length: 5,
+            order: 0,
+            pad: None,
+            max_distance: 1,
+            maximum_subsequences: Some(5000),
+            minimum_collapsing_difference: None,
+            max_gaps: None,
+            levenshtein_distance: Some(true),
+        };
+        let mut corrector = SequenceCorrector::new(
+            tempfile.path().to_path_buf(),
+            &5000,
+            config.clone(),
+        );
+        corrector.push(create_fake_read_set_container(
+            &"short".to_string(),
+            &"ACGT".to_string(),
+            &config,
+        ));
+        corrector.push(create_fake_read_set_container(
+            &"exact".to_string(),
+            &"ACGTA".to_string(),
+            &config,
+        ));
+
+        let mut trie = Trie::new(config.length);
+        trie.insert(b"ACGTA", None, &config.max_distance);
+        let corrections = corrector.correct_known_list(&mut trie);
+
+        assert_eq!(corrections.get(b"ACGT-".as_slice()), Some(&b"ACGTA".to_vec()));
+        assert_eq!(corrections.get(b"ACGTA".as_slice()), Some(&b"ACGTA".to_vec()));
+    }
 
     #[test]
     fn test_tag_buffer_corrects() {
