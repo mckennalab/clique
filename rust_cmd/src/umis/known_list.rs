@@ -95,6 +95,18 @@ impl KnownList {
 
         let input_list = KnownList::create_input_set(filename, &rev_comp);
 
+        for (index, sequence) in input_list.iter().enumerate() {
+            assert_eq!(
+                sequence.fa_u8.len(),
+                umi_type.length,
+                "Allowlist '{}' line {} has length {}; expected {}",
+                filename,
+                index + 1,
+                sequence.fa_u8.len(),
+                umi_type.length
+            );
+        }
+
         let vantage_tree = vpsearch::Tree::new(&input_list);
 
         let exact_matches: HashMap<FastaString, BestF32Hits> =
@@ -239,6 +251,30 @@ mod tests {
             approximate_matches: HashMap::new(),
             input_list,
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "line 2 has length 3; expected 4")]
+    fn test_known_list_rejects_allowlist_entries_with_wrong_length() {
+        let directory = tempfile::tempdir().unwrap();
+        let filename = directory.path().join("allowlist.txt");
+        std::fs::write(&filename, b"AAAA\nAAA\n").unwrap();
+        let config = UMIConfiguration {
+            symbol: '0',
+            file: Some(filename.to_string_lossy().into_owned()),
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::KnownTag,
+            length: 4,
+            order: 0,
+            pad: None,
+            max_distance: 1,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance: Some(false),
+        };
+
+        KnownList::new(&config);
     }
 
     #[test]

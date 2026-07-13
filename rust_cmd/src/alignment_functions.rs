@@ -679,10 +679,20 @@ pub fn align_to_reference_choices(
     _my_score: &InversionScoring,
     _use_inversions: &bool,
     _max_reference_multiplier: f64,
-    _min_read_length: usize,
+    min_read_length: usize,
     _max_indel: &usize,
     classifier: Option<&DiscriminatingClassifier>,
 ) -> Option<AlignmentWithRef> {
+    if read.len() < min_read_length {
+        debug!(
+            "Skipping read {} because its length {} is below the minimum {}",
+            read_name,
+            read.len(),
+            min_read_length
+        );
+        return None;
+    }
+
     match rm.references.len() {
         0 => {
             // TODO: we should track this and provide a final summary
@@ -1280,6 +1290,38 @@ mod tests {
         );
 
         assert_eq!(alignment.read_quals, Some(qualities));
+    }
+
+    #[test]
+    fn test_alignment_rejects_reads_below_minimum_length() {
+        let layout = multi_reference_layout(true);
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let read = b"ACGT".to_vec();
+        let mut alignment_matrix = create_scoring_record_3d(
+            reference_manager.longest_ref + 1,
+            read.len() + 1,
+            AlignmentType::Affine,
+            false,
+        );
+
+        let result = align_to_reference_choices(
+            &"short_read".to_string(),
+            &read,
+            None,
+            &reference_manager,
+            &false,
+            &layout,
+            &mut alignment_matrix,
+            &AffineScoring::default_dna(),
+            &InversionScoring::default(),
+            &false,
+            2.0,
+            read.len() + 1,
+            &read.len(),
+            None,
+        );
+
+        assert!(result.is_none());
     }
 
     #[test]

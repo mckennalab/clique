@@ -91,11 +91,13 @@ impl SequenceLayout {
             return false;
         }
 
-        let existing_bases = ref_bases.iter().map(|base| (char::from(*base), true)).collect::<BTreeMap<_, _>>();
-
-        configurations.iter().map(|(_name,umi_config)| {
-            existing_bases.contains_key(&umi_config.symbol)
-        }).all(|x| x)
+        configurations.values().all(|umi_config| {
+            ref_bases
+                .iter()
+                .filter(|base| char::from(**base) == umi_config.symbol)
+                .count()
+                == umi_config.length
+        })
     }
 
     /// UMI symbols are embedded in both the reference and the second byte of
@@ -423,8 +425,8 @@ mod tests {
             minimum_collapsing_difference: None,
             levenshtein_distance: None,
         });
-        // Reference contains '0', so validation should pass
-        let ref_bases = b"ACGT0ACGT";
+        // Reference contains exactly the configured number of '0' markers.
+        let ref_bases = b"ACGT0000000000ACGT";
         assert!(SequenceLayout::validate_reference_sequence(ref_bases, &configs));
     }
 
@@ -481,13 +483,36 @@ mod tests {
             minimum_collapsing_difference: None,
             levenshtein_distance: None,
         });
-        // Only has '0', not '1'
-        let ref_bases = b"ACG0TACGT";
+        // Has all ten '0' markers, but no '1' markers.
+        let ref_bases = b"ACG0000000000TACGT";
         assert!(!SequenceLayout::validate_reference_sequence(ref_bases, &configs));
 
-        // Has both
-        let ref_bases2 = b"ACG0T1ACGT";
+        // Has exactly ten '0' and five '1' markers.
+        let ref_bases2 = b"ACG0000000000T11111ACGT";
         assert!(SequenceLayout::validate_reference_sequence(ref_bases2, &configs));
+    }
+
+    #[test]
+    fn test_validate_reference_sequence_requires_exact_symbol_count() {
+        let mut configs = BTreeMap::new();
+        configs.insert("umi1".to_string(), UMIConfiguration {
+            symbol: '0',
+            file: None,
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::DegenerateTag,
+            length: 3,
+            order: 0,
+            pad: None,
+            max_distance: 1,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance: None,
+        });
+
+        assert!(!SequenceLayout::validate_reference_sequence(b"AA00AA", &configs));
+        assert!(SequenceLayout::validate_reference_sequence(b"AA000AA", &configs));
+        assert!(!SequenceLayout::validate_reference_sequence(b"AA0000AA", &configs));
     }
 
     #[test]

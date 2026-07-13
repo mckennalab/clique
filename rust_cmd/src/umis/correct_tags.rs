@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::UMIConfiguration;
-use collapse::LookupCollection;
+use collapse::{KnownLookupKey, LookupCollection};
 use read_strategies::sequence_layout::UMISortType;
 use rust_star::{DistanceGraphNode, Link, LinkedDistances, Trie};
 use rustc_hash::{FxHashMap, FxHasher};
@@ -412,9 +412,10 @@ impl SequenceCorrector {
             .file
             .as_ref()
             .expect("KnownTag UMI must specify an allowlist file");
+        let lookup_key = KnownLookupKey::from_config(tag);
         let trie = lookup_collection
             .ret_trie
-            .get_mut(filename)
+            .get_mut(&lookup_key)
             .unwrap_or_else(|| panic!("Unable to find trie lookup for {}", filename));
         let final_correction = self.correct_known_list(trie);
         info!("Closing and writing corrections...");
@@ -435,9 +436,10 @@ impl SequenceCorrector {
             .file
             .as_ref()
             .expect("KnownTag UMI must specify an allowlist file");
+        let lookup_key = KnownLookupKey::from_config(tag);
         let known_list = lookup_collection
             .ret_known_lookup
-            .get_mut(filename)
+            .get_mut(&lookup_key)
             .unwrap_or_else(|| panic!("Unable to find Hamming lookup for {}", filename));
         let final_correction = known_list.correct_all(
             &self.hash_map.keys().cloned().collect::<Vec<Vec<u8>>>(),

@@ -82,7 +82,11 @@ pub fn collapse(
     merge_strategy: &MergeStrategy,
     output_approach: &ReadOutputApproach,
     alignment_filter: &AlignmentFilterConfig,
+    processing_threads: &usize,
+    maximum_reads_before_downsampling: &usize,
 ) {
+    assert!(*processing_threads > 0, "Collapse threads must be greater than zero");
+
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
 
@@ -140,7 +144,16 @@ pub fn collapse(
                     ReadOutputApproach::Collapse => {
                         info!("writing consensus reads for reference {}", ref_name);
 
-                        write_consensus_reads(&sorted_reads, &mut writer, levels, &rm, read_structure, &40, merge_strategy);
+                        write_consensus_reads(
+                            &sorted_reads,
+                            &mut writer,
+                            levels,
+                            &rm,
+                            read_structure,
+                            maximum_reads_before_downsampling,
+                            merge_strategy,
+                            processing_threads,
+                        );
 
                     }
                     ReadOutputApproach::Correct => {
@@ -857,12 +870,48 @@ pub fn extract_known_list(
 
     let rev_comp = umi_type.reverse_complement_sequences.unwrap_or(false);
 
-    create_input_set(filename, &rev_comp)
+    let input_set = create_input_set(filename, &rev_comp);
+    for (index, sequence) in input_set.iter().enumerate() {
+        assert_eq!(
+            sequence.len(),
+            umi_type.length,
+            "Allowlist '{}' line {} has length {}; expected {}",
+            filename,
+            index + 1,
+            sequence.len(),
+            umi_type.length
+        );
+    }
+    input_set
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct KnownLookupKey {
+    filename: String,
+    length: usize,
+    max_distance: usize,
+    reverse_complement_sequences: bool,
+    levenshtein_distance: bool,
+}
+
+impl KnownLookupKey {
+    pub fn from_config(config: &UMIConfiguration) -> Self {
+        Self {
+            filename: config
+                .file
+                .clone()
+                .expect("KnownTag UMI must specify an allowlist file"),
+            length: config.length,
+            max_distance: config.max_distance,
+            reverse_complement_sequences: config.reverse_complement_sequences.unwrap_or(false),
+            levenshtein_distance: config.uses_levenshtein_distance(),
+        }
+    }
 }
 
 pub struct LookupCollection {
-    pub ret_trie: HashMap<String, Trie>,
-    pub ret_known_lookup: HashMap<String, KnownList>,
+    pub ret_trie: HashMap<KnownLookupKey, Trie>,
+    pub ret_known_lookup: HashMap<KnownLookupKey, KnownList>,
 }
 
 /// Creates lookup collections for known UMI sequences from the sequence layout configuration.
@@ -889,8 +938,8 @@ pub struct LookupCollection {
 /// let lookup_collection = get_known_level_lookups(&sequence_layout);
 /// ```
 fn get_known_level_lookups(read_structure: &SequenceLayout) -> LookupCollection {
-    let mut ret_trie: HashMap<String, Trie> = HashMap::new();
-    let mut ret_known_lookup: HashMap<String, KnownList> = HashMap::new();
+    let mut ret_trie: HashMap<KnownLookupKey, Trie> = HashMap::new();
+    let mut ret_known_lookup: HashMap<KnownLookupKey, KnownList> = HashMap::new();
 
     read_structure
         .references
@@ -907,6 +956,7 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> LookupCollection 
                         );
                     }
                     (UMISortType::KnownTag, Some(filename)) => {
+                        let lookup_key = KnownLookupKey::from_config(config);
                         if config.uses_levenshtein_distance() {
                             let known_lookup = extract_known_list(config, &8);
 
@@ -920,9 +970,9 @@ fn get_known_level_lookups(read_structure: &SequenceLayout) -> LookupCollection 
                                 trie.insert(sequence, None, &config.max_distance);
                             });
                             debug!("creating kn");
-                            ret_trie.insert(filename.clone(), trie);
+                            ret_trie.insert(lookup_key, trie);
                         } else {
-                            ret_known_lookup.insert(filename.clone(), KnownList::new(config));
+                            ret_known_lookup.insert(lookup_key, KnownList::new(config));
                         }
                     }
                     (UMISortType::DegenerateTag, _) => {}
@@ -1286,19 +1336,44 @@ mod tests {
     #[test]
     fn test_known_lookup_defaults_to_levenshtein() {
         let filename = "test_data/subset_barcode_list_500.txt";
-        let lookups = get_known_level_lookups(&known_tag_layout(Some(filename), None));
+        let layout = known_tag_layout(Some(filename), None);
+        let config = layout.references["reference"].umi_configurations["cell_id"].clone();
+        let lookups = get_known_level_lookups(&layout);
 
-        assert!(lookups.ret_trie.contains_key(filename));
-        assert!(!lookups.ret_known_lookup.contains_key(filename));
+        assert!(lookups.ret_trie.contains_key(&KnownLookupKey::from_config(&config)));
+        assert!(lookups.ret_known_lookup.is_empty());
     }
 
     #[test]
     fn test_known_lookup_uses_hamming_when_explicitly_disabled() {
         let filename = "test_data/subset_barcode_list_500.txt";
-        let lookups = get_known_level_lookups(&known_tag_layout(Some(filename), Some(false)));
+        let layout = known_tag_layout(Some(filename), Some(false));
+        let config = layout.references["reference"].umi_configurations["cell_id"].clone();
+        let lookups = get_known_level_lookups(&layout);
 
-        assert!(!lookups.ret_trie.contains_key(filename));
-        assert!(lookups.ret_known_lookup.contains_key(filename));
+        assert!(lookups.ret_trie.is_empty());
+        assert!(lookups
+            .ret_known_lookup
+            .contains_key(&KnownLookupKey::from_config(&config)));
+    }
+
+    #[test]
+    fn test_known_lookup_keeps_distinct_configurations_for_same_file() {
+        let filename = "test_data/subset_barcode_list_500.txt";
+        let mut layout = known_tag_layout(Some(filename), None);
+        let mut second_reference = layout.references["reference"].clone();
+        second_reference
+            .umi_configurations
+            .get_mut("cell_id")
+            .unwrap()
+            .max_distance = 2;
+        layout
+            .references
+            .insert("second_reference".to_string(), second_reference);
+
+        let lookups = get_known_level_lookups(&layout);
+
+        assert_eq!(lookups.ret_trie.len(), 2);
     }
 
     #[test]

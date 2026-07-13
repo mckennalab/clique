@@ -173,6 +173,7 @@ mod alignment_functions;
 mod reference {
     pub mod fasta_reference;
     pub mod discriminating;
+    pub mod idf;
 }
 
 /// Aligner selection. Currently informational: the affine-gap aligner is used
@@ -210,17 +211,9 @@ enum Cmd {
         #[clap(long)]
         input_bam_file: String,
 
-        /// Detect inversions while collapsing.
-        #[clap(long)]
-        find_inversions: bool,
-
-        /// Use the fast k-mer reference lookup instead of exhaustive search.
-        #[clap(long)]
-        fast_reference_lookup: bool,
-
-        /// Maximum deletion length to tolerate.
-        #[clap(long, default_value = "0")]
-        max_deletion: usize,
+        /// Maximum reads per molecule used to build a consensus (0 disables downsampling).
+        #[clap(long, default_value = "40")]
+        maximum_reads_before_downsampling: usize,
 
         /// Minimum number of aligned non-UMI bases (capped to the reference's available bases).
         #[clap(long, default_value = "45")]
@@ -333,12 +326,10 @@ fn main() {
         Cmd::Collapse {
             output_bam_file: outbam,
             read_structure,
-            threads: _,
-            temp_dir: _,
+            threads,
+            temp_dir,
             input_bam_file: inbam,
-            find_inversions: _,
-            fast_reference_lookup: _,
-            max_deletion: _,
+            maximum_reads_before_downsampling,
             min_aligned_bases,
             min_aligned_identity,
             correct_only: correction_only,
@@ -346,7 +337,18 @@ fn main() {
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
 
-            let mut tmp = InstanceLivedTempDir::new().unwrap();
+            assert!(*threads > 0, "Collapse threads must be greater than zero");
+            let mut tmp = if temp_dir == "NONE" {
+                InstanceLivedTempDir::new()
+            } else {
+                InstanceLivedTempDir::new_in(Path::new(temp_dir))
+            }
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Unable to create temporary directory under '{}': {}",
+                    temp_dir, error
+                )
+            });
 
             let correction = match *correction_only {
                 true => {
@@ -370,6 +372,8 @@ fn main() {
                      &MergeStrategy::Stretcher, // TODO parameterize,
                      &correction,
                      &alignment_filter,
+                     threads,
+                     maximum_reads_before_downsampling,
             );
         },
 
@@ -469,6 +473,9 @@ impl InstanceLivedTempDir {
     pub fn new() -> Result<InstanceLivedTempDir>
     { ActualTempDir::new().map(Some).map(InstanceLivedTempDir) }
 
+    pub fn new_in(path: &Path) -> Result<InstanceLivedTempDir>
+    { ActualTempDir::new_in(path).map(Some).map(InstanceLivedTempDir) }
+
     pub fn temp_file(&mut self, name: &str) -> PathBuf
     {
         self.0.as_ref().unwrap().path().join(name).clone()
@@ -504,5 +511,18 @@ impl Clone for RunSpecifications {
             processing_threads: self.processing_threads,
             tmp_location: Arc::clone(&self.tmp_location),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InstanceLivedTempDir;
+
+    #[test]
+    fn test_instance_lived_temp_dir_honors_custom_parent() {
+        let parent = tempfile::tempdir().unwrap();
+        let temp_dir = InstanceLivedTempDir::new_in(parent.path()).unwrap();
+
+        assert_eq!(temp_dir.path().parent(), Some(parent.path()));
     }
 }

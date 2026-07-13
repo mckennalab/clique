@@ -85,6 +85,7 @@ pub fn write_consensus_reads(
     read_structure: &SequenceLayout,
     maximum_reads_before_downsampling: &usize,
     merge_strategy: &MergeStrategy,
+    processing_threads: &usize,
 ) {
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
@@ -96,7 +97,7 @@ pub fn write_consensus_reads(
     let arc_output = Arc::new(Mutex::new(writer));
 
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(8) //TODO: parameterize this
+        .num_threads(*processing_threads)
         .build()
         .unwrap();
 
