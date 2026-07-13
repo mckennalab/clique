@@ -723,7 +723,8 @@ fn create_sorted_read_container(
     record: &Record,
 ) -> Option<SortingReadSetContainer> {
     let seq: Vec<u8> = record.sequence().iter().collect();
-    let start_pos = record.alignment_start().unwrap().unwrap().get();
+    let one_based_start_pos = record.alignment_start().unwrap().unwrap().get();
+    let zero_based_start_pos = one_based_start_pos - 1;
     let cigar = record.cigar();
     let read_name = record.name().unwrap();
     let read_qual = record.quality_scores().iter().collect();
@@ -731,7 +732,7 @@ fn create_sorted_read_container(
 
     let aligned_read = recover_soft_clipped_align_sequences(
         &seq,
-        start_pos,
+        one_based_start_pos,
         &cigar.iter().map(|x| x.unwrap()).collect(),
         &SoftClipResolution::Realign,
         ref_slice,
@@ -765,7 +766,7 @@ fn create_sorted_read_container(
                     .collect(),
                 path: vec![],
                 score: 0.0,
-                reference_start: start_pos,
+                reference_start: zero_based_start_pos,
                 read_start: 0,
                 reference_aligned: aligned_read.aligned_ref,
                 read_name: String::from_utf8(read_name.to_vec()).unwrap(),
@@ -1242,6 +1243,41 @@ mod tests {
         assert_eq!(result.read_stats.total_reads, 1);
         assert_eq!(result.read_stats.passing_reads(), 1);
         assert!(result.bam.is_some());
+    }
+
+    #[test]
+    fn test_sort_reads_preserves_nonzero_alignment_start() {
+        let layout = unindexed_bam_layout();
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let output_directory = tempfile::tempdir().unwrap();
+        let bam_path = output_directory.path().join("aligned.bam");
+
+        let mut input_read = aligned_read("reference_a", "read_a", b'A');
+        input_read.aligned_read.reference_aligned = vec![b'A'; 45];
+        input_read.aligned_read.read_aligned = vec![b'A'; 45];
+        input_read.aligned_read.read_quals = Some(vec![40; 45]);
+        input_read.aligned_read.cigar_string = vec![AlignmentTag::MatchMismatch(45)];
+        input_read.aligned_read.reference_start = 5;
+
+        {
+            let mut writer = BamFileAlignmentWriter::new(&bam_path, &reference_manager);
+            writer.write_read(&input_read, &HashMap::new()).unwrap();
+            writer.close().unwrap();
+        }
+
+        let mut processing_directory = InstanceLivedTempDir::new().unwrap();
+        let result = sort_reads_from_bam_file(
+            &bam_path.to_string_lossy().into_owned(),
+            &"reference_a".to_string(),
+            &reference_manager,
+            &layout,
+            &mut processing_directory,
+            &AlignmentFilterConfig::default(),
+        );
+
+        let sorted_reads = result.bam.unwrap();
+        let sorted_read = sorted_reads.iter().unwrap().next().unwrap().unwrap();
+        assert_eq!(sorted_read.aligned_read.reference_start, 5);
     }
 
     #[test]
