@@ -304,15 +304,21 @@ pub fn align_reads(
                                 added_tags
                                     .insert([b'a', b's'], read.aligned_read.score.to_string());
 
-                                let events = crate::events::call_read_events(
+                                let event_calls = crate::events::call_read_event_details(
                                     &read.aligned_read.reference_aligned,
                                     &read.aligned_read.read_aligned,
                                     structure,
                                 );
-                                if !events.is_empty() {
+                                if !event_calls.events.is_empty() {
                                     added_tags.insert(
                                         crate::consensus::consensus_builders::EVENT_TAG,
-                                        events,
+                                        event_calls.events,
+                                    );
+                                }
+                                if let Some(prime_edits) = event_calls.prime_edits {
+                                    added_tags.insert(
+                                        crate::consensus::consensus_builders::PRIME_EDIT_TAG,
+                                        prime_edits,
                                     );
                                 }
 
@@ -1279,6 +1285,7 @@ mod tests {
                 targets: vec![],
                 target_types: vec![],
                 target_locations: None,
+                prime_edits: BTreeMap::new(),
             },
         );
         references.insert(
@@ -1289,6 +1296,7 @@ mod tests {
                 targets: vec![],
                 target_types: vec![],
                 target_locations: None,
+                prime_edits: BTreeMap::new(),
             },
         );
 
@@ -1317,6 +1325,7 @@ mod tests {
                 targets: vec![],
                 target_types: vec![],
                 target_locations: None,
+                prime_edits: BTreeMap::new(),
             },
         );
         let layout = SequenceLayout {

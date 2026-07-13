@@ -7,7 +7,7 @@ use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::{simplify_cigar_string, OutputAlignmentWriter};
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::SequenceLayout;
-use crate::events::call_read_events;
+use crate::events::call_read_event_details;
 use crate::reference::fasta_reference::ReferenceManager;
 use counter::Counter;
 use rust_htslib::bam::record::CigarString;
@@ -180,6 +180,9 @@ pub struct SamReadyOutput {
 /// per-target event string, targets joined by `_`). Uses a `c`-prefix to stay
 /// clear of the `e<symbol>` / `o<symbol>` extracted-UMI tag namespace.
 pub const EVENT_TAG: [u8; 2] = [b'c', b'e'];
+/// BAM tag containing target-aligned prime-edit classifications. Non-prime
+/// targets are represented as `NA` so entries retain target order.
+pub const PRIME_EDIT_TAG: [u8; 2] = [b'p', b'e'];
 
 /// Select the reads actually consumed by consensus generation. A zero limit
 /// disables downsampling, as used by the corrected-read output path.
@@ -206,9 +209,12 @@ fn insert_event_tag(
     read_aligned: &[u8],
 ) {
     if let Some(reference_record) = read_structure.references.get(reference_name) {
-        let events = call_read_events(reference_aligned, read_aligned, reference_record);
-        if !events.is_empty() {
-            added_tags.insert(EVENT_TAG, events);
+        let calls = call_read_event_details(reference_aligned, read_aligned, reference_record);
+        if !calls.events.is_empty() {
+            added_tags.insert(EVENT_TAG, calls.events);
+        }
+        if let Some(prime_edits) = calls.prime_edits {
+            added_tags.insert(PRIME_EDIT_TAG, prime_edits);
         }
     }
 }
@@ -549,7 +555,9 @@ mod tests {
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
-    use crate::read_strategies::sequence_layout::ReferenceRecord;
+    use crate::read_strategies::sequence_layout::{
+        PrimeEditSpec, ReferenceRecord, TargetStrand, TargetType,
+    };
     use rust_htslib::bam::record::Cigar;
     use std::collections::{BTreeMap, VecDeque};
 
@@ -570,6 +578,7 @@ mod tests {
                 targets: vec![],
                 target_types: vec![],
                 target_locations: Some(vec![]),
+                prime_edits: BTreeMap::new(),
             },
         );
 
@@ -596,6 +605,53 @@ mod tests {
             read_start: 0,
             bounding_box: None,
         })
+    }
+
+    #[test]
+    fn test_insert_event_tag_emits_prime_edit_classification() {
+        let mut prime_edits = BTreeMap::new();
+        prime_edits.insert(0, PrimeEditSpec {
+            edit_offset: 6,
+            reference: "CC".to_string(),
+            alternate: "TT".to_string(),
+            strand: TargetStrand::Forward,
+            call_flank: 3,
+            rtt_sequence: None,
+            scaffold_sequence: None,
+        });
+        let reference_sequence = "AAAACCCCGGGGTTTT";
+        let reference = ReferenceRecord {
+            sequence: reference_sequence.to_string(),
+            umi_configurations: BTreeMap::new(),
+            targets: vec![reference_sequence.to_string()],
+            target_types: vec![TargetType::PrimeEdit],
+            target_locations: Some(vec![0]),
+            prime_edits,
+        };
+        let mut references = BTreeMap::new();
+        references.insert("reference".to_string(), reference);
+        let layout = SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![],
+            known_strand: true,
+            references,
+        };
+        let mut read_aligned = reference_sequence.as_bytes().to_vec();
+        read_aligned[6] = b'T';
+        read_aligned[7] = b'T';
+        let mut tags = HashMap::new();
+
+        insert_event_tag(
+            &mut tags,
+            &layout,
+            "reference",
+            reference_sequence.as_bytes(),
+            &read_aligned,
+        );
+
+        assert_eq!(tags.get(&EVENT_TAG).map(String::as_str), Some("1S+6+T&1S+7+T"));
+        assert_eq!(tags.get(&PRIME_EDIT_TAG).map(String::as_str), Some("PRECISE"));
     }
 
     #[test]

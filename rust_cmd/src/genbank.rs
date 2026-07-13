@@ -20,6 +20,9 @@
 //! * **CRISPR target** otherwise. Its real bases become a `targets` entry and
 //!   its `target_type` comes from `/clique_type` (else a type name found in the
 //!   feature name, else `Cas9WT`). Targets may not overlap a UMI span.
+//!   Prime-edit targets additionally require `/clique_edit_offset`,
+//!   `/clique_ref`, and `/clique_alt`; `/clique_strand`,
+//!   `/clique_call_flank`, `/clique_rtt`, and `/clique_scaffold` are optional.
 //!
 //! The emitted layout has a single reference (`--reference-name`, else the
 //! GenBank LOCUS), `merge: ConcatenateBothForward`, `known_strand: true`, and a
@@ -30,8 +33,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use gb_io::seq::{Feature, Seq};
 
 use crate::read_strategies::sequence_layout::{
-    AlignedReadOrientation, MergeStrategy, ReadPosition, ReferenceRecord, SequenceLayout,
-    TargetType, UMIConfiguration, UMISortType,
+    AlignedReadOrientation, MergeStrategy, PrimeEditSpec, ReadPosition, ReferenceRecord,
+    SequenceLayout, TargetStrand, TargetType, UMIConfiguration, UMISortType,
 };
 
 /// Symbols auto-assigned to UMIs that do not declare a `/clique_symbol`.
@@ -87,6 +90,7 @@ pub fn parse_target_type(s: &str) -> Option<TargetType> {
         "cas12abecbe" => Some(TargetType::Cas12ABECBE),
         "cas9homing" => Some(TargetType::Cas9Homing),
         "cas9abepalindrome" => Some(TargetType::Cas9ABEPalindrome),
+        "primeedit" | "primeediting" => Some(TargetType::PrimeEdit),
         "static" => Some(TargetType::Static),
         _ => None,
     }
@@ -96,6 +100,8 @@ pub fn parse_target_type(s: &str) -> Option<TargetType> {
 /// before `Cas9ABE` when scanning a feature name.
 const TYPE_TOKENS: &[&str] = &[
     "Cas9ABEPalindrome",
+    "PrimeEditing",
+    "PrimeEdit",
     "Cas12ABECBE",
     "Cas9ABECBE",
     "Cas12ABE",
@@ -151,6 +157,48 @@ struct PendingTarget {
     start: usize,
     end: usize,
     target_type: TargetType,
+    prime_edit: Option<PrimeEditSpec>,
+}
+
+fn parse_prime_edit_spec(feature: &Feature, name: &str) -> Result<PrimeEditSpec, String> {
+    let edit_offset = first_qualifier(feature, "clique_edit_offset")
+        .ok_or_else(|| format!("prime-edit target '{}' requires /clique_edit_offset", name))?
+        .parse::<usize>()
+        .map_err(|_| format!("prime-edit target '{}' has an invalid /clique_edit_offset", name))?;
+    let reference = first_qualifier(feature, "clique_ref")
+        .ok_or_else(|| format!("prime-edit target '{}' requires /clique_ref", name))?;
+    let alternate = first_qualifier(feature, "clique_alt")
+        .ok_or_else(|| format!("prime-edit target '{}' requires /clique_alt", name))?;
+    let strand = match first_qualifier(feature, "clique_strand")
+        .unwrap_or_else(|| "Forward".to_string())
+        .to_lowercase()
+        .as_str()
+    {
+        "forward" | "+" => TargetStrand::Forward,
+        "reverse" | "-" => TargetStrand::Reverse,
+        value => {
+            return Err(format!(
+                "prime-edit target '{}' has unsupported /clique_strand '{}'",
+                name, value
+            ))
+        }
+    };
+    let call_flank = match first_qualifier(feature, "clique_call_flank") {
+        Some(value) => value.parse::<usize>().map_err(|_| {
+            format!("prime-edit target '{}' has an invalid /clique_call_flank", name)
+        })?,
+        None => 10,
+    };
+
+    Ok(PrimeEditSpec {
+        edit_offset,
+        reference,
+        alternate,
+        strand,
+        call_flank,
+        rtt_sequence: first_qualifier(feature, "clique_rtt"),
+        scaffold_sequence: first_qualifier(feature, "clique_scaffold"),
+    })
 }
 
 /// Build a [`SequenceLayout`] from a GenBank record following the convention
@@ -178,12 +226,9 @@ pub fn genbank_to_layout(
             .location
             .find_bounds()
             .map_err(|e| format!("feature '{}' has an unusable location: {:?}", name, e))?;
-        // NOTE (limitation, not a bug): feature strand is not modeled. gb_io's `find_bounds`
-        // collapses a `complement(a..b)` location to the same numeric bounds as the forward strand,
-        // and we take `original[start..end]` as-is -- which is correct for targets, since the
-        // read-structure YAML matches each target as a forward-strand substring of the reference.
-        // What is NOT yet handled is the editing-WINDOW orientation for a reverse-strand target
-        // (events.rs uses forward-strand windows); the YAML schema has no per-target strand field.
+        // gb_io's `find_bounds` collapses a `complement(a..b)` location to the same numeric
+        // bounds as the forward strand, so target sequences remain reference-oriented. Prime-edit
+        // incorporation direction is supplied explicitly through /clique_strand.
         if start < 0 || end < 0 || (end as usize) > original.len() || start >= end {
             return Err(format!(
                 "feature '{}' bounds {}..{} fall outside the sequence (len {})",
@@ -214,7 +259,12 @@ pub fn genbank_to_layout(
                 .and_then(|s| parse_target_type(&s))
                 .or_else(|| target_type_from_name(&name))
                 .unwrap_or(TargetType::Cas9WT);
-            targets.push(PendingTarget { start, end, target_type });
+            let prime_edit = if target_type == TargetType::PrimeEdit {
+                Some(parse_prime_edit_spec(feature, &name)?)
+            } else {
+                None
+            };
+            targets.push(PendingTarget { start, end, target_type, prime_edit });
         }
     }
 
@@ -311,6 +361,11 @@ pub fn genbank_to_layout(
         .collect();
     let target_types: Vec<TargetType> = targets.iter().map(|t| t.target_type.clone()).collect();
     let target_locations: Vec<usize> = targets.iter().map(|t| t.start).collect();
+    let prime_edits = targets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, target)| target.prime_edit.clone().map(|spec| (index, spec)))
+        .collect();
 
     let reference_name = opts
         .reference_name
@@ -318,13 +373,15 @@ pub fn genbank_to_layout(
         .or_else(|| record.name.clone())
         .unwrap_or_else(|| "reference".to_string());
 
-    let record_out = ReferenceRecord {
+    let mut record_out = ReferenceRecord {
         sequence,
         umi_configurations: umi_configs,
         targets: target_strings,
         target_types,
         target_locations: Some(target_locations),
+        prime_edits,
     };
+    record_out.fill_and_validate_target_positions();
 
     let mut references = BTreeMap::new();
     references.insert(reference_name, record_out);
@@ -407,6 +464,24 @@ ORIGIN
 //
 ";
 
+    const PRIME_EDIT_GB: &str = "\
+LOCUS       prime_edit_target         16 bp    DNA     linear   SYN 07-JUL-2026
+FEATURES             Location/Qualifiers
+     misc_feature    1..16
+                     /label=\"lineage_target prime edit\"
+                     /clique_type=\"PrimeEdit\"
+                     /clique_edit_offset=\"6\"
+                     /clique_ref=\"CC\"
+                     /clique_alt=\"TT\"
+                     /clique_strand=\"Reverse\"
+                     /clique_call_flank=\"3\"
+                     /clique_rtt=\"TTGG\"
+                     /clique_scaffold=\"AACCGG\"
+ORIGIN
+        1 aaaaccccgg ggtttt
+//
+";
+
     fn parse_one() -> Seq {
         parse_slice(GB.as_bytes()).unwrap().into_iter().next().unwrap()
     }
@@ -436,6 +511,31 @@ ORIGIN
 
         assert_eq!(reference.targets, vec!["AAAA", "AAAA"]);
         assert_eq!(reference.target_locations, Some(vec![0, 8]));
+    }
+
+    #[test]
+    fn test_prime_edit_qualifiers_generate_explicit_specification() {
+        let record = parse_slice(PRIME_EDIT_GB.as_bytes())
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let layout = genbank_to_layout(&record, &GenbankToYamlOptions::default()).unwrap();
+        let reference = layout.references.values().next().unwrap();
+
+        assert_eq!(reference.target_types, vec![TargetType::PrimeEdit]);
+        assert_eq!(
+            reference.prime_edits.get(&0),
+            Some(&PrimeEditSpec {
+                edit_offset: 6,
+                reference: "CC".to_string(),
+                alternate: "TT".to_string(),
+                strand: TargetStrand::Reverse,
+                call_flank: 3,
+                rtt_sequence: Some("TTGG".to_string()),
+                scaffold_sequence: Some("AACCGG".to_string()),
+            })
+        );
     }
 
     #[test]

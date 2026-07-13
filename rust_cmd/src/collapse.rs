@@ -1202,6 +1202,7 @@ mod tests {
                 targets: vec![],
                 target_types: vec![],
                 target_locations: Some(vec![]),
+                prime_edits: BTreeMap::new(),
             },
         );
 
@@ -1229,6 +1230,7 @@ mod tests {
                     targets: vec![],
                     target_types: vec![],
                     target_locations: Some(vec![]),
+                    prime_edits: BTreeMap::new(),
                 },
             )
         })
@@ -1625,6 +1627,7 @@ mod tests {
             targets: vec![],
             target_types: vec![],
             target_locations: Some(vec![]),
+            prime_edits: BTreeMap::new(),
         };
         let alignment_check = AlignmentFilterConfig::default().for_reference(&reference);
         let fake_read_alignment = SortingReadSetContainer::empty_tags(AlignmentResult {

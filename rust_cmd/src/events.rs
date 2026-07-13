@@ -16,7 +16,9 @@
 //! read are joined by `_` in target order (matching `Event.parse_event_string`
 //! on the Python side, e.g. `10D+44_NONE_25D+76`).
 
-use crate::read_strategies::sequence_layout::{ReferenceRecord, TargetType};
+use crate::read_strategies::sequence_layout::{
+    PrimeEditSpec, ReferenceRecord, TargetStrand, TargetType,
+};
 
 const GAP: u8 = b'-';
 
@@ -35,6 +37,8 @@ pub enum EventClass {
     CytosineBaseEdit,
     /// Combined ABE+CBE: both substitution classes.
     DualBaseEdit,
+    /// Programmed replacement evaluated against an explicit expected allele.
+    PrimeEdit,
     /// No event calling (e.g. Static presence markers).
     None,
 }
@@ -57,6 +61,9 @@ impl TargetType {
             | TargetType::Cas12ABE
             | TargetType::Cas12CBE
             | TargetType::Cas12ABECBE => (2, 19),
+            // Prime-edit windows come from PrimeEditSpec and are handled by
+            // call_read_event_details rather than this legacy helper.
+            TargetType::PrimeEdit => (0, 0),
             TargetType::Static => (0, 0),
         }
     }
@@ -72,6 +79,7 @@ impl TargetType {
             }
             TargetType::Cas9CBE | TargetType::Cas12CBE => EventClass::CytosineBaseEdit,
             TargetType::Cas9ABECBE | TargetType::Cas12ABECBE => EventClass::DualBaseEdit,
+            TargetType::PrimeEdit => EventClass::PrimeEdit,
             TargetType::Static => EventClass::None,
         }
     }
@@ -187,7 +195,7 @@ fn accept_substitution(class: EventClass, ref_base: u8, read_base: u8) -> bool {
         EventClass::AdenineBaseEdit => is_abe,
         EventClass::CytosineBaseEdit => is_cbe,
         EventClass::DualBaseEdit => is_abe || is_cbe,
-        EventClass::DoubleStrandBreak | EventClass::None => false,
+        EventClass::DoubleStrandBreak | EventClass::PrimeEdit | EventClass::None => false,
     }
 }
 
@@ -196,7 +204,7 @@ fn accept_substitution(class: EventClass, ref_base: u8, read_base: u8) -> bool {
 /// nothing overlaps its editing window.
 pub fn call_target(all_events: &[Event], target_start: usize, target_type: &TargetType) -> String {
     let class = target_type.event_class();
-    if class == EventClass::None {
+    if class == EventClass::None || class == EventClass::PrimeEdit {
         return NONE_EVENT.to_string();
     }
 
@@ -231,17 +239,273 @@ pub fn call_target(all_events: &[Event], target_start: usize, target_type: &Targ
     }
 }
 
+/// Prime-edit haplotype classification written to the `pe` BAM tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrimeEditCall {
+    WildType,
+    Precise,
+    Partial,
+    PrecisePlusByproduct,
+    ScaffoldIncorporation,
+    Indel,
+    Other,
+    NoCall,
+}
+
+impl PrimeEditCall {
+    pub fn encode(&self) -> &'static str {
+        match self {
+            PrimeEditCall::WildType => "WT",
+            PrimeEditCall::Precise => "PRECISE",
+            PrimeEditCall::Partial => "PARTIAL",
+            PrimeEditCall::PrecisePlusByproduct => "PRECISE_PLUS_BYPRODUCT",
+            PrimeEditCall::ScaffoldIncorporation => "SCAFFOLD_INCORPORATION",
+            PrimeEditCall::Indel => "INDEL",
+            PrimeEditCall::Other => "OTHER",
+            PrimeEditCall::NoCall => "NO_CALL",
+        }
+    }
+}
+
+/// Event strings plus optional target-aligned prime-edit classifications.
+pub struct ReadEventCalls {
+    pub events: String,
+    pub prime_edits: Option<String>,
+}
+
+fn uppercase(sequence: &[u8]) -> Vec<u8> {
+    sequence.iter().map(|base| base.to_ascii_uppercase()).collect()
+}
+
+fn read_base_at_reference_position(
+    reference_aligned: &[u8],
+    read_aligned: &[u8],
+    wanted_position: usize,
+) -> Option<u8> {
+    let mut ref_pos = 0usize;
+    for (reference_base, read_base) in reference_aligned.iter().zip(read_aligned) {
+        if *reference_base == GAP {
+            continue;
+        }
+        if ref_pos == wanted_position {
+            return if *read_base == GAP { None } else { Some(*read_base) };
+        }
+        ref_pos += 1;
+    }
+    None
+}
+
+/// Reconstruct the read haplotype spanning `[start, end)` in reference
+/// coordinates. For a zero-width interval, capture insertions at `start`.
+fn observed_haplotype(
+    reference_aligned: &[u8],
+    read_aligned: &[u8],
+    start: usize,
+    end: usize,
+) -> Vec<u8> {
+    let mut observed = Vec::new();
+    let mut ref_pos = 0usize;
+
+    for (reference_base, read_base) in reference_aligned.iter().zip(read_aligned) {
+        if *reference_base == GAP {
+            let insertion_is_in_range = if start == end {
+                ref_pos == start
+            } else {
+                ref_pos >= start && ref_pos < end
+            };
+            if insertion_is_in_range && *read_base != GAP {
+                observed.push(read_base.to_ascii_uppercase());
+            }
+            continue;
+        }
+
+        if ref_pos >= start && ref_pos < end && *read_base != GAP {
+            observed.push(read_base.to_ascii_uppercase());
+        }
+        ref_pos += 1;
+    }
+    observed
+}
+
+fn prime_coordinates(
+    reference_length: usize,
+    target_start: usize,
+    spec: &PrimeEditSpec,
+) -> (usize, usize, usize, usize) {
+    let edit_start = target_start + spec.edit_offset;
+    let edit_end = edit_start + spec.reference.len();
+    let window_start = edit_start.saturating_sub(spec.call_flank);
+    let window_end = reference_length.min(edit_end.saturating_add(spec.call_flank));
+    (edit_start, edit_end, window_start, window_end)
+}
+
+fn expected_haplotype(
+    reference: &[u8],
+    edit_start: usize,
+    edit_end: usize,
+    window_start: usize,
+    window_end: usize,
+    alternate: &[u8],
+) -> Vec<u8> {
+    let mut expected = uppercase(&reference[window_start..edit_start]);
+    expected.extend(uppercase(alternate));
+    expected.extend(uppercase(&reference[edit_end..window_end]));
+    expected
+}
+
+fn partial_alleles(spec: &PrimeEditSpec) -> Vec<Vec<u8>> {
+    let reference = uppercase(spec.reference.as_bytes());
+    let alternate = uppercase(spec.alternate.as_bytes());
+    let steps = reference.len().max(alternate.len());
+    let mut partials = Vec::new();
+
+    for incorporated in 1..steps {
+        let candidate = match spec.strand {
+            TargetStrand::Forward => {
+                let mut candidate = alternate[..incorporated.min(alternate.len())].to_vec();
+                candidate.extend_from_slice(&reference[incorporated.min(reference.len())..]);
+                candidate
+            }
+            TargetStrand::Reverse => {
+                let reference_cut = reference.len().saturating_sub(incorporated);
+                let alternate_cut = alternate.len().saturating_sub(incorporated);
+                let mut candidate = reference[..reference_cut].to_vec();
+                candidate.extend_from_slice(&alternate[alternate_cut..]);
+                candidate
+            }
+        };
+        if candidate != reference && candidate != alternate && !partials.contains(&candidate) {
+            partials.push(candidate);
+        }
+    }
+    partials
+}
+
+fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && haystack.windows(needle.len()).any(|window| window == needle)
+}
+
+/// Classify one prime-edit target against its programmed allele.
+pub fn call_prime_edit(
+    reference_aligned: &[u8],
+    read_aligned: &[u8],
+    reference_sequence: &[u8],
+    target_start: usize,
+    spec: &PrimeEditSpec,
+) -> PrimeEditCall {
+    let (edit_start, edit_end, window_start, window_end) =
+        prime_coordinates(reference_sequence.len(), target_start, spec);
+
+    let left_anchor = edit_start.checked_sub(1);
+    let right_anchor = if edit_end < reference_sequence.len() {
+        Some(edit_end)
+    } else {
+        None
+    };
+    let anchor_positions = [left_anchor, right_anchor];
+    let anchors = anchor_positions.iter().filter_map(|anchor| *anchor);
+    if anchors
+        .map(|anchor| read_base_at_reference_position(reference_aligned, read_aligned, anchor))
+        .any(|base| base.is_none())
+    {
+        return PrimeEditCall::NoCall;
+    }
+
+    let observed = observed_haplotype(
+        reference_aligned,
+        read_aligned,
+        window_start,
+        window_end,
+    );
+    let wild_type = uppercase(&reference_sequence[window_start..window_end]);
+    let expected = expected_haplotype(
+        reference_sequence,
+        edit_start,
+        edit_end,
+        window_start,
+        window_end,
+        spec.alternate.as_bytes(),
+    );
+
+    if observed == wild_type {
+        return PrimeEditCall::WildType;
+    }
+    if observed == expected {
+        return PrimeEditCall::Precise;
+    }
+    if let Some(scaffold) = spec.scaffold_sequence.as_ref() {
+        let scaffold = uppercase(scaffold.as_bytes());
+        if contains_subsequence(&observed, &scaffold)
+            && !contains_subsequence(&wild_type, &scaffold)
+            && !contains_subsequence(&expected, &scaffold)
+        {
+            return PrimeEditCall::ScaffoldIncorporation;
+        }
+    }
+
+    let observed_core = observed_haplotype(
+        reference_aligned,
+        read_aligned,
+        edit_start,
+        edit_end,
+    );
+    let alternate = uppercase(spec.alternate.as_bytes());
+    if observed_core == alternate {
+        return PrimeEditCall::PrecisePlusByproduct;
+    }
+    if partial_alleles(spec).contains(&observed_core) {
+        return PrimeEditCall::Partial;
+    }
+
+    let has_indel = extract_all_events(reference_aligned, read_aligned)
+        .iter()
+        .any(|event| {
+            let (start, end) = event.ref_span();
+            start < window_end
+                && end >= window_start
+                && matches!(event, Event::Deletion { .. } | Event::Insertion { .. })
+        });
+    if has_indel {
+        PrimeEditCall::Indel
+    } else {
+        PrimeEditCall::Other
+    }
+}
+
+fn prime_event_string(
+    all_events: &[Event],
+    reference_length: usize,
+    target_start: usize,
+    spec: &PrimeEditSpec,
+) -> String {
+    let (_, _, window_start, window_end) =
+        prime_coordinates(reference_length, target_start, spec);
+    let events = all_events
+        .iter()
+        .filter(|event| {
+            let (start, end) = event.ref_span();
+            start < window_end && end >= window_start
+        })
+        .map(Event::encode)
+        .collect::<Vec<_>>();
+    if events.is_empty() {
+        NONE_EVENT.to_string()
+    } else {
+        events.join("&")
+    }
+}
+
 /// Call all target events for one aligned read against a reference record and
 /// return the per-read event string: each target's call in target order,
 /// joined by `_`. Returns an empty string when the reference declares no
 /// targets.
-pub fn call_read_events(
+pub fn call_read_event_details(
     reference_aligned: &[u8],
     read_aligned: &[u8],
     reference: &ReferenceRecord,
-) -> String {
+) -> ReadEventCalls {
     if reference.targets.is_empty() {
-        return String::new();
+        return ReadEventCalls { events: String::new(), prime_edits: None };
     }
 
     let all = extract_all_events(reference_aligned, read_aligned);
@@ -250,16 +514,63 @@ pub fn call_read_events(
         Some(locs) => locs,
         // target_locations is filled during YAML load; if it somehow was not,
         // we cannot place the windows, so emit nothing rather than guess.
-        None => return String::new(),
+        None => return ReadEventCalls { events: String::new(), prime_edits: None },
     };
 
-    reference
+    let mut event_calls = Vec::with_capacity(reference.targets.len());
+    let mut prime_calls = Vec::with_capacity(reference.targets.len());
+    let mut has_prime_edit = false;
+
+    for (target_index, (target_type, target_start)) in reference
         .target_types
         .iter()
         .zip(locations.iter())
-        .map(|(target_type, loc)| call_target(&all, *loc, target_type))
-        .collect::<Vec<_>>()
-        .join("_")
+        .enumerate()
+    {
+        if target_type == &TargetType::PrimeEdit {
+            has_prime_edit = true;
+            let spec = reference.prime_edits.get(&target_index).unwrap_or_else(|| {
+                panic!("PrimeEdit target index {} has no specification", target_index)
+            });
+            event_calls.push(prime_event_string(
+                &all,
+                reference.sequence.len(),
+                *target_start,
+                spec,
+            ));
+            prime_calls.push(
+                call_prime_edit(
+                    reference_aligned,
+                    read_aligned,
+                    reference.sequence.as_bytes(),
+                    *target_start,
+                    spec,
+                )
+                .encode()
+                .to_string(),
+            );
+        } else {
+            event_calls.push(call_target(&all, *target_start, target_type));
+            prime_calls.push("NA".to_string());
+        }
+    }
+
+    ReadEventCalls {
+        events: event_calls.join("_"),
+        prime_edits: if has_prime_edit {
+            Some(prime_calls.join("_"))
+        } else {
+            None
+        },
+    }
+}
+
+pub fn call_read_events(
+    reference_aligned: &[u8],
+    read_aligned: &[u8],
+    reference: &ReferenceRecord,
+) -> String {
+    call_read_event_details(reference_aligned, read_aligned, reference).events
 }
 
 #[cfg(test)]
@@ -267,6 +578,45 @@ mod tests {
     use super::*;
     use crate::read_strategies::sequence_layout::ReferenceRecord;
     use std::collections::BTreeMap;
+
+    fn prime_spec(reference: &str, alternate: &str, strand: TargetStrand) -> PrimeEditSpec {
+        PrimeEditSpec {
+            edit_offset: 6,
+            reference: reference.to_string(),
+            alternate: alternate.to_string(),
+            strand,
+            call_flank: 3,
+            rtt_sequence: None,
+            scaffold_sequence: None,
+        }
+    }
+
+    fn alignment_with_replacement(
+        reference: &[u8],
+        edit_start: usize,
+        reference_length: usize,
+        observed_allele: &[u8],
+    ) -> (Vec<u8>, Vec<u8>) {
+        let mut reference_aligned = reference[..edit_start].to_vec();
+        let mut read_aligned = reference[..edit_start].to_vec();
+        let paired = reference_length.min(observed_allele.len());
+
+        reference_aligned.extend_from_slice(&reference[edit_start..edit_start + paired]);
+        read_aligned.extend_from_slice(&observed_allele[..paired]);
+        if reference_length > paired {
+            reference_aligned
+                .extend_from_slice(&reference[edit_start + paired..edit_start + reference_length]);
+            read_aligned.extend(std::iter::repeat(GAP).take(reference_length - paired));
+        }
+        if observed_allele.len() > paired {
+            reference_aligned.extend(std::iter::repeat(GAP).take(observed_allele.len() - paired));
+            read_aligned.extend_from_slice(&observed_allele[paired..]);
+        }
+
+        reference_aligned.extend_from_slice(&reference[edit_start + reference_length..]);
+        read_aligned.extend_from_slice(&reference[edit_start + reference_length..]);
+        (reference_aligned, read_aligned)
+    }
 
     #[test]
     fn test_extract_perfect_match_is_empty() {
@@ -404,6 +754,7 @@ mod tests {
             targets: targets.iter().map(|t| t.to_string()).collect(),
             target_types: types,
             target_locations: None,
+            prime_edits: BTreeMap::new(),
         };
         record.fill_and_validate_target_positions();
         record
@@ -474,6 +825,131 @@ mod tests {
             call_read_events(&ref_aligned, &read_aligned, &reference),
             format!("NONE_1D+{}", deletion_position)
         );
+    }
+
+    #[test]
+    fn test_prime_edit_calls_wild_type_and_precise_substitution() {
+        let reference = b"AAAACCCCGGGGTTTT";
+        let spec = prime_spec("CC", "TT", TargetStrand::Forward);
+
+        assert_eq!(
+            call_prime_edit(reference, reference, reference, 0, &spec),
+            PrimeEditCall::WildType
+        );
+
+        let (reference_aligned, read_aligned) =
+            alignment_with_replacement(reference, 6, 2, b"TT");
+        assert_eq!(
+            call_prime_edit(&reference_aligned, &read_aligned, reference, 0, &spec),
+            PrimeEditCall::Precise
+        );
+    }
+
+    #[test]
+    fn test_prime_edit_calls_precise_insertions_deletions_and_replacements() {
+        let reference = b"AAAACCCCGGGGTTTT";
+        for (reference_allele, alternate, observed) in [
+            ("", "GG", b"GG".as_slice()),
+            ("CC", "", b"".as_slice()),
+            ("CC", "GGA", b"GGA".as_slice()),
+        ] {
+            let spec = prime_spec(reference_allele, alternate, TargetStrand::Forward);
+            let (reference_aligned, read_aligned) = alignment_with_replacement(
+                reference,
+                6,
+                reference_allele.len(),
+                observed,
+            );
+            assert_eq!(
+                call_prime_edit(&reference_aligned, &read_aligned, reference, 0, &spec),
+                PrimeEditCall::Precise
+            );
+        }
+    }
+
+    #[test]
+    fn test_prime_edit_partial_calls_follow_target_strand() {
+        let reference = b"AAAACCCCGGGGTTTT";
+        let forward = prime_spec("CC", "TT", TargetStrand::Forward);
+        let reverse = prime_spec("CC", "TT", TargetStrand::Reverse);
+        let (reference_aligned, forward_partial) =
+            alignment_with_replacement(reference, 6, 2, b"TC");
+        let (_, reverse_partial) = alignment_with_replacement(reference, 6, 2, b"CT");
+
+        assert_eq!(
+            call_prime_edit(&reference_aligned, &forward_partial, reference, 0, &forward),
+            PrimeEditCall::Partial
+        );
+        assert_eq!(
+            call_prime_edit(&reference_aligned, &reverse_partial, reference, 0, &reverse),
+            PrimeEditCall::Partial
+        );
+    }
+
+    #[test]
+    fn test_prime_edit_calls_byproducts_scaffold_indels_and_no_call() {
+        let reference = b"AAAACCCCGGGGTTTT";
+        let mut spec = prime_spec("CC", "TT", TargetStrand::Forward);
+        let (reference_aligned, mut precise_plus_byproduct) =
+            alignment_with_replacement(reference, 6, 2, b"TT");
+        precise_plus_byproduct[4] = b'T';
+        assert_eq!(
+            call_prime_edit(
+                &reference_aligned,
+                &precise_plus_byproduct,
+                reference,
+                0,
+                &spec,
+            ),
+            PrimeEditCall::PrecisePlusByproduct
+        );
+
+        spec.scaffold_sequence = Some("AATT".to_string());
+        let (scaffold_reference, scaffold_read) =
+            alignment_with_replacement(reference, 6, 2, b"TTAATT");
+        assert_eq!(
+            call_prime_edit(&scaffold_reference, &scaffold_read, reference, 0, &spec),
+            PrimeEditCall::ScaffoldIncorporation
+        );
+
+        let (indel_reference, indel_read) =
+            alignment_with_replacement(reference, 6, 2, b"C");
+        assert_eq!(
+            call_prime_edit(&indel_reference, &indel_read, reference, 0, &spec),
+            PrimeEditCall::Indel
+        );
+
+        let mut missing_anchor = reference.to_vec();
+        missing_anchor[5] = GAP;
+        assert_eq!(
+            call_prime_edit(reference, &missing_anchor, reference, 0, &spec),
+            PrimeEditCall::NoCall
+        );
+    }
+
+    #[test]
+    fn test_prime_edit_details_preserve_target_order_and_raw_events() {
+        let reference_sequence = "AAAACCCCGGGGTTTT";
+        let mut prime_edits = BTreeMap::new();
+        prime_edits.insert(1, prime_spec("CC", "TT", TargetStrand::Forward));
+        let reference = ReferenceRecord {
+            sequence: reference_sequence.to_string(),
+            umi_configurations: BTreeMap::new(),
+            targets: vec!["AAAA".to_string(), reference_sequence.to_string()],
+            target_types: vec![TargetType::Static, TargetType::PrimeEdit],
+            target_locations: Some(vec![0, 0]),
+            prime_edits,
+        };
+        let (reference_aligned, read_aligned) = alignment_with_replacement(
+            reference_sequence.as_bytes(),
+            6,
+            2,
+            b"TT",
+        );
+
+        let calls = call_read_event_details(&reference_aligned, &read_aligned, &reference);
+        assert_eq!(calls.events, "NONE_1S+6+T&1S+7+T");
+        assert_eq!(calls.prime_edits.as_deref(), Some("NA_PRECISE"));
     }
 
     #[test]

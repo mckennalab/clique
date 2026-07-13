@@ -204,6 +204,49 @@ pub enum TargetType {
     Cas12ABECBE,
     Cas9Homing,
     Cas9ABEPalindrome,
+    PrimeEdit,
+}
+
+#[derive(Debug, PartialEq, Hash, Serialize, Deserialize, Clone, Copy, Eq)]
+pub enum TargetStrand {
+    Forward,
+    Reverse,
+}
+
+impl Default for TargetStrand {
+    fn default() -> Self {
+        TargetStrand::Forward
+    }
+}
+
+/// Programmed prime-edit allele for one target. Coordinates and alleles are
+/// always expressed in forward-reference orientation; `strand` determines the
+/// direction used to recognize partial incorporation.
+#[derive(Debug, PartialEq, Hash, Serialize, Deserialize, Clone, Eq)]
+pub struct PrimeEditSpec {
+    /// 0-based offset from the target start to the first replaced reference base.
+    pub edit_offset: usize,
+    /// Reference allele replaced by the edit. Empty for a programmed insertion.
+    pub reference: String,
+    /// Programmed allele. Empty for a programmed deletion.
+    pub alternate: String,
+    #[serde(default)]
+    pub strand: TargetStrand,
+    /// Reference bases retained on each side when classifying the haplotype.
+    #[serde(default = "PrimeEditSpec::default_call_flank")]
+    pub call_flank: usize,
+    /// Optional RTT sequence in forward-reference orientation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtt_sequence: Option<String>,
+    /// Optional scaffold sequence used to recognize scaffold incorporation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scaffold_sequence: Option<String>,
+}
+
+impl PrimeEditSpec {
+    fn default_call_flank() -> usize {
+        10
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -214,11 +257,20 @@ pub struct ReferenceRecord {
     pub target_types: Vec<TargetType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_locations: Option<Vec<usize>>,
+    /// Prime-edit specifications keyed by target index.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub prime_edits: BTreeMap<usize, PrimeEditSpec>,
 }
 
 impl ReferenceRecord {
 
     pub fn fill_and_validate_target_positions(&mut self) {
+        assert_eq!(
+            self.target_types.len(),
+            self.targets.len(),
+            "Target sequences and target type lists must be the same length"
+        );
+
         if let Some(positions) = self.target_locations.as_ref() {
             assert_eq!(
                 positions.len(),
@@ -239,6 +291,7 @@ impl ReferenceRecord {
                     start
                 );
             }
+            self.validate_prime_edits();
             return;
         }
 
@@ -293,7 +346,87 @@ impl ReferenceRecord {
         }
 
         self.target_locations = Some(positions);
+        self.validate_prime_edits();
     }
+
+    fn validate_prime_edits(&self) {
+        let locations = self
+            .target_locations
+            .as_ref()
+            .expect("Target locations must be resolved before validating prime edits");
+
+        for target_index in self.prime_edits.keys() {
+            assert!(
+                *target_index < self.targets.len(),
+                "Prime-edit specification references missing target index {}",
+                target_index
+            );
+            assert_eq!(
+                self.target_types[*target_index],
+                TargetType::PrimeEdit,
+                "Prime-edit specification at target index {} is attached to a non-prime target",
+                target_index
+            );
+        }
+
+        for (target_index, target_type) in self.target_types.iter().enumerate() {
+            if target_type != &TargetType::PrimeEdit {
+                continue;
+            }
+            let spec = self.prime_edits.get(&target_index).unwrap_or_else(|| {
+                panic!(
+                    "PrimeEdit target index {} must define a prime_edits entry",
+                    target_index
+                )
+            });
+            assert!(spec.call_flank > 0, "Prime-edit call_flank must be greater than zero");
+            assert!(
+                !(spec.reference.is_empty() && spec.alternate.is_empty()),
+                "Prime edit at target index {} does not change the reference allele",
+                target_index
+            );
+            validate_prime_sequence(&spec.reference, "reference allele");
+            validate_prime_sequence(&spec.alternate, "alternate allele");
+            if let Some(rtt) = spec.rtt_sequence.as_ref() {
+                assert!(!rtt.is_empty(), "Prime-edit RTT sequence must not be empty");
+                validate_prime_sequence(rtt, "RTT sequence");
+            }
+            if let Some(scaffold) = spec.scaffold_sequence.as_ref() {
+                assert!(!scaffold.is_empty(), "Prime-edit scaffold sequence must not be empty");
+                validate_prime_sequence(scaffold, "scaffold sequence");
+            }
+
+            let edit_start = locations[target_index]
+                .checked_add(spec.edit_offset)
+                .expect("Prime-edit start coordinate overflowed");
+            let edit_end = edit_start
+                .checked_add(spec.reference.len())
+                .expect("Prime-edit end coordinate overflowed");
+            let actual = self.sequence.as_bytes().get(edit_start..edit_end).unwrap_or_else(|| {
+                panic!(
+                    "Prime edit at target index {} falls outside the reference sequence",
+                    target_index
+                )
+            });
+            assert!(
+                actual.eq_ignore_ascii_case(spec.reference.as_bytes()),
+                "Prime-edit reference allele '{}' does not match reference sequence '{}' at position {}",
+                spec.reference,
+                String::from_utf8_lossy(actual),
+                edit_start
+            );
+        }
+    }
+}
+
+fn validate_prime_sequence(sequence: &str, description: &str) {
+    assert!(
+        sequence
+            .bytes()
+            .all(|base| matches!(base.to_ascii_uppercase(), b'A' | b'C' | b'G' | b'T' | b'N')),
+        "Prime-edit {} contains a non-DNA base",
+        description
+    );
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -357,6 +490,7 @@ mod tests {
             targets: vec!["AAAA".to_string(), "AAAA".to_string()],
             target_types: vec![TargetType::Cas9WT, TargetType::Cas9WT],
             target_locations: None,
+            prime_edits: BTreeMap::new(),
         };
 
         reference.fill_and_validate_target_positions();
@@ -372,6 +506,7 @@ mod tests {
             targets: vec!["AAAA".to_string(), "AAAA".to_string()],
             target_types: vec![TargetType::Cas9WT, TargetType::Cas9WT],
             target_locations: Some(vec![8, 0]),
+            prime_edits: BTreeMap::new(),
         };
 
         reference.fill_and_validate_target_positions();
@@ -388,6 +523,7 @@ mod tests {
             targets: vec!["AAAA".to_string()],
             target_types: vec![TargetType::Cas9WT],
             target_locations: None,
+            prime_edits: BTreeMap::new(),
         };
 
         reference.fill_and_validate_target_positions();
@@ -402,8 +538,55 @@ mod tests {
             targets: vec!["AAAA".to_string()],
             target_types: vec![TargetType::Cas9WT],
             target_locations: Some(vec![4]),
+            prime_edits: BTreeMap::new(),
         };
 
+        reference.fill_and_validate_target_positions();
+    }
+
+    fn configured_prime_edit(reference_allele: &str) -> ReferenceRecord {
+        let mut prime_edits = BTreeMap::new();
+        prime_edits.insert(0, PrimeEditSpec {
+            edit_offset: 2,
+            reference: reference_allele.to_string(),
+            alternate: "TT".to_string(),
+            strand: TargetStrand::Forward,
+            call_flank: 2,
+            rtt_sequence: Some("TTGG".to_string()),
+            scaffold_sequence: Some("AACCGG".to_string()),
+        });
+        ReferenceRecord {
+            sequence: "AACCGG".to_string(),
+            umi_configurations: BTreeMap::new(),
+            targets: vec!["AACCGG".to_string()],
+            target_types: vec![TargetType::PrimeEdit],
+            target_locations: Some(vec![0]),
+            prime_edits,
+        }
+    }
+
+    #[test]
+    fn test_prime_edit_configuration_validates_and_roundtrips() {
+        let mut reference = configured_prime_edit("CC");
+        reference.fill_and_validate_target_positions();
+
+        let yaml = serde_yaml::to_string(&reference).unwrap();
+        let mut round_tripped: ReferenceRecord = serde_yaml::from_str(&yaml).unwrap();
+        round_tripped.fill_and_validate_target_positions();
+        assert_eq!(round_tripped, reference);
+    }
+
+    #[test]
+    #[should_panic(expected = "does not match reference sequence")]
+    fn test_prime_edit_rejects_wrong_reference_allele() {
+        configured_prime_edit("GG").fill_and_validate_target_positions();
+    }
+
+    #[test]
+    #[should_panic(expected = "must define a prime_edits entry")]
+    fn test_prime_edit_requires_explicit_specification() {
+        let mut reference = configured_prime_edit("CC");
+        reference.prime_edits.clear();
         reference.fill_and_validate_target_positions();
     }
 
@@ -590,7 +773,7 @@ mod tests {
             TargetType::Static, TargetType::Cas9WT, TargetType::Cas12AWT,
             TargetType::Cas9ABE, TargetType::Cas9CBE, TargetType::Cas9ABECBE,
             TargetType::Cas12ABE, TargetType::Cas12CBE, TargetType::Cas12ABECBE,
-            TargetType::Cas9Homing, TargetType::Cas9ABEPalindrome,
+            TargetType::Cas9Homing, TargetType::Cas9ABEPalindrome, TargetType::PrimeEdit,
         ];
         // All variants should be distinct
         for i in 0..types.len() {

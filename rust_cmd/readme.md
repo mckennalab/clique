@@ -51,6 +51,7 @@ Each reference record contains:
 | `targets` | Array | List of target sequence strings |
 | `target_types` | Array | List of target types (must match length of targets) |
 | `target_locations` | Array | Optional zero-based target starts; required to disambiguate a specific repeated occurrence |
+| `prime_edits` | Map | Prime-edit specifications keyed by zero-based target index |
 
 ### UMI Configurations
 
@@ -82,6 +83,40 @@ Supported target types:
 - `Cas12CBE`
 - `Cas12ABECBE`
 - `Cas9Homing`
+- `Cas9ABEPalindrome`
+- `PrimeEdit`
+
+### Prime Editing
+
+Prime-edit alleles use forward-reference coordinates and sequences. Each
+`PrimeEdit` target must have a matching entry in `prime_edits`:
+
+```yaml
+references:
+  prime_edit_reference:
+    sequence: "AAAACCCCGGGGTTTT"
+    umi_configurations: {}
+    targets: ["AAAACCCCGGGGTTTT"]
+    target_types: ["PrimeEdit"]
+    target_locations: [0]
+    prime_edits:
+      0:
+        edit_offset: 6
+        reference: "CC"
+        alternate: "TT"
+        strand: "Forward"
+        call_flank: 3
+        rtt_sequence: "TTGG"          # optional
+        scaffold_sequence: "AACCGG"  # optional
+```
+
+Use an empty `reference` for a programmed insertion and an empty `alternate`
+for a programmed deletion. `strand` controls the direction used to recognize
+partial incorporation. The existing `ce` BAM tag retains raw events, while
+`pe` contains one of `WT`, `PRECISE`, `PARTIAL`,
+`PRECISE_PLUS_BYPRODUCT`, `SCAFFOLD_INCORPORATION`, `INDEL`, `OTHER`, or
+`NO_CALL`. Non-prime targets are represented as `NA` when a read has mixed
+target types.
 
 ## Example Configuration
 
@@ -129,5 +164,6 @@ references:
 - Target locations, when supplied, must match the target list length and reference sequence
 - Target sequences must be found within the reference sequence
 - Reference sequence must contain all symbols used in UMI configurations
+- Each `PrimeEdit` target must have exactly one valid `prime_edits` entry whose reference allele matches the configured reference
 
 For a complete example, see the `test_data/test_layout.yaml` file. 
