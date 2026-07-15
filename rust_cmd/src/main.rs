@@ -169,6 +169,7 @@ pub mod genbank;
 mod collapse;
 mod alignment_manager;
 mod alignment_functions;
+mod run_summary;
 
 mod reference {
     pub mod fasta_reference;
@@ -196,6 +197,10 @@ enum Cmd {
         /// Output BAM path for the collapsed reads.
         #[clap(long)]
         output_bam_file: String,
+
+        /// Optional path for a tab-separated end-of-run summary.
+        #[clap(long)]
+        summary_output: Option<PathBuf>,
 
         /// Read-structure YAML describing references, UMIs, and targets.
         #[clap(long)]
@@ -240,6 +245,10 @@ enum Cmd {
         /// Output BAM path for the aligned reads.
         #[clap(long)]
         output_bam_file: String,
+
+        /// Optional path for a tab-separated end-of-run summary.
+        #[clap(long)]
+        summary_output: Option<PathBuf>,
 
         /// Drop reads longer than this multiple of the longest reference.
         #[clap(long, default_value = "2")]
@@ -356,6 +365,7 @@ fn main() {
     match &parameters.cmd {
         Cmd::Collapse {
             output_bam_file: outbam,
+            summary_output,
             read_structure,
             threads,
             temp_dir,
@@ -396,21 +406,27 @@ fn main() {
                 *min_aligned_identity,
             );
 
-            collapse(outbam,
-                     &mut tmp,
-                     &my_yaml,
-                     inbam,
-                     &MergeStrategy::Stretcher, // TODO parameterize,
-                     &correction,
-                     &alignment_filter,
-                     threads,
-                     maximum_reads_before_downsampling,
+            let stats = collapse(
+                outbam,
+                &mut tmp,
+                &my_yaml,
+                inbam,
+                &MergeStrategy::Stretcher, // TODO parameterize,
+                &correction,
+                &alignment_filter,
+                threads,
+                maximum_reads_before_downsampling,
             );
+            stats
+                .summary()
+                .emit(summary_output.as_deref())
+                .unwrap_or_else(|error| panic!("Unable to write run summary: {}", error));
         },
 
         Cmd::Align {
             read_structure,
             output_bam_file: output,
+            summary_output,
             max_reference_multiplier,
             min_read_length,
             read1,
@@ -432,24 +448,30 @@ fn main() {
 
             let output_path = Path::new(&output);
 
-            align_reads(&my_yaml,
-                        &rm,
-                        &output_path,
-                        max_reference_multiplier,
-                        min_read_length,
-                        read1,
-                        read2,
-                        index1,
-                        index2,
-                        threads,
-                        aligner,
-                        *discriminating_classifier,
-                        *discriminating_min_margin,
-                        *kmer_idf,
-                        *kmer_idf_min_margin,
-                        *poa_classifier,
-                        *poa_min_margin,
-                        *no_poa_default);
+            let stats = align_reads(
+                &my_yaml,
+                &rm,
+                &output_path,
+                max_reference_multiplier,
+                min_read_length,
+                read1,
+                read2,
+                index1,
+                index2,
+                threads,
+                aligner,
+                *discriminating_classifier,
+                *discriminating_min_margin,
+                *kmer_idf,
+                *kmer_idf_min_margin,
+                *poa_classifier,
+                *poa_min_margin,
+                *no_poa_default,
+            );
+            stats
+                .summary()
+                .emit(summary_output.as_deref())
+                .unwrap_or_else(|error| panic!("Unable to write run summary: {}", error));
         }
 
         Cmd::GenbankToYaml {

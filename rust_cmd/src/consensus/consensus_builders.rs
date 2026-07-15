@@ -34,6 +34,39 @@ pub enum MergeStrategy {
     Stretcher,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConsensusWriteStats {
+    pub input_reads: usize,
+    pub groups_attempted: usize,
+    pub reads_selected: usize,
+    pub reads_downsampled: usize,
+    pub output_reads: usize,
+    pub failed_groups: usize,
+}
+
+impl ConsensusWriteStats {
+    fn record_group(&mut self, input_reads: usize, reads_selected: usize, wrote_output: bool) {
+        self.input_reads += input_reads;
+        self.groups_attempted += 1;
+        self.reads_selected += reads_selected;
+        self.reads_downsampled += input_reads.saturating_sub(reads_selected);
+        if wrote_output {
+            self.output_reads += 1;
+        } else {
+            self.failed_groups += 1;
+        }
+    }
+
+    pub fn accumulate(&mut self, other: &Self) {
+        self.input_reads += other.input_reads;
+        self.groups_attempted += other.groups_attempted;
+        self.reads_selected += other.reads_selected;
+        self.reads_downsampled += other.reads_downsampled;
+        self.output_reads += other.output_reads;
+        self.failed_groups += other.failed_groups;
+    }
+}
+
 // this function isn't really in the right place, but it matches the consensus output function
 pub fn write_corrected_reads(
     reader: &ShardReader<SortingReadSetContainer>,
@@ -41,8 +74,9 @@ pub fn write_corrected_reads(
     levels: usize,
     reference_manager: &ReferenceManager,
     read_structure: &SequenceLayout,
-) {
+) -> ConsensusWriteStats {
     let mut processed_reads = 0;
+    let mut stats = ConsensusWriteStats::default();
 
     reader.iter_range(&Range::all()).unwrap().for_each(|x| {
         let x = x.unwrap();
@@ -60,20 +94,21 @@ pub fn write_corrected_reads(
             &MergeStrategy::Stretcher,
         );
 
-        match new_read {
-            None => {}
+        let wrote_output = match new_read {
+            None => false,
             Some(x) => {
                 writer.write_read(&x.read, &x.added_tags).expect("Unable to write a read to the arc writer (LOC1)");
                 processed_reads += 1;
                 if processed_reads % 1000000 == 0 {
                     info!("Processed {} reads into output file", processed_reads);
                 }
+                true
             }
-        }
+        };
+        stats.record_group(1, 1, wrote_output);
     });
 
-    writer.close().unwrap();
-
+    stats
 }
 
 
@@ -86,11 +121,11 @@ pub fn write_consensus_reads(
     maximum_reads_before_downsampling: &usize,
     merge_strategy: &MergeStrategy,
     processing_threads: &usize,
-) {
+) -> ConsensusWriteStats {
     let mut last_read: Option<SortingReadSetContainer> = None;
     let mut buffered_reads = VecDeque::new();
 
-    let processed_reads = Arc::new(Mutex::new(0));
+    let write_stats = Arc::new(Mutex::new(ConsensusWriteStats::default()));
 
     let score = AffineScoring::default_dna();
 
@@ -111,8 +146,15 @@ pub fn write_consensus_reads(
             {
                 let my_buffered_reads = buffered_reads.clone();
                 buffered_reads = VecDeque::new();
-                s.spawn(|_y| {
+                let write_stats = Arc::clone(&write_stats);
+                let arc_output = Arc::clone(&arc_output);
+                s.spawn(move |_y| {
                     let my_buffered_reads = my_buffered_reads;
+                    let input_reads = my_buffered_reads.len();
+                    let reads_selected = consensus_read_limit(
+                        input_reads,
+                        *maximum_reads_before_downsampling,
+                    );
 
                     let new_read = create_consensus_sam_read(
                         reference_manager,
@@ -123,21 +165,20 @@ pub fn write_consensus_reads(
                         merge_strategy,
                     );
 
-                    match new_read {
-                        None => {}
+                    let wrote_output = match new_read {
+                        None => false,
                         Some(x) => {
-                            let arc_writer = arc_output.clone();
-                            let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
+                            let mut arc_writer = arc_output.lock().expect("Unable to access multi-threaded writer");
                             arc_writer.write_read(&x.read, &x.added_tags).expect("Unable to write a read to the arc writer (LOC1)");
-
-                            let processed_reads = processed_reads.clone();
-                            let mut processed_reads = processed_reads.lock().expect("Unable to lock processed read count");
-                            let current_proc_read = *processed_reads;
-                            *processed_reads += my_buffered_reads.len();
-                            if (*processed_reads as f64 / 100000.0).floor() - (current_proc_read as f64 / 100000.0).floor() >= 1.0 {
-                                info!("Processed {} reads into their consensus", processed_reads);
-                            }
+                            true
                         }
+                    };
+
+                    let mut stats = write_stats.lock().expect("Unable to lock consensus statistics");
+                    let previous_reads = stats.input_reads;
+                    stats.record_group(input_reads, reads_selected, wrote_output);
+                    if stats.input_reads / 100000 > previous_reads / 100000 {
+                        info!("Processed {} reads into consensus groups", stats.input_reads);
                     }
                 });
             }
@@ -147,6 +188,11 @@ pub fn write_consensus_reads(
         });
     });
     if !buffered_reads.is_empty() {
+        let input_reads = buffered_reads.len();
+        let reads_selected = consensus_read_limit(
+            input_reads,
+            *maximum_reads_before_downsampling,
+        );
         let new_read = create_consensus_sam_read(
             reference_manager,
             read_structure,
@@ -156,19 +202,23 @@ pub fn write_consensus_reads(
             merge_strategy,
         );
 
-        match new_read {
-            None => {}
+        let wrote_output = match new_read {
+            None => false,
             Some(x) => {
                 let arc_writer = arc_output.clone();
                 let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
                 arc_writer.write_read(&x.read, &x.added_tags).expect("Unable to write a read to the arc writer (LOC2)");
+                true
             }
-        }
+        };
+        write_stats
+            .lock()
+            .expect("Unable to lock consensus statistics")
+            .record_group(input_reads, reads_selected, wrote_output);
     }
 
-    let arc_writer = arc_output.clone();
-    let mut arc_writer = arc_writer.lock().expect("Unable to access multi-threaded writer");
-    arc_writer.close().unwrap();
+    let final_stats = *write_stats.lock().expect("Unable to lock consensus statistics");
+    final_stats
 }
 
 pub struct SamReadyOutput {
@@ -190,13 +240,17 @@ fn select_reads_for_consensus<'a>(
     buffered_reads: &'a VecDeque<SortingReadSetContainer>,
     maximum_reads_before_downsampling: usize,
 ) -> Vec<&'a SortingReadSetContainer> {
-    let limit = if maximum_reads_before_downsampling == 0 {
-        buffered_reads.len()
-    } else {
-        maximum_reads_before_downsampling.min(buffered_reads.len())
-    };
+    let limit = consensus_read_limit(buffered_reads.len(), maximum_reads_before_downsampling);
 
     buffered_reads.iter().take(limit).collect()
+}
+
+fn consensus_read_limit(input_reads: usize, maximum_reads_before_downsampling: usize) -> usize {
+    if maximum_reads_before_downsampling == 0 {
+        input_reads
+    } else {
+        maximum_reads_before_downsampling.min(input_reads)
+    }
 }
 
 /// Call CRISPR edit events for the given aligned pair against the reference's
@@ -695,6 +749,20 @@ mod tests {
         ]);
 
         assert_eq!(select_reads_for_consensus(&reads, 0).len(), 2);
+    }
+
+    #[test]
+    fn test_consensus_write_stats_track_downsampling_and_failures() {
+        let mut stats = ConsensusWriteStats::default();
+        stats.record_group(8, consensus_read_limit(8, 2), true);
+        stats.record_group(3, consensus_read_limit(3, 0), false);
+
+        assert_eq!(stats.input_reads, 11);
+        assert_eq!(stats.groups_attempted, 2);
+        assert_eq!(stats.reads_selected, 5);
+        assert_eq!(stats.reads_downsampled, 6);
+        assert_eq!(stats.output_reads, 1);
+        assert_eq!(stats.failed_groups, 1);
     }
 
     #[cfg(feature = "spoa")]

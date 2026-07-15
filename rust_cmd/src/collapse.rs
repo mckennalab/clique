@@ -3,7 +3,7 @@
 //! hierarchy (correcting tags at each level), then emit one consensus (or
 //! corrected) read per molecule.
 
-use crate::consensus::consensus_builders::write_consensus_reads;
+use crate::consensus::consensus_builders::{write_consensus_reads, ConsensusWriteStats};
 use crate::extractor::{
     extract_tag_sequences, extract_tagged_sequences, recover_soft_clipped_align_sequences,
     stretch_sequence_to_alignment, SoftClipResolution,
@@ -11,6 +11,7 @@ use crate::extractor::{
 use crate::read_strategies::read_disk_sorter::SortingReadSetContainer;
 use crate::read_strategies::sequence_layout::{ReferenceRecord, SequenceLayout, UMIConfiguration};
 use crate::reference::fasta_reference::ReferenceManager;
+use crate::run_summary::{RunSummary, SummaryTable};
 
 use crate::InstanceLivedTempDir;
 use indicatif::ProgressBar;
@@ -26,9 +27,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::time::Instant;
 
 use crate::alignment::alignment_matrix::{AlignmentResult, AlignmentTag};
-use crate::alignment_manager::BamFileAlignmentWriter;
+use crate::alignment_manager::{BamFileAlignmentWriter, OutputAlignmentWriter};
 use crate::umis::correct_tags::SequenceCorrector;
 use consensus::consensus_builders::{write_corrected_reads, MergeStrategy, ReadOutputApproach};
 use read_strategies::sequence_layout::UMISortType;
@@ -36,6 +38,175 @@ use rust_star::Trie;
 use umis::known_list::KnownList;
 use utils::read_utils::{reverse_complement, u8s};
 use FASTA_N;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UmiLevelRunStats {
+    reference: String,
+    symbol: char,
+    sort_type: String,
+    input_reads: usize,
+    output_reads: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct CollapseReferenceStats {
+    reference: String,
+    filtering: BamReadFiltering,
+    reads_after_umi_correction: usize,
+    umi_levels: Vec<UmiLevelRunStats>,
+    output: ConsensusWriteStats,
+}
+
+#[derive(Clone, Debug)]
+pub struct CollapseRunStats {
+    mode: String,
+    references: Vec<CollapseReferenceStats>,
+    elapsed_seconds: f64,
+}
+
+impl CollapseRunStats {
+    pub fn summary(&self) -> RunSummary {
+        let mut total_filtering = BamReadFiltering::default();
+        let mut total_after_umi = 0usize;
+        let mut total_output = ConsensusWriteStats::default();
+        for reference in &self.references {
+            total_filtering.accumulate(&reference.filtering);
+            total_after_umi += reference.reads_after_umi_correction;
+            total_output.accumulate(&reference.output);
+        }
+
+        let mut results = SummaryTable::new(
+            "Collapse results",
+            &[
+                "Reference",
+                "BAM records",
+                "Passed filters",
+                "After UMI",
+                "UMI removed",
+                "Groups",
+                "Reads selected",
+                "Downsampled",
+                "Failed groups",
+                "Output records",
+            ],
+        );
+        push_collapse_result_row(
+            &mut results,
+            "All",
+            &total_filtering,
+            total_after_umi,
+            &total_output,
+        );
+        let mut references = self.references.iter().collect::<Vec<_>>();
+        references.sort_by(|left, right| left.reference.cmp(&right.reference));
+        for reference in references {
+            push_collapse_result_row(
+                &mut results,
+                &reference.reference,
+                &reference.filtering,
+                reference.reads_after_umi_correction,
+                &reference.output,
+            );
+        }
+
+        let mut filtering = SummaryTable::new(
+            "Collapse filtering",
+            &[
+                "Reference",
+                "Unmapped",
+                "Secondary",
+                "Supplementary",
+                "Alignment filter",
+                "Reconstruction/tag",
+                "Duplicate",
+                "Invalid tags",
+            ],
+        );
+        push_filtering_row(&mut filtering, "All", &total_filtering);
+        let mut references = self.references.iter().collect::<Vec<_>>();
+        references.sort_by(|left, right| left.reference.cmp(&right.reference));
+        for reference in references {
+            push_filtering_row(&mut filtering, &reference.reference, &reference.filtering);
+        }
+
+        let mut umi = SummaryTable::new(
+            "UMI correction levels",
+            &["Reference / UMI", "Type", "Input reads", "Output reads", "Removed"],
+        );
+        let mut levels = self
+            .references
+            .iter()
+            .flat_map(|reference| reference.umi_levels.iter())
+            .collect::<Vec<_>>();
+        levels.sort_by(|left, right| {
+            left.reference
+                .cmp(&right.reference)
+                .then(left.symbol.cmp(&right.symbol))
+        });
+        for level in levels {
+            umi.push_row([
+                format!("{} / {}", level.reference, level.symbol),
+                level.sort_type.clone(),
+                level.input_reads.to_string(),
+                level.output_reads.to_string(),
+                level.input_reads.saturating_sub(level.output_reads).to_string(),
+            ]);
+        }
+
+        let mut run = SummaryTable::new("Run details", &["Scope", "Mode", "Elapsed (s)"]);
+        run.push_row([
+            "All".to_string(),
+            self.mode.clone(),
+            format!("{:.2}", self.elapsed_seconds),
+        ]);
+
+        let mut summary = RunSummary::new("Collapse run summary");
+        summary.add_table(results);
+        summary.add_table(filtering);
+        if !self.references.iter().all(|reference| reference.umi_levels.is_empty()) {
+            summary.add_table(umi);
+        }
+        summary.add_table(run);
+        summary
+    }
+}
+
+fn push_collapse_result_row(
+    table: &mut SummaryTable,
+    reference: &str,
+    filtering: &BamReadFiltering,
+    reads_after_umi: usize,
+    output: &ConsensusWriteStats,
+) {
+    table.push_row([
+        reference.to_string(),
+        filtering.total_reads.to_string(),
+        filtering.passing_reads().to_string(),
+        reads_after_umi.to_string(),
+        filtering
+            .passing_reads()
+            .saturating_sub(reads_after_umi)
+            .to_string(),
+        output.groups_attempted.to_string(),
+        output.reads_selected.to_string(),
+        output.reads_downsampled.to_string(),
+        output.failed_groups.to_string(),
+        output.output_reads.to_string(),
+    ]);
+}
+
+fn push_filtering_row(table: &mut SummaryTable, reference: &str, filtering: &BamReadFiltering) {
+    table.push_row([
+        reference.to_string(),
+        filtering.unmapped_flag_reads.to_string(),
+        filtering.secondary_flag_reads.to_string(),
+        filtering.supplementary_flag_reads.to_string(),
+        filtering.failed_alignment_filters.to_string(),
+        filtering.failed_alignment_creation.to_string(),
+        filtering.duplicate_reads.to_string(),
+        filtering.invalid_tags.to_string(),
+    ]);
+}
 
 /// Collapses aligned reads from a BAM file by processing UMI configurations and generating consensus sequences.
 ///
@@ -86,11 +257,12 @@ pub fn collapse(
     alignment_filter: &AlignmentFilterConfig,
     processing_threads: &usize,
     maximum_reads_before_downsampling: &usize,
-) {
+) -> CollapseRunStats {
     assert!(
         *processing_threads > 0,
         "Collapse threads must be greater than zero"
     );
+    let start = Instant::now();
 
     // load up the reference files
     let rm = ReferenceManager::from_yaml_input(read_structure, 8, 4);
@@ -98,12 +270,10 @@ pub fn collapse(
     let mut known_level_lookups = get_known_level_lookups(read_structure);
 
     let mut writer = BamFileAlignmentWriter::new(&PathBuf::from(final_output), &rm);
-
-    let _levels = 0;
-    let mut read_count = 0;
+    let mut reference_stats = Vec::new();
 
     // for each reference, we fetch aligned reads, pull the sorting tags, and output the collapsed reads to a BAM file
-    rm.references.iter().for_each(|(_id, reference)| {
+    for (_id, reference) in rm.references.iter() {
         let ref_name = String::from_utf8(reference.name.clone()).unwrap();
         info!("processing reads from input BAM file: {}", bam_file);
 
@@ -116,7 +286,10 @@ pub fn collapse(
                 temp_directory,
                 alignment_filter,
             );
-        read_count = sorted_reads_option.read_stats.passing_reads();
+        let filtering = sorted_reads_option.read_stats;
+        let mut read_count = filtering.passing_reads();
+        let mut umi_levels = Vec::new();
+        let mut output_stats = ConsensusWriteStats::default();
 
         let mut levels = 0;
 
@@ -129,6 +302,7 @@ pub fn collapse(
                     .get_sorted_umi_configurations(&ref_name)
                     .iter()
                     .for_each(|tag| {
+                        let input_reads = read_count;
                         let ret = sort_level(
                             temp_directory,
                             &sorted_reads,
@@ -139,6 +313,13 @@ pub fn collapse(
                         );
                         sorted_reads = ret.1;
                         read_count = ret.0;
+                        umi_levels.push(UmiLevelRunStats {
+                            reference: ref_name.clone(),
+                            symbol: tag.symbol,
+                            sort_type: format!("{:?}", tag.sort_type),
+                            input_reads,
+                            output_reads: read_count,
+                        });
 
                         levels += 1;
                     });
@@ -149,7 +330,7 @@ pub fn collapse(
                     ReadOutputApproach::Collapse => {
                         info!("writing consensus reads for reference {}", ref_name);
 
-                        write_consensus_reads(
+                        output_stats = write_consensus_reads(
                             &sorted_reads,
                             &mut writer,
                             levels,
@@ -164,13 +345,37 @@ pub fn collapse(
                     ReadOutputApproach::Correct => {
                         info!("writing reads for reference {}", ref_name);
 
-                        write_corrected_reads(&sorted_reads, &mut writer, levels, &rm, read_structure);
+                        output_stats = write_corrected_reads(
+                            &sorted_reads,
+                            &mut writer,
+                            levels,
+                            &rm,
+                            read_structure,
+                        );
                     }
                 }
                 
             }
         }
-    });
+        reference_stats.push(CollapseReferenceStats {
+            reference: ref_name,
+            filtering,
+            reads_after_umi_correction: read_count,
+            umi_levels,
+            output: output_stats,
+        });
+    }
+
+    writer.close().unwrap();
+
+    CollapseRunStats {
+        mode: match output_approach {
+            ReadOutputApproach::Collapse => "collapse".to_string(),
+            ReadOutputApproach::Correct => "correct-only".to_string(),
+        },
+        references: reference_stats,
+        elapsed_seconds: start.elapsed().as_secs_f64(),
+    }
 }
 
 #[allow(dead_code)]
@@ -443,6 +648,17 @@ impl BamReadFiltering {
             - self.failed_alignment_creation
             - self.duplicate_reads
             - self.invalid_tags
+    }
+
+    fn accumulate(&mut self, other: &Self) {
+        self.total_reads += other.total_reads;
+        self.unmapped_flag_reads += other.unmapped_flag_reads;
+        self.secondary_flag_reads += other.secondary_flag_reads;
+        self.supplementary_flag_reads += other.supplementary_flag_reads;
+        self.failed_alignment_filters += other.failed_alignment_filters;
+        self.failed_alignment_creation += other.failed_alignment_creation;
+        self.duplicate_reads += other.duplicate_reads;
+        self.invalid_tags += other.invalid_tags;
     }
 
     fn count_flag_exclusion(&mut self, flags: Flags) -> bool {
@@ -1172,6 +1388,48 @@ mod tests {
     const FASTA_A: u8 = b'A';
     #[allow(dead_code)]
     const FASTA_T: u8 = b'T';
+
+    #[test]
+    fn test_collapse_summary_aggregates_filtering_umi_and_consensus_counts() {
+        let stats = CollapseRunStats {
+            mode: "collapse".to_string(),
+            references: vec![CollapseReferenceStats {
+                reference: "reference_a".to_string(),
+                filtering: BamReadFiltering {
+                    total_reads: 100,
+                    unmapped_flag_reads: 5,
+                    secondary_flag_reads: 2,
+                    supplementary_flag_reads: 1,
+                    failed_alignment_filters: 4,
+                    failed_alignment_creation: 3,
+                    duplicate_reads: 0,
+                    invalid_tags: 0,
+                },
+                reads_after_umi_correction: 70,
+                umi_levels: vec![UmiLevelRunStats {
+                    reference: "reference_a".to_string(),
+                    symbol: '0',
+                    sort_type: "KnownTag".to_string(),
+                    input_reads: 85,
+                    output_reads: 70,
+                }],
+                output: ConsensusWriteStats {
+                    input_reads: 70,
+                    groups_attempted: 10,
+                    reads_selected: 60,
+                    reads_downsampled: 10,
+                    output_reads: 9,
+                    failed_groups: 1,
+                },
+            }],
+            elapsed_seconds: 2.5,
+        };
+
+        let rendered = stats.summary().render();
+        assert!(rendered.contains("| All         | 100         | 85"));
+        assert!(rendered.contains("| reference_a / 0 | KnownTag | 85"));
+        assert!(rendered.contains("| All   | collapse | 2.50"));
+    }
 
     fn known_tag_layout(file: Option<&str>, levenshtein_distance: Option<bool>) -> SequenceLayout {
         let mut umi_configurations = BTreeMap::new();

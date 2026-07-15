@@ -2,8 +2,9 @@
 //! reference among the candidates (a k-mer vote fast path with an exhaustive
 //! fallback), run the aligner, extract tags, and hand results to the writer.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
 use crate::alignment::alignment_matrix::{
@@ -21,6 +22,7 @@ use crate::reference::fasta_reference::ReferenceManager;
 use crate::reference::discriminating::DiscriminatingClassifier;
 use crate::reference::idf::IdfIndex;
 use crate::reference::poa::PoaGraph;
+use crate::run_summary::{RunSummary, SummaryTable};
 use ndarray::Ix3;
 use std::time::Instant;
 use bio::alignment::AlignmentOperation;
@@ -68,6 +70,105 @@ const POA_DEFAULT_MAX_REFS: usize = 256;
 /// right tool) when its graph has at most this many nodes per base of the longest
 /// reference. Diverse panels blow past this and fall back to the k-mer router.
 const POA_COMPACT_FACTOR: usize = 4;
+const REFERENCE_HISTOGRAM_WIDTH: usize = 40;
+
+fn reference_histogram_bar(count: usize, maximum: usize) -> String {
+    if count == 0 || maximum == 0 {
+        return String::new();
+    }
+    let bar_length = count
+        .saturating_mul(REFERENCE_HISTOGRAM_WIDTH)
+        .saturating_add(maximum - 1)
+        / maximum;
+    "#".repeat(bar_length.max(1).min(REFERENCE_HISTOGRAM_WIDTH))
+}
+
+#[derive(Default)]
+struct AlignmentCounters {
+    input_reads: AtomicUsize,
+    aligned_reads: AtomicUsize,
+    too_short: AtomicUsize,
+    too_long: AtomicUsize,
+    failed: AtomicUsize,
+    ambiguous_reference_calls: AtomicUsize,
+    aligned_by_reference: Mutex<BTreeMap<String, usize>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AlignmentRunStats {
+    pub input_reads: usize,
+    pub aligned_reads: usize,
+    pub too_short: usize,
+    pub too_long: usize,
+    pub failed: usize,
+    pub ambiguous_reference_calls: usize,
+    pub aligned_by_reference: BTreeMap<String, usize>,
+    pub elapsed_seconds: f64,
+}
+
+impl AlignmentRunStats {
+    pub fn summary(&self) -> RunSummary {
+        let alignment_rate = if self.input_reads == 0 {
+            0.0
+        } else {
+            100.0 * self.aligned_reads as f64 / self.input_reads as f64
+        };
+        let mut overall = SummaryTable::new(
+            "Alignment totals",
+            &[
+                "Scope",
+                "Input reads",
+                "Aligned",
+                "Aligned (%)",
+                "Too short",
+                "Too long",
+                "Failed",
+                "Ambiguous calls",
+                "Elapsed (s)",
+            ],
+        );
+        overall.push_row([
+            "All".to_string(),
+            self.input_reads.to_string(),
+            self.aligned_reads.to_string(),
+            format!("{:.2}", alignment_rate),
+            self.too_short.to_string(),
+            self.too_long.to_string(),
+            self.failed.to_string(),
+            self.ambiguous_reference_calls.to_string(),
+            format!("{:.2}", self.elapsed_seconds),
+        ]);
+
+        let mut references = SummaryTable::new(
+            "Aligned reads by reference",
+            &["Reference", "Aligned reads", "Aligned reads (%)", "Histogram"],
+        );
+        let maximum_reference_count = self
+            .aligned_by_reference
+            .values()
+            .copied()
+            .max()
+            .unwrap_or(0);
+        for (reference, count) in &self.aligned_by_reference {
+            let proportion = if self.aligned_reads == 0 {
+                0.0
+            } else {
+                100.0 * *count as f64 / self.aligned_reads as f64
+            };
+            references.push_row([
+                reference.clone(),
+                count.to_string(),
+                format!("{:.2}", proportion),
+                reference_histogram_bar(*count, maximum_reference_count),
+            ]);
+        }
+
+        let mut summary = RunSummary::new("Alignment run summary");
+        summary.add_table(overall);
+        summary.add_table(references);
+        summary
+    }
+}
 
 pub fn align_reads(
     read_structure: &SequenceLayout,
@@ -88,7 +189,7 @@ pub fn align_reads(
     use_poa: bool,
     poa_min_margin: usize,
     no_poa_default: bool,
-) {
+) -> AlignmentRunStats {
     let read_iterator = ReadIterator::new(
         PathBuf::from(&read1),
         Some(PathBuf::from(&read2)),
@@ -126,7 +227,7 @@ pub fn align_reads(
         final_gap_multiplier: 1.0,
     };
     let start = Instant::now();
-    let read_count = Arc::new(Mutex::new(0)); // we rely on this Arc for output file access control
+    let counters = Arc::new(AlignmentCounters::default());
 
     type SharedStore = Arc<Mutex<Option<Alignment<Ix3>>>>;
 
@@ -253,6 +354,7 @@ pub fn align_reads(
     let poa_graph = poa_graph.as_ref();
 
     read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
+        counters.input_reads.fetch_add(1, AtomicOrdering::Relaxed);
         STORE.with(|arc_mtx| {
             let mut local_alignment = arc_mtx.lock().unwrap();
             if local_alignment.is_none() {
@@ -262,11 +364,17 @@ pub fn align_reads(
 
             let name = &String::from_utf8(xx.name().clone()).unwrap();
 
-            let seq_len = &xx.seq().len();
+            let seq_len = xx.seq().len();
             // FASTQ qualities are ASCII Phred+33; strip the offset to raw Phred for the aligned
             // read (the BAM writer re-applies +33 on output).
             let qual = Some(xx.quals.as_ref().unwrap().iter().map(|b| b.saturating_sub(33)).collect::<Vec<u8>>());
-            if seq_len < &max_read_size {
+            if seq_len < *min_read_length {
+                counters.too_short.fetch_add(1, AtomicOrdering::Relaxed);
+                debug!(
+                    "Skipping read {} because its length {} is below the minimum {}",
+                    name, seq_len, min_read_length
+                );
+            } else if seq_len < max_read_size {
                 let aligned = align_to_reference_choices(
                     name,
                     xx.seq(),
@@ -280,7 +388,7 @@ pub fn align_reads(
                     &false,
                     *max_reference_multiplier as f64,
                     *min_read_length,
-                    seq_len,
+                    &seq_len,
                     discriminating_classifier,
                     idf_index,
                     poa_graph,
@@ -288,7 +396,7 @@ pub fn align_reads(
 
                 match aligned {
                     None => {
-                        // TODO: we should track this and provide a final summary
+                        counters.failed.fetch_add(1, AtomicOrdering::Relaxed);
                         debug!("Unable to create alignment for read {}", name);
                     }
                     Some(alignment_obj) => {
@@ -298,22 +406,24 @@ pub fn align_reads(
                         let classification = alignment_obj.classification;
                         let idf_info = alignment_obj.idf_info;
                         let poa_info = alignment_obj.poa_info;
+                        let ambiguous_reference_call = classification
+                            .as_ref()
+                            .map(|info| info.ambiguous)
+                            .unwrap_or(false)
+                            || idf_info
+                                .as_ref()
+                                .map(|info| info.ambiguous)
+                                .unwrap_or(false)
+                            || poa_info
+                                .as_ref()
+                                .map(|info| info.ambiguous)
+                                .unwrap_or(false);
                         match results {
                             None => {
-                                // TODO: we should track this and provide a final summary
-
+                                counters.failed.fetch_add(1, AtomicOrdering::Relaxed);
                                 debug!("Unable to create alignment for read {}", name);
                             }
                             Some(aln) => {
-                                let mut read_count = read_count.lock().unwrap();
-                                *read_count += 1;
-                                if *read_count % 1000000 == 0 {
-                                    let duration = start.elapsed();
-                                    info!(
-                                        "Time elapsed in aligning reads ({:?}) is: {:?}",
-                                        read_count, duration
-                                    );
-                                }
                                 assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
 
                                 let read = SortingReadSetContainer::empty_tags(aln);
@@ -408,13 +518,37 @@ pub fn align_reads(
                                 arc_writer
                                     .write_read(&read, &added_tags)
                                     .expect("Unable to write a read to the arc writer (LOC1)");
+
+                                let aligned_count = counters
+                                    .aligned_reads
+                                    .fetch_add(1, AtomicOrdering::Relaxed)
+                                    + 1;
+                                if ambiguous_reference_call {
+                                    counters
+                                        .ambiguous_reference_calls
+                                        .fetch_add(1, AtomicOrdering::Relaxed);
+                                }
+                                *counters
+                                    .aligned_by_reference
+                                    .lock()
+                                    .expect("Unable to lock per-reference alignment counts")
+                                    .entry(read.aligned_read.reference_name.clone())
+                                    .or_insert(0) += 1;
+                                if aligned_count % 1000000 == 0 {
+                                    info!(
+                                        "Aligned {} reads in {:?}",
+                                        aligned_count,
+                                        start.elapsed()
+                                    );
+                                }
                             }
                         }
                     }
                 }
             } else {
+                counters.too_long.fetch_add(1, AtomicOrdering::Relaxed);
                 warn!(
-                    "Dropped read {} is it's length {} exceeds 2x the reference length {}",
+                    "Dropped read {} because its length {} meets or exceeds the maximum {}",
                     String::from_utf8(xx.name().clone()).unwrap(),
                     xx.seq().len(),
                     max_read_size
@@ -429,6 +563,24 @@ pub fn align_reads(
         .lock()
         .expect("Unable to access multi-threaded writer");
     arc_writer.close().unwrap();
+
+    let aligned_by_reference = counters
+        .aligned_by_reference
+        .lock()
+        .expect("Unable to lock per-reference alignment counts")
+        .clone();
+    AlignmentRunStats {
+        input_reads: counters.input_reads.load(AtomicOrdering::Relaxed),
+        aligned_reads: counters.aligned_reads.load(AtomicOrdering::Relaxed),
+        too_short: counters.too_short.load(AtomicOrdering::Relaxed),
+        too_long: counters.too_long.load(AtomicOrdering::Relaxed),
+        failed: counters.failed.load(AtomicOrdering::Relaxed),
+        ambiguous_reference_calls: counters
+            .ambiguous_reference_calls
+            .load(AtomicOrdering::Relaxed),
+        aligned_by_reference,
+        elapsed_seconds: start.elapsed().as_secs_f64(),
+    }
 }
 
 #[allow(dead_code)]
@@ -1396,6 +1548,7 @@ mod tests {
     use crate::alignment_functions::{
         align_to_reference_choices, cigar_to_alignment, exhaustive_alignment_search,
         has_confident_kmer_support, quick_alignment_search, simplify_cigar_string,
+        reference_histogram_bar, AlignmentRunStats, REFERENCE_HISTOGRAM_WIDTH,
     };
     use crate::read_strategies::sequence_layout::{
         AlignedReadOrientation, ReadPosition, ReferenceRecord, SequenceLayout,
@@ -1403,6 +1556,40 @@ mod tests {
     use crate::reference::fasta_reference::ReferenceManager;
     use crate::utils::read_utils::reverse_complement;
     use bio::alignment::AlignmentOperation;
+
+    #[test]
+    fn test_alignment_run_summary_reconciles_outcomes() {
+        let stats = AlignmentRunStats {
+            input_reads: 10,
+            aligned_reads: 6,
+            too_short: 1,
+            too_long: 2,
+            failed: 1,
+            ambiguous_reference_calls: 2,
+            aligned_by_reference: BTreeMap::from([
+                ("reference_a".to_string(), 4),
+                ("reference_b".to_string(), 2),
+            ]),
+            elapsed_seconds: 1.25,
+        };
+
+        assert_eq!(
+            stats.input_reads,
+            stats.aligned_reads + stats.too_short + stats.too_long + stats.failed
+        );
+        let rendered = stats.summary().render();
+        assert!(rendered.contains("| All   | 10          | 6       | 60.00"));
+        assert!(rendered.contains("| reference_a | 4             | 66.67"));
+        assert!(rendered.contains(&"#".repeat(REFERENCE_HISTOGRAM_WIDTH)));
+    }
+
+    #[test]
+    fn test_reference_histogram_scales_to_largest_reference() {
+        assert_eq!(reference_histogram_bar(10, 10), "#".repeat(40));
+        assert_eq!(reference_histogram_bar(5, 10), "#".repeat(20));
+        assert_eq!(reference_histogram_bar(1, 100), "#");
+        assert_eq!(reference_histogram_bar(0, 100), "");
+    }
 
     fn multi_reference_layout(known_strand: bool) -> SequenceLayout {
         let mut references = BTreeMap::new();
