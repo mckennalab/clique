@@ -5,6 +5,39 @@ produce consensus sequences that are aligned to the genome. Often these amplicon
 locations within the genome ('static IDs'), or cell identifiers that come from many single-cell sequencing experiments. You provide this layout as a YAML file (detailed below) which Clique uses
 to collapse down reads to a consensus sequence, accounting for errors or other issues 
 
+## Run Summaries
+
+The `align` and `collapse` commands print a table to stderr when processing
+finishes. Add `--summary-output <FILE>` to also write the results as a tidy TSV
+with `section`, `scope`, `metric`, and `value` columns:
+
+```bash
+clique align \
+  --read-structure layout.yaml \
+  --read1 reads.fastq.gz \
+  --output-bam-file aligned.bam \
+  --summary-output aligned.summary.tsv
+
+clique collapse \
+  --read-structure layout.yaml \
+  --input-bam-file aligned.bam \
+  --output-bam-file collapsed.bam \
+  --summary-output collapsed.summary.tsv
+```
+
+The alignment summary reports input read sets, written alignments, reads below
+or above the configured length limits, failed alignments/reference assignments,
+ambiguous router calls, elapsed time, and aligned reads per reference.
+The per-reference table includes a `#` histogram normalized to the largest
+reference count (40 characters at full scale).
+
+The collapse summary reports records examined for each configured reference,
+filtering outcomes, reads retained after each UMI correction level, molecule
+groups attempted, reads selected for consensus, reads omitted by downsampling,
+failed groups, and output records. `Reads selected` includes consensus attempts
+that later fail; `Downsampled` is the exact number omitted by
+`--maximum-reads-before-downsampling`.
+
 # Sequence Layout YAML Configuration
 
 This document describes the YAML configuration format used to define sequence layouts for read processing.
