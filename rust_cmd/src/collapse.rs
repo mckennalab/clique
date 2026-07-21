@@ -1408,6 +1408,16 @@ pub fn sort_level(
             last_read = Some(next_last_read);
         });
 
+    // Mark the scan phase complete before the potentially long final correction/rewrite.
+    if let Some(progress_bar) = bar.as_mut() {
+        progress_bar.set_position(all_read_count as u64);
+        progress_bar.finish();
+    }
+    info!(
+        "Sorting complete for {:?} level {}; applying corrections and rewriting {} reads",
+        tag.sort_type, tag.symbol, all_read_count
+    );
+
     match current_sorting_bin {
         None => {}
         Some(mut bin) => match tag.sort_type {
@@ -1424,11 +1434,6 @@ pub fn sort_level(
                 output_reads += bin.close_degenerate_list(&mut sender);
             }
         },
-    }
-
-    // otherwise we spend too much time updating a progress bar, which is very silly
-    if all_read_count % 10000 == 0 {
-        bar.as_mut().map(|b| b.set_position(all_read_count as u64));
     }
 
     info!("For tag {} ({:?}, iteration {}) we processed {} reads, of which {} were passed to the next level",

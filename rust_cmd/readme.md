@@ -41,7 +41,161 @@ grouped into power-of-two `rc` read-count ranges (`1`, `2`, `3-4`, `5-8`, and
 so on), with a `#` histogram normalized to the largest range (40 characters at
 full scale).
 
-# Sequence Layout YAML Configuration
+## BAM Output Format
+
+Both `align` and `collapse` write BAM records against the amplicon references
+declared in the sequence-layout YAML. These are reference-relative amplicon
+alignments, not genomic-coordinate alignments: `RNAME` is the YAML reference
+name and `POS` is the 1-based position within that reference.
+
+Clique currently writes all of its custom auxiliary tags as SAM/BAM `Z`
+(string) values. This includes numeric-looking values such as `rc:Z:10` and
+`rm:Z:0.98`; downstream programs should parse those strings when numeric values
+are required. The tag names are lowercase and should not be confused with
+similarly named standard uppercase SAM tags.
+
+### Collapse Output
+
+Each normal collapse record represents one corrected barcode/UMI group. The
+group is defined by its reference and the ordered set of corrected capture tags
+(`e<symbol>`). The most important collapse annotations are:
+
+| Tag | Meaning |
+|-----|---------|
+| `e<symbol>` | Extracted tag after barcode/UMI correction. This is part of the key used to form the collapsed group. |
+| `o<symbol>` | Original extracted value, before correction, from the representative read carried into the output record. It is not a list of every original value in the group. |
+| `rc` | Read count: all retained reads assigned to the corrected group before consensus downsampling. |
+| `dc` | Downsampled consensus depth: the number of reads actually selected to build the consensus. |
+| `ar` | Comma-separated QNAMEs of the reads selected to build the consensus, in selection order. Reads omitted by downsampling are not included. |
+| `rm` | Fraction of called, non-`N`, non-capture reference bases that match the output alignment. |
+| `as`, `rs` | Clique's internal alignment score, written as a string. These are primarily diagnostic and are not standard SAM `AS` values. |
+| `ce` | Chemistry-aware CRISPR event calls, when the reference has configured targets. |
+| `pe` | Prime-edit classification, present when the reference has at least one `PrimeEdit` target. |
+
+For every successfully written collapse record:
+
+```text
+number of comma-separated names in ar = dc <= rc
+```
+
+For example, `rc:Z:10`, `dc:Z:4`, and four names in `ar` means that ten reads
+formed the molecule group, four were selected for consensus, and six were
+omitted because of `--maximum-reads-before-downsampling`.
+
+The output QNAME is the name of the first selected read. It is a representative
+identifier, not a newly generated molecule ID. Likewise, `o<symbol>` comes from
+that representative selected record. Use `ar` when complete selected-read
+provenance is needed. In `--correct-only` mode, Clique writes one corrected
+record per retained input record, so `rc`, `dc`, and the number of names in
+`ar` are all one.
+
+The collapse `SEQ`, quality values, and CIGAR describe the generated consensus
+in reference orientation. Insertion columns are retained only when supported by
+the consensus threshold, so an unsupported raw-read overhang or insertion can
+be absent from the output sequence even though the originating read is listed
+in `ar`.
+
+### Capture Tags
+
+Capture-tag names are derived from the single-digit `symbol` in each YAML
+`umi_configurations` entry, not from the human-readable configuration key. For
+example:
+
+```yaml
+umi_configurations:
+  cell_barcode:
+    symbol: '0'
+    sort_type: KnownTag
+    length: 16
+    order: 0
+  molecule_umi:
+    symbol: '1'
+    sort_type: DegenerateTag
+    length: 12
+    order: 1
+```
+
+produces tags such as `e0`, `o0`, `e1`, and `o1`. In an `align` BAM,
+`e<symbol>` is the value extracted directly from that read and no
+`o<symbol>` tag is written. In a `collapse` BAM, `e<symbol>` is the corrected
+group value and `o<symbol>` preserves the representative read's value before
+correction. A `KnownTag` value may therefore change to its allowlisted barcode,
+and a `DegenerateTag` value may change to its clustered representative.
+
+### CRISPR Event Annotations
+
+The `ce` tag uses 0-based, ungapped reference coordinates and encodes events as:
+
+| Event | Encoding |
+|-------|----------|
+| Deletion | `<length>D+<reference-position>` |
+| Insertion | `<length>I+<reference-position>+<inserted-bases>` |
+| Substitution | `1S+<reference-position>+<alternate-base>` |
+| No called event | `NONE` |
+
+Multiple events at one target are joined with `&`. Calls for multiple targets
+are joined with `_` in the same order as `targets` in the YAML. Event filtering
+uses the configured target chemistry, so `ce` is not an unfiltered list of
+every alignment difference.
+
+The `pe` tag follows the same underscore-separated target order and contains
+one of `WT`, `PRECISE`, `PARTIAL`, `PRECISE_PLUS_BYPRODUCT`,
+`SCAFFOLD_INCORPORATION`, `INDEL`, `OTHER`, or `NO_CALL` for a prime-edit
+target. A non-prime target in a mixed target list is represented by `NA`.
+
+### Align-Only Routing Annotations
+
+An `align` BAM has `rc:Z:1`, the originating read name in `ar`, and an extracted
+`e<symbol>` value for every configured capture. Depending on which optional
+reference classifier made the routing decision, it can also contain:
+
+| Tags | Meaning |
+|------|---------|
+| `dm`, `di`, `da` | Discriminating-position top-two margin, informative positions covered, and ambiguity flag (`1` or `0`). |
+| `ib`, `im`, `ik`, `ia` | IDF best score, top-two margin ratio, informative k-mers, and ambiguity flag. |
+| `pb`, `pm`, `pi`, `pa` | POA best branch-vote score, top-two margin, informative columns, and ambiguity flag. |
+
+These routing diagnostics describe reference assignment and are not propagated
+as collapse-group annotations.
+
+### SAM Field Conventions and Inspection
+
+- `QNAME` is the input read name for alignments and the first selected read name
+  for consensuses.
+- `FLAG` is currently `0`; reads are normalized into reference orientation, so
+  the reverse-complement operation is not represented with SAM flag `0x10`.
+- `MAPQ` is unset (`255`) and should not be interpreted as mapping confidence.
+- `RNAME`, `POS`, and `CIGAR` refer to a configured amplicon reference rather
+  than a chromosome.
+- Output order is not guaranteed to be coordinate sorted, and Clique does not
+  create a BAM index automatically.
+
+The header and selected record fields/tags can be inspected with `samtools`:
+
+```bash
+samtools view -H collapsed.bam
+samtools view collapsed.bam | cut -f1-6,12- | head
+```
+
+To recover the FASTQ sequences named in a collapsed record's `ar` tag, use the
+included helper:
+
+```bash
+./rewind/extract_collapsed_reads.py \
+  --read-name <consensus-qname> \
+  --collapsed-bam collapsed.bam \
+  --input-fastq reads.fastq.gz \
+  --output contributing_sequences.txt
+```
+
+Sort before creating an index for coordinate-based tools:
+
+```bash
+samtools sort -o collapsed.sorted.bam collapsed.bam
+samtools index collapsed.sorted.bam
+```
+
+## Sequence Layout YAML Configuration
 
 This document describes the YAML configuration format used to define sequence layouts for read processing.
 
