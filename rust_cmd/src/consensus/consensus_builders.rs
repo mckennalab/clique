@@ -13,7 +13,7 @@ use counter::Counter;
 use rust_htslib::bam::record::CigarString;
 use shardio::{Range, ShardReader};
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::convert::TryFrom;
 use std::sync::{Arc, Mutex};
 use num_traits::{Pow, ToPrimitive};
@@ -34,7 +34,7 @@ pub enum MergeStrategy {
     Stretcher,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConsensusWriteStats {
     pub input_reads: usize,
     pub groups_attempted: usize,
@@ -42,6 +42,8 @@ pub struct ConsensusWriteStats {
     pub reads_downsampled: usize,
     pub output_reads: usize,
     pub failed_groups: usize,
+    /// Successful output consensuses keyed by the value written to their `rc` tag.
+    pub reads_per_consensus: BTreeMap<usize, usize>,
 }
 
 impl ConsensusWriteStats {
@@ -52,6 +54,7 @@ impl ConsensusWriteStats {
         self.reads_downsampled += input_reads.saturating_sub(reads_selected);
         if wrote_output {
             self.output_reads += 1;
+            *self.reads_per_consensus.entry(input_reads).or_insert(0) += 1;
         } else {
             self.failed_groups += 1;
         }
@@ -64,6 +67,9 @@ impl ConsensusWriteStats {
         self.reads_downsampled += other.reads_downsampled;
         self.output_reads += other.output_reads;
         self.failed_groups += other.failed_groups;
+        for (read_count, consensus_count) in &other.reads_per_consensus {
+            *self.reads_per_consensus.entry(*read_count).or_insert(0) += consensus_count;
+        }
     }
 }
 
@@ -217,7 +223,10 @@ pub fn write_consensus_reads(
             .record_group(input_reads, reads_selected, wrote_output);
     }
 
-    let final_stats = *write_stats.lock().expect("Unable to lock consensus statistics");
+    let final_stats = write_stats
+        .lock()
+        .expect("Unable to lock consensus statistics")
+        .clone();
     final_stats
 }
 
@@ -763,6 +772,7 @@ mod tests {
         assert_eq!(stats.reads_downsampled, 6);
         assert_eq!(stats.output_reads, 1);
         assert_eq!(stats.failed_groups, 1);
+        assert_eq!(stats.reads_per_consensus, BTreeMap::from([(8, 1)]));
     }
 
     #[cfg(feature = "spoa")]

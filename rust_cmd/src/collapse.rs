@@ -23,7 +23,7 @@ use noodles_sam::{alignment::record::Flags, Header};
 use itertools::Itertools;
 use shardio::{Range, ShardReader, ShardWriter};
 use std::cmp::{min, Ordering};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -38,6 +38,8 @@ use rust_star::Trie;
 use umis::known_list::KnownList;
 use utils::read_utils::{reverse_complement, u8s};
 use FASTA_N;
+
+const CONSENSUS_HISTOGRAM_WIDTH: usize = 40;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UmiLevelRunStats {
@@ -166,9 +168,74 @@ impl CollapseRunStats {
         if !self.references.iter().all(|reference| reference.umi_levels.is_empty()) {
             summary.add_table(umi);
         }
+        if self.mode == "collapse" && !total_output.reads_per_consensus.is_empty() {
+            summary.add_table(consensus_size_histogram(&total_output.reads_per_consensus));
+        }
         summary.add_table(run);
         summary
     }
+}
+
+fn consensus_size_histogram(read_counts: &BTreeMap<usize, usize>) -> SummaryTable {
+    let mut binned_counts = BTreeMap::<(usize, usize), usize>::new();
+    for (reads_per_consensus, consensus_count) in read_counts {
+        let bounds = consensus_size_bin(*reads_per_consensus);
+        *binned_counts.entry(bounds).or_insert(0) += consensus_count;
+    }
+
+    let total_consensuses = binned_counts.values().sum::<usize>();
+    let maximum_bin_count = binned_counts.values().copied().max().unwrap_or(0);
+    let mut histogram = SummaryTable::new(
+        "Reads per consensus (rc tag)",
+        &[
+            "Reads per consensus",
+            "Consensus records",
+            "Consensus records (%)",
+            "Histogram",
+        ],
+    );
+
+    for ((lower, upper), consensus_count) in binned_counts {
+        let label = if lower == upper {
+            lower.to_string()
+        } else {
+            format!("{}-{}", lower, upper)
+        };
+        let percentage = if total_consensuses == 0 {
+            0.0
+        } else {
+            100.0 * consensus_count as f64 / total_consensuses as f64
+        };
+        histogram.push_row([
+            label,
+            consensus_count.to_string(),
+            format!("{:.2}", percentage),
+            consensus_histogram_bar(consensus_count, maximum_bin_count),
+        ]);
+    }
+
+    histogram
+}
+
+fn consensus_size_bin(read_count: usize) -> (usize, usize) {
+    match read_count {
+        0..=2 => (read_count, read_count),
+        _ => {
+            let upper = read_count.checked_next_power_of_two().unwrap_or(usize::MAX);
+            (upper / 2 + 1, upper)
+        }
+    }
+}
+
+fn consensus_histogram_bar(count: usize, maximum: usize) -> String {
+    if count == 0 || maximum == 0 {
+        return String::new();
+    }
+    let bar_length = count
+        .saturating_mul(CONSENSUS_HISTOGRAM_WIDTH)
+        .saturating_add(maximum - 1)
+        / maximum;
+    "#".repeat(bar_length.max(1).min(CONSENSUS_HISTOGRAM_WIDTH))
 }
 
 fn push_collapse_result_row(
@@ -1420,6 +1487,12 @@ mod tests {
                     reads_downsampled: 10,
                     output_reads: 9,
                     failed_groups: 1,
+                    reads_per_consensus: BTreeMap::from([
+                        (1, 4),
+                        (2, 2),
+                        (4, 2),
+                        (8, 1),
+                    ]),
                 },
             }],
             elapsed_seconds: 2.5,
@@ -1428,7 +1501,36 @@ mod tests {
         let rendered = stats.summary().render();
         assert!(rendered.contains("| All         | 100         | 85"));
         assert!(rendered.contains("| reference_a / 0 | KnownTag | 85"));
+        assert!(rendered.contains("Reads per consensus (rc tag)"));
+        assert!(rendered.contains("| 1                   | 4"));
+        assert!(rendered.contains(&"#".repeat(CONSENSUS_HISTOGRAM_WIDTH)));
         assert!(rendered.contains("| All   | collapse | 2.50"));
+    }
+
+    #[test]
+    fn test_consensus_size_histogram_uses_compact_power_of_two_bins() {
+        assert_eq!(consensus_size_bin(1), (1, 1));
+        assert_eq!(consensus_size_bin(2), (2, 2));
+        assert_eq!(consensus_size_bin(3), (3, 4));
+        assert_eq!(consensus_size_bin(4), (3, 4));
+        assert_eq!(consensus_size_bin(5), (5, 8));
+        assert_eq!(consensus_size_bin(8), (5, 8));
+        assert_eq!(consensus_size_bin(9), (9, 16));
+
+        let histogram = consensus_size_histogram(&BTreeMap::from([
+            (1, 5),
+            (2, 3),
+            (3, 2),
+            (4, 1),
+            (8, 2),
+        ]));
+        let mut summary = RunSummary::new("Test summary");
+        summary.add_table(histogram);
+        let rendered = summary.render();
+        assert!(rendered.contains("| 1                   | 5"));
+        assert!(rendered.contains("| 2                   | 3"));
+        assert!(rendered.contains("| 3-4                 | 3"));
+        assert!(rendered.contains("| 5-8                 | 2"));
     }
 
     fn known_tag_layout(file: Option<&str>, levenshtein_distance: Option<bool>) -> SequenceLayout {

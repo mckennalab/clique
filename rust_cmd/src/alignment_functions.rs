@@ -54,9 +54,16 @@ fn rust_bio_alignment(
     gap_extend: &i32
 ) -> (Vec<AlignmentOperation>, i32) {
     // A match rewards +1; mismatch and gap penalties come from the (positive-magnitude)
-    // parameters, applied as negative costs. `N` matches either base (symmetric check).
+    // parameters, applied as negative costs. `N` and digit-marked UMI positions match
+    // any base, consistent with AffineScoring::match_mismatch.
     let mismatch_penalty = -mismatch.abs();
-    let score = |a: u8, b: u8| if a == b || a == b'N' || b == b'N' { 1i32 } else { mismatch_penalty };
+    let score = |a: u8, b: u8| {
+        if a == b || a == b'N' || b == b'N' || a.is_ascii_digit() || b.is_ascii_digit() {
+            1i32
+        } else {
+            mismatch_penalty
+        }
+    };
     let mut aligner = Aligner::with_capacity(read.len(), reference.len(), -gap_open.abs(), -gap_extend.abs(), &score);
     let alignment = aligner.global(reference,read);
     // x is global (target sequence) and y is local (reference sequence)
@@ -1554,6 +1561,7 @@ mod tests {
         AlignedReadOrientation, ReadPosition, ReferenceRecord, SequenceLayout,
     };
     use crate::reference::fasta_reference::ReferenceManager;
+    use crate::extractor::extract_tagged_sequences;
     use crate::utils::read_utils::reverse_complement;
     use bio::alignment::AlignmentOperation;
 
@@ -1733,6 +1741,26 @@ mod tests {
         );
 
         assert_eq!(alignment.read_quals, Some(qualities));
+    }
+
+    #[test]
+    fn test_single_reference_symbolic_umi_extracts_bases_without_gaps() {
+        let reference = "ACGT0000TTAG";
+        let read = b"ACGTGCAATTAG".to_vec();
+        let alignment = align_single_unknown_strand(
+            reference,
+            read.clone(),
+            vec![30; read.len()],
+        );
+
+        assert_eq!(alignment.reference_aligned, reference.as_bytes());
+        assert_eq!(alignment.read_aligned, read);
+        assert_eq!(
+            extract_tagged_sequences(&alignment.read_aligned, &alignment.reference_aligned)
+                .get(&b'0')
+                .map(String::as_str),
+            Some("GCAA")
+        );
     }
 
     #[test]

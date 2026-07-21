@@ -36,7 +36,10 @@ filtering outcomes, reads retained after each UMI correction level, molecule
 groups attempted, reads selected for consensus, reads omitted by downsampling,
 failed groups, and output records. `Reads selected` includes consensus attempts
 that later fail; `Downsampled` is the exact number omitted by
-`--maximum-reads-before-downsampling`.
+`--maximum-reads-before-downsampling`. Successful consensus records are also
+grouped into power-of-two `rc` read-count ranges (`1`, `2`, `3-4`, `5-8`, and
+so on), with a `#` histogram normalized to the largest range (40 characters at
+full scale).
 
 # Sequence Layout YAML Configuration
 
