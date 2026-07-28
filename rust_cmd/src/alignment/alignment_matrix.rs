@@ -965,6 +965,119 @@ pub struct BoundedAlignment {
     bounding_box: (AlignmentLocation, AlignmentLocation),
 }
 
+/// Global alignment with a convex (logarithmic) gap penalty. Unlike the affine
+/// aligner, a run of `k` gap columns costs `gap_open + gap_extend*ln(k)` rather
+/// than `gap_open + gap_extend*k`, so one long indel is far cheaper than several
+/// short ones — useful for large CRISPR deletions/insertions. Runs in
+/// O(n*m*(n+m)) time (each cell searches every gap length), so it is an opt-in
+/// aligner rather than the default. Qualities pass through in read order (no
+/// reordering — this aligner does not reverse any read block).
+#[allow(dead_code)]
+pub(crate) fn convex_alignment(
+    reference: &[u8],
+    read: &[u8],
+    reference_name: &String,
+    read_name: &String,
+    convex_score: &ConvexScoring,
+    read_quality: Option<Vec<u8>>,
+) -> AlignmentResult {
+    #[derive(Clone, Copy)]
+    enum Move {
+        Start,
+        Diag,
+        Del(usize), // consume `k` reference bases (gap in the read)
+        Ins(usize), // consume `k` read bases (gap in the reference)
+    }
+
+    let n = reference.len();
+    let m = read.len();
+    let mut score = vec![vec![0.0f64; m + 1]; n + 1];
+    let mut tb = vec![vec![Move::Start; m + 1]; n + 1];
+
+    for i in 1..=n {
+        score[i][0] = convex_score.gap(i);
+        tb[i][0] = Move::Del(i);
+    }
+    for j in 1..=m {
+        score[0][j] = convex_score.gap(j);
+        tb[0][j] = Move::Ins(j);
+    }
+
+    for i in 1..=n {
+        for j in 1..=m {
+            let mut best = score[i - 1][j - 1]
+                + convex_score.match_mismatch(&reference[i - 1], &read[j - 1]);
+            let mut best_move = Move::Diag;
+            for k in 1..=i {
+                let s = score[i - k][j] + convex_score.gap(k);
+                if s > best {
+                    best = s;
+                    best_move = Move::Del(k);
+                }
+            }
+            for k in 1..=j {
+                let s = score[i][j - k] + convex_score.gap(k);
+                if s > best {
+                    best = s;
+                    best_move = Move::Ins(k);
+                }
+            }
+            score[i][j] = best;
+            tb[i][j] = best_move;
+        }
+    }
+
+    let mut reference_aligned: Vec<u8> = Vec::new();
+    let mut read_aligned: Vec<u8> = Vec::new();
+    let mut cigars: Vec<AlignmentTag> = Vec::new();
+    let (mut i, mut j) = (n, m);
+    loop {
+        match tb[i][j] {
+            Move::Start => break,
+            Move::Diag => {
+                reference_aligned.push(reference[i - 1]);
+                read_aligned.push(read[j - 1]);
+                cigars.push(AlignmentTag::MatchMismatch(1));
+                i -= 1;
+                j -= 1;
+            }
+            Move::Del(k) => {
+                for t in 0..k {
+                    reference_aligned.push(reference[i - 1 - t]);
+                    read_aligned.push(FASTA_UNSET);
+                }
+                cigars.push(AlignmentTag::Del(k));
+                i -= k;
+            }
+            Move::Ins(k) => {
+                for t in 0..k {
+                    reference_aligned.push(FASTA_UNSET);
+                    read_aligned.push(read[j - 1 - t]);
+                }
+                cigars.push(AlignmentTag::Ins(k));
+                j -= k;
+            }
+        }
+    }
+    reference_aligned.reverse();
+    read_aligned.reverse();
+    cigars.reverse();
+
+    AlignmentResult {
+        reference_name: reference_name.clone(),
+        read_name: read_name.clone(),
+        reference_aligned,
+        read_aligned,
+        read_quals: read_quality,
+        cigar_string: simplify_cigar_string(&cigars),
+        path: vec![],
+        score: score[n][m],
+        reference_start: 0,
+        read_start: 0,
+        bounding_box: None,
+    }
+}
+
 /// Reorder read qualities to match an inversion-aware alignment's `read_aligned`.
 /// The traceback shows each inverted block reverse-complemented (its base order
 /// reversed), so the qualities of the read bases inside an InversionOpen ..

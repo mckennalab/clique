@@ -8,10 +8,10 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
 use crate::alignment::alignment_matrix::{
-    create_scoring_record_3d, inversion_alignment, perform_3d_global_traceback, perform_affine_alignment,
+    convex_alignment, create_scoring_record_3d, inversion_alignment, perform_3d_global_traceback, perform_affine_alignment,
     perform_affine_alignment_bandwidth, Alignment, AlignmentResult, AlignmentTag, AlignmentType,
 };
-use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
+use crate::alignment::scoring_functions::{AffineScoring, ConvexScoring, InversionScoring};
 use crate::linked_alignment::{
     align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment,
 };
@@ -240,14 +240,24 @@ pub fn align_reads(
         final_gap_multiplier: 1.0,
     };
 
-    // Prototype (item A): `--aligner inversion` routes the final single-reference
-    // alignment through the inversion-aware aligner. Serializing an inversion CIGAR
-    // to BAM still requires item B, so this only surfaces inversions to callers that
-    // inspect the AlignmentResult (e.g. tests); a read that truly inverts will emit
-    // InversionOpen/InversionClose tags that to_sam_record cannot yet write.
+    // `--aligner inversion` routes the final alignment (single + multi reference)
+    // through the inversion-aware aligner; detected inversions are emitted as `iv`
+    // BAM tags. `--aligner convex` uses a convex (logarithmic) gap penalty instead
+    // of affine, so one long indel is preferred over several short ones.
     let use_inversions = matches!(aligner, RustAligner::Inversion);
+    let use_convex = matches!(aligner, RustAligner::Convex);
+    let convex_score = ConvexScoring {
+        match_score: 10.0,
+        mismatch_score: -9.0,
+        special_character_score: 9.0,
+        gap_open: -10.0,
+        gap_extend: -3.0,
+    };
     if use_inversions {
-        info!("Inversion-aware alignment enabled (--aligner inversion); note: single-reference path only, BAM serialization of inversions pending (item B)");
+        info!("Inversion-aware alignment enabled (--aligner inversion)");
+    }
+    if use_convex {
+        info!("Convex-gap alignment enabled (--aligner convex); O(n*m*(n+m)) per read, slower than affine");
     }
     let start = Instant::now();
     let counters = Arc::new(AlignmentCounters::default());
@@ -409,6 +419,8 @@ pub fn align_reads(
                     &my_aff_score,
                     &my_score,
                     &use_inversions,
+                    &convex_score,
+                    &use_convex,
                     *max_reference_multiplier as f64,
                     *min_read_length,
                     &seq_len,
@@ -1101,6 +1113,8 @@ pub fn align_to_reference_choices(
     my_aff_score: &AffineScoring,
     my_score: &InversionScoring,
     use_inversions: &bool,
+    convex_score: &ConvexScoring,
+    use_convex: &bool,
     _max_reference_multiplier: f64,
     min_read_length: usize,
     _max_indel: &usize,
@@ -1196,6 +1210,17 @@ pub fn align_to_reference_choices(
                     my_score,
                     my_aff_score,
                     false,
+                    oriented_quals,
+                )
+            } else if *use_convex {
+                // `--aligner convex`: global alignment with a convex (logarithmic)
+                // gap penalty, so one long indel is preferred over several short ones.
+                convex_alignment(
+                    &ref_base.sequence,
+                    &forward_oriented_seq,
+                    &ref_name,
+                    read_name,
+                    convex_score,
                     oriented_quals,
                 )
             } else {
@@ -1319,6 +1344,30 @@ pub fn align_to_reference_choices(
                             existing.read_quals.clone(),
                         );
                         awr.alignment = Some(inv);
+                    }
+                    awr
+                })
+            } else if *use_convex {
+                // Multi-reference convex: re-align the router-chosen reference with the
+                // convex-gap aligner (opt-in via --aligner convex).
+                base.map(|mut awr| {
+                    if let Some(existing) = awr.alignment.take() {
+                        let oriented_read: Vec<u8> = existing
+                            .read_aligned
+                            .iter()
+                            .filter(|b| **b != FASTA_UNSET)
+                            .cloned()
+                            .collect();
+                        let ref_name = String::from_utf8(awr.ref_name.clone()).unwrap();
+                        let cv = convex_alignment(
+                            &awr.ref_sequence,
+                            &oriented_read,
+                            &ref_name,
+                            read_name,
+                            convex_score,
+                            existing.read_quals.clone(),
+                        );
+                        awr.alignment = Some(cv);
                     }
                     awr
                 })
@@ -1628,7 +1677,17 @@ mod tests {
     use crate::alignment::alignment_matrix::{
         create_scoring_record_3d, AlignmentResult, AlignmentTag, AlignmentType,
     };
-    use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
+    use crate::alignment::scoring_functions::{AffineScoring, ConvexScoring, InversionScoring};
+
+    fn test_convex_scoring() -> ConvexScoring {
+        ConvexScoring {
+            match_score: 10.0,
+            mismatch_score: -9.0,
+            special_character_score: 9.0,
+            gap_open: -10.0,
+            gap_extend: -3.0,
+        }
+    }
     use crate::alignment_functions::{
         align_to_reference_choices, cigar_to_alignment, exhaustive_alignment_search,
         has_confident_kmer_support, quick_alignment_search, simplify_cigar_string,
@@ -1765,6 +1824,8 @@ mod tests {
             &AffineScoring::default_dna(),
             &inversion_score,
             &false,
+            &test_convex_scoring(),
+            &false,
             2.0,
             0,
             &read.len(),
@@ -1829,6 +1890,8 @@ mod tests {
             &AffineScoring::default_dna(),
             &inversion_score,
             &true, // use_inversions -> route to the inversion-aware aligner
+            &test_convex_scoring(),
+            &false,
             2.0,
             0,
             &read.len(),
@@ -1950,6 +2013,8 @@ mod tests {
             &AffineScoring::default_dna(),
             &InversionScoring::default(),
             &false,
+            &test_convex_scoring(),
+            &false,
             2.0,
             read.len() + 1,
             &read.len(),
@@ -2003,6 +2068,8 @@ mod tests {
                 &mut alignment_matrix,
                 &affine_score,
                 &inversion_score,
+                &false,
+                &test_convex_scoring(),
                 &false,
                 2.0,
                 0,
@@ -2356,6 +2423,102 @@ mod tests {
         assert_eq!(read_aln, read);
         // Subst is treated as MatchMismatch, so all merge to M(4)
         assert_eq!(tags, vec![AlignmentTag::MatchMismatch(4)]);
+    }
+
+    #[test]
+    fn test_convex_alignment_single_long_gap() {
+        // A contiguous deletion should be called as one gap; quals pass through in
+        // read order (convex never reverses a block).
+        let reference = b"AGCTTGCATGCCTGCAGGTCGACTCTAGAGTCGACCTGCA".to_vec(); // 40 bp
+        let mut read = reference[0..15].to_vec();
+        read.extend_from_slice(&reference[27..]); // delete reference[15..27] (12 bp)
+        let quals: Vec<u8> = (0..read.len() as u8).collect();
+
+        let res = crate::alignment::alignment_matrix::convex_alignment(
+            &reference, &read, &"r".to_string(), &"q".to_string(),
+            &test_convex_scoring(), Some(quals.clone()),
+        );
+        let dels: Vec<usize> = res
+            .cigar_string
+            .iter()
+            .filter_map(|t| if let AlignmentTag::Del(k) = t { Some(*k) } else { None })
+            .collect();
+        assert_eq!(dels, vec![12], "expected one 12bp deletion; cigar={:?}", res.cigar_string);
+        assert_eq!(res.read_quals, Some(quals), "quals pass through in read order");
+        // ungapped aligned strings reconstruct the inputs
+        let ref_ung: Vec<u8> = res.reference_aligned.iter().filter(|b| **b != b'-').cloned().collect();
+        let read_ung: Vec<u8> = res.read_aligned.iter().filter(|b| **b != b'-').cloned().collect();
+        assert_eq!(ref_ung, reference);
+        assert_eq!(read_ung, read);
+    }
+
+    fn align_single_forward_with_convex(reference: &str, read: Vec<u8>) -> AlignmentResult {
+        let mut references = BTreeMap::new();
+        references.insert(
+            "reference".to_string(),
+            ReferenceRecord {
+                sequence: reference.to_string(),
+                umi_configurations: BTreeMap::new(),
+                targets: vec![],
+                target_types: vec![],
+                target_locations: None,
+                prime_edits: BTreeMap::new(),
+            },
+        );
+        let layout = SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 { orientation: AlignedReadOrientation::Forward }],
+            known_strand: true,
+            references,
+        };
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let mut alignment_matrix = create_scoring_record_3d(
+            reference_manager.longest_ref + 1,
+            read.len() + 1,
+            AlignmentType::Affine,
+            false,
+        );
+        align_to_reference_choices(
+            &"read".to_string(),
+            &read,
+            None,
+            &reference_manager,
+            &false,
+            &layout,
+            &mut alignment_matrix,
+            &AffineScoring::default_dna(),
+            &InversionScoring::default(),
+            &false, // use_inversions
+            &test_convex_scoring(),
+            &true, // use_convex -> route to the convex-gap aligner
+            2.0,
+            0,
+            &read.len(),
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .alignment
+        .unwrap()
+    }
+
+    #[test]
+    fn test_convex_dispatch_aligns_deletion() {
+        // `--aligner convex` (use_convex = true) routes the single-reference path to
+        // the convex aligner and produces a valid alignment (one long gap).
+        let reference = "AGCTTGCATGCCTGCAGGTCGACTCTAGAGTCGACCTGCA";
+        let refb = reference.as_bytes();
+        let mut read = refb[0..15].to_vec();
+        read.extend_from_slice(&refb[27..]); // 12bp deletion
+        let aln = align_single_forward_with_convex(reference, read);
+        let dels: Vec<usize> = aln
+            .cigar_string
+            .iter()
+            .filter_map(|t| if let AlignmentTag::Del(k) = t { Some(*k) } else { None })
+            .collect();
+        assert_eq!(dels, vec![12], "convex dispatch should call one 12bp deletion; cigar={:?}", aln.cigar_string);
     }
 
     #[test]

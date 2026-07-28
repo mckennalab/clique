@@ -39,7 +39,7 @@ pub trait ConvexScoringFunction {
 pub struct ConvexScoring {
     pub(crate) match_score: f64,
     pub(crate) mismatch_score: f64,
-    pub(crate) gap_score: f64,
+    pub(crate) special_character_score: f64,
     pub(crate) gap_open: f64,
     pub(crate) gap_extend: f64,
 }
@@ -47,11 +47,26 @@ pub struct ConvexScoring {
 
 impl ConvexScoringFunction for ConvexScoring {
     fn match_mismatch(&self, a: &u8, b: &u8) -> f64 {
-        if a == b { self.match_score } else { self.mismatch_score }
+        // Treat N and UMI-symbol characters (ASCII < 58, i.e. the digits used to
+        // mark tag slots) as special, mirroring AffineScoring so tag/UMI columns
+        // stay aligned rather than being gapped out.
+        if *a == FASTA_N || *b == FASTA_N || *a < 58 || *b < 58 {
+            self.special_character_score
+        } else if a == b {
+            self.match_score
+        } else {
+            self.mismatch_score
+        }
     }
 
+    /// Convex (logarithmic) gap penalty: a fixed open cost plus a per-log-length
+    /// extension (`gap_extend` is negative), so one long gap is cheaper than many
+    /// short ones. Length 0 is no gap (0.0), which also avoids `log(0) = -inf`.
     fn gap(&self, length: usize) -> f64 {
-        self.gap_open + f64::log10(length as f64)
+        if length == 0 {
+            return 0.0;
+        }
+        self.gap_open + self.gap_extend * (length as f64).ln()
     }
 }
 
@@ -187,12 +202,15 @@ mod tests {
         let scoring = ConvexScoring {
             match_score: 5.0,
             mismatch_score: -4.0,
-            gap_score: -2.0,
+            special_character_score: -1.0,
             gap_open: -10.0,
             gap_extend: -1.0,
         };
         assert_eq!(scoring.match_mismatch(&b'A', &b'A'), 5.0);
         assert_eq!(scoring.match_mismatch(&b'A', &b'T'), -4.0);
+        // N and digit (UMI-symbol) characters score as special
+        assert_eq!(scoring.match_mismatch(&b'N', &b'A'), -1.0);
+        assert_eq!(scoring.match_mismatch(&b'0', &b'A'), -1.0);
     }
 
     #[test]
@@ -200,14 +218,18 @@ mod tests {
         let scoring = ConvexScoring {
             match_score: 5.0,
             mismatch_score: -4.0,
-            gap_score: -2.0,
+            special_character_score: -1.0,
             gap_open: -10.0,
             gap_extend: -1.0,
         };
-        // gap(1) = -10.0 + log10(1) = -10.0 + 0.0 = -10.0
-        assert_eq!(scoring.gap(1), -10.0);
-        // gap(10) = -10.0 + log10(10) = -10.0 + 1.0 = -9.0
-        assert_eq!(scoring.gap(10), -9.0);
+        // convex: gap_open + gap_extend * ln(length)
+        assert_eq!(scoring.gap(1), -10.0); // -10 + (-1)*ln(1) = -10
+        assert!((scoring.gap(10) - (-10.0 + -1.0 * (10.0f64).ln())).abs() < 1e-9);
+        // longer gaps cost more (more negative) but sub-linearly
+        assert!(scoring.gap(100) < scoring.gap(10));
+        assert!(scoring.gap(10) < scoring.gap(1));
+        // length 0 is no gap (and must not be log(0) = -inf)
+        assert_eq!(scoring.gap(0), 0.0);
     }
 
     #[test]

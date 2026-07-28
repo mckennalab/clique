@@ -180,13 +180,16 @@ mod reference {
 }
 
 /// Final alignment mode. WFA and Degenerate use the standard affine/global
-/// path; Inversion enables experimental inversion-aware alignment.
+/// path; Inversion enables experimental inversion-aware alignment; Convex uses a
+/// convex (logarithmic) gap penalty that prefers one long indel over several
+/// short ones (O(n*m*(n+m)) per read, so slower than affine).
 #[derive(Debug, Default, Clone, ValueEnum)]
 enum Aligner {
     #[default]
     WFA,
     Degenerate,
     Inversion,
+    Convex,
 }
 
 #[derive(Subcommand, Debug)]
