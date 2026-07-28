@@ -965,8 +965,43 @@ pub struct BoundedAlignment {
     bounding_box: (AlignmentLocation, AlignmentLocation),
 }
 
+/// Reorder read qualities to match an inversion-aware alignment's `read_aligned`.
+/// The traceback shows each inverted block reverse-complemented (its base order
+/// reversed), so the qualities of the read bases inside an InversionOpen ..
+/// InversionClose span must be reversed to stay paired with the aligned bases;
+/// forward blocks keep read order. `quals` are the read's qualities in read order.
+fn reorder_quals_for_inversions(cigar: &[AlignmentTag], quals: Vec<u8>) -> Vec<u8> {
+    if !cigar
+        .iter()
+        .any(|t| matches!(t, AlignmentTag::InversionOpen | AlignmentTag::InversionClose))
+    {
+        return quals;
+    }
+    let mut out = quals;
+    let mut read_pos = 0usize; // read bases consumed so far (Match/Ins/SoftClip)
+    let mut inv_start: Option<usize> = None;
+    for tag in cigar {
+        match tag {
+            AlignmentTag::InversionOpen => inv_start = Some(read_pos),
+            AlignmentTag::InversionClose => {
+                if let Some(a) = inv_start.take() {
+                    let b = read_pos.min(out.len());
+                    if a < b {
+                        out[a..b].reverse();
+                    }
+                }
+            }
+            AlignmentTag::MatchMismatch(n)
+            | AlignmentTag::Ins(n)
+            | AlignmentTag::SoftClip(n) => read_pos += n,
+            AlignmentTag::Del(_) | AlignmentTag::HardClip(_) => {}
+        }
+    }
+    out
+}
+
 #[allow(dead_code)]
-pub(crate) fn inversion_alignment(reference: &[u8], read: &[u8], reference_name: &String, read_name: &String, inversion_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool) -> AlignmentResult {
+pub(crate) fn inversion_alignment(reference: &[u8], read: &[u8], reference_name: &String, read_name: &String, inversion_score: &InversionScoring, my_aff_score: &AffineScoring, local: bool, read_quality: Option<Vec<u8>>) -> AlignmentResult {
     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, local);
     let mut inversion_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, true);
 
@@ -991,7 +1026,7 @@ pub(crate) fn inversion_alignment(reference: &[u8], read: &[u8], reference_name:
     };
     perform_affine_alignment(&mut inversion_mat, reference, rev_comp_read.as_slice(), &candidate_score);
 
-    let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read.as_slice(), reference_name, read_name, None, None)); // TODO fix with quality scores
+    let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read.as_slice(), reference_name, read_name, None, None)); // candidate search only; qualities are threaded onto the final result below
 
     while aligned_inv.is_some() {
         let aligned_inv_local = aligned_inv.unwrap();
@@ -1004,7 +1039,7 @@ pub(crate) fn inversion_alignment(reference: &[u8], read: &[u8], reference_name:
             aligned_inv = if length >= inversion_score.min_inversion_length {
                 clean_and_find_next_best_match_3d(&mut inversion_mat, reference, rev_comp_read.as_slice(), &candidate_score, &aligned_inv_local);
                 long_enough_hits.insert(true_position, b_alignment);
-                Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read.as_slice(), reference_name, read_name, None, None))// TODO fix with quality scores
+                Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read.as_slice(), reference_name, read_name, None, None))// candidate search only; qualities are threaded onto the final result below
             } else {
                 None
             }
@@ -1013,7 +1048,12 @@ pub(crate) fn inversion_alignment(reference: &[u8], read: &[u8], reference_name:
         }
     }
     perform_inversion_aware_alignment(&mut alignment_mat, &long_enough_hits, reference, read, inversion_score);
-    perform_3d_global_traceback(&mut alignment_mat, Some(&long_enough_hits), reference, read, reference_name, read_name, None, None) // TODO fix with quality scores
+    // The candidate-search tracebacks above don't need qualities (they only locate
+    // inverted segments); qualities are threaded onto the FINAL alignment here,
+    // reversed within each inverted block so they stay paired with the aligned bases.
+    let mut result = perform_3d_global_traceback(&mut alignment_mat, Some(&long_enough_hits), reference, read, reference_name, read_name, None, None);
+    result.read_quals = read_quality.map(|q| reorder_quals_for_inversions(&result.cigar_string, q));
+    result
 }
 
 #[allow(dead_code)]
@@ -1483,6 +1523,39 @@ mod tests {
     }
 
     #[test]
+    fn reorder_quals_reverses_only_the_inverted_block() {
+        // cigar: 3 forward, 4 inverted, 3 forward -> read positions 0..3, 3..7, 7..10
+        let cigar = vec![
+            AlignmentTag::MatchMismatch(3),
+            AlignmentTag::InversionOpen,
+            AlignmentTag::MatchMismatch(4),
+            AlignmentTag::InversionClose,
+            AlignmentTag::MatchMismatch(3),
+        ];
+        let quals = vec![10, 11, 12, 20, 21, 22, 23, 30, 31, 32];
+        let out = reorder_quals_for_inversions(&cigar, quals);
+        // only the inverted block [3..7] is reversed
+        assert_eq!(out, vec![10, 11, 12, 23, 22, 21, 20, 30, 31, 32]);
+
+        // an insertion inside the inverted block still consumes a read base
+        let cigar2 = vec![
+            AlignmentTag::MatchMismatch(2),
+            AlignmentTag::InversionOpen,
+            AlignmentTag::MatchMismatch(2),
+            AlignmentTag::Ins(1),
+            AlignmentTag::InversionClose,
+            AlignmentTag::MatchMismatch(2),
+        ];
+        let quals2 = vec![0, 1, 2, 3, 4, 5, 6];
+        // inverted read span is [2..5] -> reversed
+        assert_eq!(reorder_quals_for_inversions(&cigar2, quals2), vec![0, 1, 4, 3, 2, 5, 6]);
+
+        // no inversion markers -> unchanged
+        let cigar3 = vec![AlignmentTag::MatchMismatch(4)];
+        assert_eq!(reorder_quals_for_inversions(&cigar3, vec![9, 8, 7, 6]), vec![9, 8, 7, 6]);
+    }
+
+    #[test]
     fn inversion_alignment_setup_test() {
         let reference = str_to_fasta_vec("CCAATCTACTACTGCTTGCA");
         let test_read = reverse_complement(&str_to_fasta_vec("GCCACTCTCGCTGTACTGTG"));
@@ -1532,7 +1605,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let results = inversion_alignment(&reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), &my_score, &my_aff_score, true);
+        let results = inversion_alignment(&reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), &my_score, &my_aff_score, true, None);
 
         println!("Aligned {} and {} from {} and {}",
                  fasta_vec_to_string(&results.reference_aligned),
@@ -1570,7 +1643,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let results = inversion_alignment(&reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), &my_score, &my_aff_score, false);
+        let results = inversion_alignment(&reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), &my_score, &my_aff_score, false, None);
 
 
         println!("Aligned {} and {} from {} and {}",
@@ -1609,7 +1682,7 @@ mod tests {
             final_gap_multiplier: 1.0,
         };
 
-        let results = inversion_alignment(&reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), &my_score, &my_aff_score, false);
+        let results = inversion_alignment(&reference, &test_read, &"reference_name".to_ascii_uppercase(), &"read_name".to_ascii_uppercase(), &my_score, &my_aff_score, false, None);
 
         println!("Aligned {} and {} from {} and {}",
                  fasta_vec_to_string(&results.reference_aligned),

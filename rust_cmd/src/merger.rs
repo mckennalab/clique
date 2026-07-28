@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use crate::alignment::scoring_functions::AffineScoring;
 use crate::alignment_manager::align_two_strings;
-use crate::read_strategies::read_set::{ReadIterator, ReadSetContainer};
+use crate::read_strategies::read_set::{fastq_record_id, ReadIterator, ReadSetContainer};
 use crate::read_strategies::sequence_layout::{
     AlignedReadOrientation, MergeStrategy, ReadPosition, SequenceLayout,
 };
@@ -268,7 +268,11 @@ impl UnifiedRead {
     fn decision_tree(&mut self) {
         match (self.read_pattern, &self.read_structure.merge) {
             ((true, true, false, false), Some(MergeStrategy::Align)) => {
-                self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
+                self.name = Some(
+                    fastq_record_id(self.underlying_reads.read_one.id())
+                        .as_bytes()
+                        .to_vec(),
+                );
                 let alignment = merge_reads_by_alignment(
                     &self.underlying_reads.read_one,
                     &self.underlying_reads.read_two.as_ref().unwrap(),
@@ -284,7 +288,11 @@ impl UnifiedRead {
                 if strat == &MergeStrategy::Concatenate
                     || strat == &MergeStrategy::ConcatenateBothForward =>
             {
-                self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
+                self.name = Some(
+                    fastq_record_id(self.underlying_reads.read_one.id())
+                        .as_bytes()
+                        .to_vec(),
+                );
 
                 let rst = merge_reads_by_concatenation(&self.underlying_reads,&self.read_structure);
                 self.seq = Some(rst.read_bases.to_vec());
@@ -294,13 +302,21 @@ impl UnifiedRead {
                 if strat == &MergeStrategy::Concatenate
                     || strat == &MergeStrategy::ConcatenateBothForward =>
             {
-                self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
+                self.name = Some(
+                    fastq_record_id(self.underlying_reads.read_one.id())
+                        .as_bytes()
+                        .to_vec(),
+                );
                 let rst = merge_reads_by_concatenation(&self.underlying_reads, &self.read_structure);
                 self.seq = Some(rst.read_bases);
                 self.quals = Some(rst.read_quals);
             }
             ((true, false, false, false), _) => {
-                self.name = Some(self.underlying_reads.read_one.id().as_bytes().to_vec());
+                self.name = Some(
+                    fastq_record_id(self.underlying_reads.read_one.id())
+                        .as_bytes()
+                        .to_vec(),
+                );
                 let orientation = self
                     .read_index_to_orientation
                     .get(&0)

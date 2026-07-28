@@ -5,6 +5,19 @@ produce consensus sequences that are aligned to the genome. Often these amplicon
 locations within the genome ('static IDs'), or cell identifiers that come from many single-cell sequencing experiments. You provide this layout as a YAML file (detailed below) which Clique uses
 to collapse down reads to a consensus sequence, accounting for errors or other issues 
 
+## Synthetic 10x-Style Test Harness
+
+[`test_harness/tenx_lineage`](test_harness/tenx_lineage) provides a deterministic
+end-to-end example with a 16-bp cell barcode and 12-bp UMI in R1, an I1 library
+index, and an integration marker plus two-target lineage cassette in R2. It
+generates synchronized FASTQs and truth tables, runs alignment and collapse,
+and validates capture correction, molecule depths, source-read provenance, and
+simulated insertion/deletion calls:
+
+```bash
+./test_harness/tenx_lineage/run_harness.sh /tmp/clique-tenx-lineage
+```
+
 ## Run Summaries
 
 The `align` and `collapse` commands print a table to stderr when processing

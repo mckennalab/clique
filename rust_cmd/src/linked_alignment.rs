@@ -178,7 +178,7 @@ pub fn align_string_with_anchors(read_name: &String,
                 (x, y, None) if x < 5 && y < 5 && x == y => {
                     AlignmentResult::from_match_segment(&ref_slice, &read_slice, ref_name, read_name, ref_alignment_last_position, read_alignment_last_position, my_aff_score)
                 }
-                (_x, _y, Some(inv_score)) => inversion_alignment(&ref_slice, &read_slice, ref_name, read_name, inv_score, my_aff_score, false),
+                (_x, _y, Some(inv_score)) => inversion_alignment(&ref_slice, &read_slice, ref_name, read_name, inv_score, my_aff_score, false, None),
                 (_x, _y, None) => {
                     perform_affine_alignment(alignment_mat, &ref_slice, &read_slice, my_aff_score);
 
@@ -215,7 +215,7 @@ pub fn align_string_with_anchors(read_name: &String,
             let ref_slice = slice_for_alignment(&reference, ref_alignment_last_position, reference.len());
             let alignment =
                 match my_inv_score {
-                    Some(x) => inversion_alignment(&ref_slice, &read_slice, ref_name, read_name, x, my_aff_score, false),
+                    Some(x) => inversion_alignment(&ref_slice, &read_slice, ref_name, read_name, x, my_aff_score, false, None),
                     None => {
                         let mut alignment_mat = create_scoring_record_3d(ref_slice.len() + 1, read_slice.len() + 1, AlignmentType::Affine, false);
                         perform_affine_alignment(&mut alignment_mat, &ref_slice, &read_slice, my_aff_score);
@@ -240,7 +240,7 @@ pub fn align_string_with_anchors(read_name: &String,
         let alignment =
             match my_inv_score {
                 Some(x) => {
-                    inversion_alignment(&reference, &search_string, ref_name, read_name, x, my_aff_score, true)
+                    inversion_alignment(&reference, &search_string, ref_name, read_name, x, my_aff_score, true, None)
                 }
                 None => {
                     let mut alignment_mat = create_scoring_record_3d(reference.len() + 1, search_string.len() + 1, AlignmentType::Affine, false);

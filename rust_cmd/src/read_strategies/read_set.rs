@@ -9,6 +9,12 @@ use std::io::{BufReader};
 use std::path::PathBuf;
 use rust_htslib::bgzf::Reader;
 
+/// Return the identifier portion of a FASTQ header, excluding optional
+/// whitespace-delimited metadata that is not valid in a SAM/BAM QNAME.
+pub fn fastq_record_id(id: &str) -> &str {
+    id.split_ascii_whitespace().next().unwrap_or(id)
+}
+
 /// holds a set of reads for reading and writing to disk
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct ReadSetContainer {
@@ -123,6 +129,7 @@ impl ReadIterator
     }
 
     fn canonical_read_id(id: &str) -> &str {
+        let id = fastq_record_id(id);
         id.strip_suffix("/1")
             .or_else(|| id.strip_suffix("/2"))
             .or_else(|| id.strip_suffix("/3"))
@@ -302,6 +309,16 @@ mod tests {
         assert_eq!(record.read_two.unwrap().id(), "spot/2");
         assert!(iterator.next().is_none());
         assert_eq!(iterator.reads_processed, 1);
+    }
+
+    #[test]
+    fn test_fastq_record_id_removes_nanopore_metadata() {
+        assert_eq!(
+            fastq_record_id("12d75f4f-f926-49fa-afdc-116c3b382e16\tqs:f:23.5\tch:i:2366"),
+            "12d75f4f-f926-49fa-afdc-116c3b382e16"
+        );
+        assert_eq!(fastq_record_id("spot/1 comment"), "spot/1");
+        assert_eq!(fastq_record_id("plain_id"), "plain_id");
     }
 
     #[test]

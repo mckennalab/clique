@@ -1183,14 +1183,12 @@ pub fn align_to_reference_choices(
             };
 
             let result = if *use_inversions {
-                // Prototype (item A): route the final single-reference alignment
-                // through the inversion-aware aligner. It returns an AlignmentResult
-                // whose CIGAR may carry InversionOpen/InversionClose markers when it
-                // finds an inversion at least `min_inversion_length` long.
-                // NOTE: inversion_alignment does not yet thread quality scores, and
-                // BAM serialization of an inversion CIGAR is item B, so a read that
-                // actually inverts will produce tags to_sam_record cannot write.
-                let mut inv = inversion_alignment(
+                // Item A: route the final single-reference alignment through the
+                // inversion-aware aligner. Its CIGAR may carry InversionOpen/Close
+                // markers; qualities are threaded through and reordered within
+                // inverted blocks, and the markers are flattened into an `iv` event
+                // (item B(ii)) by the writer.
+                inversion_alignment(
                     &ref_base.sequence,
                     &forward_oriented_seq,
                     &ref_name,
@@ -1198,9 +1196,8 @@ pub fn align_to_reference_choices(
                     my_score,
                     my_aff_score,
                     false,
-                );
-                inv.read_quals = oriented_quals;
-                inv
+                    oriented_quals,
+                )
             } else {
                 let alignment = rust_bio_alignment(&ref_base.sequence, &forward_oriented_seq, &4, &10, &1).0;
                 //println!("{}", alignment);
@@ -1311,7 +1308,7 @@ pub fn align_to_reference_choices(
                             .cloned()
                             .collect();
                         let ref_name = String::from_utf8(awr.ref_name.clone()).unwrap();
-                        let mut inv = inversion_alignment(
+                        let inv = inversion_alignment(
                             &awr.ref_sequence,
                             &oriented_read,
                             &ref_name,
@@ -1319,8 +1316,8 @@ pub fn align_to_reference_choices(
                             my_score,
                             my_aff_score,
                             false,
+                            existing.read_quals.clone(),
                         );
-                        inv.read_quals = existing.read_quals.clone();
                         awr.alignment = Some(inv);
                     }
                     awr
@@ -2376,7 +2373,7 @@ mod tests {
             let reference: Vec<u8> = [f1, mid, f2].concat();
             let read: Vec<u8> = [f1, reverse_complement(&mid.to_vec()).as_slice(), f2].concat();
             let res = crate::alignment::alignment_matrix::inversion_alignment(
-                &reference, &read, &"r".to_string(), &"q".to_string(), &sc, &aff, false,
+                &reference, &read, &"r".to_string(), &"q".to_string(), &sc, &aff, false, None,
             );
             let detected = res.cigar_string.iter().any(|t| {
                 matches!(t, AlignmentTag::InversionOpen | AlignmentTag::InversionClose)
@@ -2387,6 +2384,38 @@ mod tests {
                 flank, midlen, res.cigar_string
             );
         }
+    }
+
+    #[test]
+    fn test_inversion_threads_and_reverses_quals() {
+        // Quality scores are threaded through the inversion aligner and, within an
+        // inverted block, reversed so they stay paired with the (reverse-complemented)
+        // aligned bases. Distinct per-base quals let us detect any loss or misorder.
+        let bank = b"GCCTCCACGGCCACTAGTATTATGCCCAGTACATGACCTTATGGGACTTT";
+        let (flank, midlen) = (5usize, 20usize);
+        let mid = &bank[flank..flank + midlen];
+        let f1 = &bank[0..flank];
+        let f2 = &bank[flank + midlen..flank + midlen + 15];
+        let reference: Vec<u8> = [f1, mid, f2].concat();
+        let read: Vec<u8> = [f1, reverse_complement(&mid.to_vec()).as_slice(), f2].concat();
+        let sc = InversionScoring{match_score:10.0,mismatch_score:-11.0,gap_open:-15.0,gap_extend:-5.0,inversion_penalty:-10.0,min_inversion_length:8};
+        let quals: Vec<u8> = (0..read.len() as u8).collect();
+
+        let res = crate::alignment::alignment_matrix::inversion_alignment(
+            &reference, &read, &"r".to_string(), &"q".to_string(),
+            &sc, &AffineScoring::default_dna(), false, Some(quals.clone()),
+        );
+        assert!(
+            res.cigar_string.iter().any(|t| matches!(t, AlignmentTag::InversionOpen | AlignmentTag::InversionClose)),
+            "fixture should detect an inversion; cigar={:?}", res.cigar_string
+        );
+        let rq = res.read_quals.expect("quals should be threaded through");
+        // gapless clean inversion: one qual per read base, no loss
+        assert_eq!(rq.len(), quals.len(), "qual length must match the read");
+        let mut a = rq.clone(); a.sort();
+        let mut b = quals.clone(); b.sort();
+        assert_eq!(a, b, "quals must be a permutation of the input (none lost/duplicated)");
+        assert_ne!(rq, quals, "the inverted block's quals must be reordered");
     }
 
     #[test]

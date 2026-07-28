@@ -190,20 +190,58 @@ impl UMIConfiguration {
     }
 }
 
-
+/// Editing chemistry and calling strategy for one configured target.
+///
+/// Values are written verbatim in a reference's YAML `target_types` list. Each
+/// entry is paired by index with `targets` and, after layout validation, the
+/// corresponding 0-based `target_locations` entry. Event calling writes one
+/// field per target to the `ce` BAM tag in this same order.
+///
+/// Except for [`TargetType::PrimeEdit`], calls are limited to the inclusive,
+/// target-relative window returned by [`TargetType::editing_window`] and are
+/// reported as alignment differences from the forward reference. A target with
+/// no qualifying difference produces `NONE`. Cas12 base-editor windows
+/// currently reuse the Cas9 base-editor window and should be calibrated against
+/// control data before interpreting target-level rates.
 #[derive(Debug, PartialEq, Hash, Serialize, Deserialize, Clone, Eq)]
 pub enum TargetType {
+    /// Presence-only target. Event calling is disabled and `ce` is always
+    /// `NONE` for this target.
     Static,
+    /// Wild-type Cas9 nuclease target. Calls insertions and deletions that
+    /// overlap target offsets 14 through 19 (inclusive).
     Cas9WT,
+    /// Wild-type Cas12a nuclease target. Calls insertions and deletions that
+    /// overlap target offsets 14 through 23 (inclusive).
     Cas12AWT,
+    /// Cas9 adenine base-editor target. Calls A-to-G substitutions, or T-to-C
+    /// substitutions on the complementary strand, at offsets 2 through 19.
     Cas9ABE,
+    /// Cas9 cytosine base-editor target. Calls C-to-T substitutions, or G-to-A
+    /// substitutions on the complementary strand, at offsets 2 through 19.
     Cas9CBE,
+    /// Combined Cas9 ABE/CBE target. Accepts both adenine- and cytosine-editor
+    /// substitution classes at offsets 2 through 19.
     Cas9ABECBE,
+    /// Cas12a adenine base-editor target. Uses the same accepted substitutions
+    /// and current offsets (2 through 19) as [`TargetType::Cas9ABE`].
     Cas12ABE,
+    /// Cas12a cytosine base-editor target. Uses the same accepted substitutions
+    /// and current offsets (2 through 19) as [`TargetType::Cas9CBE`].
     Cas12CBE,
+    /// Combined Cas12a ABE/CBE target. Accepts both base-editor substitution
+    /// classes at offsets 2 through 19.
     Cas12ABECBE,
+    /// Legacy Cas9 homing-nuclease target. Event calling is currently identical
+    /// to [`TargetType::Cas9WT`].
     Cas9Homing,
+    /// Legacy palindromic Cas9 ABE target. Event calling is currently identical
+    /// to [`TargetType::Cas9ABE`].
     Cas9ABEPalindrome,
+    /// Programmed prime-edit target. Requires a [`PrimeEditSpec`] at the same
+    /// target index; raw differences are retained in `ce` and haplotype
+    /// classifications such as `PRECISE`, `PARTIAL`, and `INDEL` are written
+    /// to the `pe` BAM tag.
     PrimeEdit,
 }
 
