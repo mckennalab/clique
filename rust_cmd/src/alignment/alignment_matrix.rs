@@ -776,6 +776,62 @@ impl AlignmentResult {
             .set_data(data).build()
     }
 
+    /// Item B(ii): make an inversion-bearing alignment serializable in a single BAM
+    /// record. Walks the CIGAR, emits one McKenna indel-string event `<len>V+<pos>`
+    /// per inversion (0-based, ungapped reference coordinates), then rewrites the
+    /// CIGAR with the InversionOpen/InversionClose markers removed and adjacent ops
+    /// coalesced so `to_op()` never sees a marker. The inverted bases stay in
+    /// `read_aligned`/`reference_aligned` (shown aligned); the returned event
+    /// string(s) are the record of the inversion (emitted as the `iv` BAM tag).
+    pub fn take_inversion_events(&mut self) -> Vec<String> {
+        if !self
+            .cigar_string
+            .iter()
+            .any(|t| matches!(t, AlignmentTag::InversionOpen | AlignmentTag::InversionClose))
+        {
+            return Vec::new();
+        }
+        let mut events = Vec::new();
+        let mut cleaned: Vec<AlignmentTag> = Vec::new();
+        let mut ref_pos: usize = 0; // ungapped reference position (ref-consuming ops only)
+        let mut inv_start: Option<usize> = None;
+        for tag in &self.cigar_string {
+            match tag {
+                AlignmentTag::InversionOpen => inv_start = Some(ref_pos),
+                AlignmentTag::InversionClose => {
+                    if let Some(start) = inv_start.take() {
+                        events.push(format!("{}V+{}", ref_pos.saturating_sub(start), start));
+                    }
+                }
+                AlignmentTag::MatchMismatch(n) => {
+                    ref_pos += n;
+                    cleaned.push(*tag);
+                }
+                AlignmentTag::Del(n) => {
+                    ref_pos += n;
+                    cleaned.push(*tag);
+                }
+                AlignmentTag::Ins(_)
+                | AlignmentTag::SoftClip(_)
+                | AlignmentTag::HardClip(_) => cleaned.push(*tag),
+            }
+        }
+        // Coalesce adjacent same-variant ops (e.g. M(2) M(7) M(11) -> M(20)).
+        let mut merged: Vec<AlignmentTag> = Vec::with_capacity(cleaned.len());
+        for tag in cleaned {
+            match (merged.last_mut(), tag) {
+                (Some(AlignmentTag::MatchMismatch(a)), AlignmentTag::MatchMismatch(b)) => *a += b,
+                (Some(AlignmentTag::Del(a)), AlignmentTag::Del(b)) => *a += b,
+                (Some(AlignmentTag::Ins(a)), AlignmentTag::Ins(b)) => *a += b,
+                (Some(AlignmentTag::SoftClip(a)), AlignmentTag::SoftClip(b)) => *a += b,
+                (Some(AlignmentTag::HardClip(a)), AlignmentTag::HardClip(b)) => *a += b,
+                (_, t) => merged.push(t),
+            }
+        }
+        self.cigar_string = merged;
+        events
+    }
+
     #[allow(dead_code)]
     fn slice_out_inversions(&self) -> Vec<AlignmentResult> {
         let mut alignment_string1: Vec<u8> = Vec::new();
@@ -916,7 +972,24 @@ pub(crate) fn inversion_alignment(reference: &[u8], read: &[u8], reference_name:
 
     let mut long_enough_hits: HashMap<AlignmentLocation, BoundedAlignment> = HashMap::new();
     let rev_comp_read = reverse_complement(read);
-    perform_affine_alignment(&mut inversion_mat, reference, rev_comp_read.as_slice(), my_aff_score);
+
+    // The inverted-segment candidate search local-aligns `reference` against the
+    // reverse-complemented read. With lenient (main-alignment) gap penalties this
+    // over-extends through gaps into the flanks, producing many spurious gap-heavy
+    // candidates that outscore and obscure the clean, gapless true inversion — which
+    // is why detection failed once flanks grew beyond ~10 bp. A near-gapless scoring
+    // for the candidate search isolates the true inversion regardless of flank
+    // length (validated to 50 bp flanks). Match/mismatch are inherited; only gaps
+    // are hardened.
+    let candidate_score = AffineScoring {
+        match_score: my_aff_score.match_score,
+        mismatch_score: my_aff_score.mismatch_score,
+        special_character_score: my_aff_score.special_character_score,
+        gap_open: -5.0 * my_aff_score.match_score.abs(),
+        gap_extend: -2.0 * my_aff_score.match_score.abs(),
+        final_gap_multiplier: my_aff_score.final_gap_multiplier,
+    };
+    perform_affine_alignment(&mut inversion_mat, reference, rev_comp_read.as_slice(), &candidate_score);
 
     let mut aligned_inv: Option<AlignmentResult> = Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read.as_slice(), reference_name, read_name, None, None)); // TODO fix with quality scores
 
@@ -929,7 +1002,7 @@ pub(crate) fn inversion_alignment(reference: &[u8], read: &[u8], reference_name:
             let b_alignment = BoundedAlignment { alignment_result: converted_path, bounding_box: bounding };
             let true_position = AlignmentLocation { x: bounding.1.x, y: bounding.1.y };
             aligned_inv = if length >= inversion_score.min_inversion_length {
-                clean_and_find_next_best_match_3d(&mut inversion_mat, reference, rev_comp_read.as_slice(), my_aff_score, &aligned_inv_local);
+                clean_and_find_next_best_match_3d(&mut inversion_mat, reference, rev_comp_read.as_slice(), &candidate_score, &aligned_inv_local);
                 long_enough_hits.insert(true_position, b_alignment);
                 Some(perform_3d_global_traceback(&mut inversion_mat, None, reference, rev_comp_read.as_slice(), reference_name, read_name, None, None))// TODO fix with quality scores
             } else {

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
 use crate::alignment::alignment_matrix::{
-    create_scoring_record_3d, perform_3d_global_traceback, perform_affine_alignment,
+    create_scoring_record_3d, inversion_alignment, perform_3d_global_traceback, perform_affine_alignment,
     perform_affine_alignment_bandwidth, Alignment, AlignmentResult, AlignmentTag, AlignmentType,
 };
 use crate::alignment::scoring_functions::{AffineScoring, InversionScoring};
@@ -188,7 +188,7 @@ pub fn align_reads(
     index1: &String,
     index2: &String,
     threads: &usize,
-    _aligner: &RustAligner,
+    aligner: &RustAligner,
     use_discriminating: bool,
     discriminating_min_margin: usize,
     use_kmer_idf: bool,
@@ -216,13 +216,19 @@ pub fn align_reads(
         .build_global()
         .unwrap();
 
+    // Inversion scoring tuned for `--aligner inversion`. The legacy defaults
+    // (inversion_penalty -40 / min_inversion_length 20) never fired; these detect
+    // inversions of >= 8 bp. LIMITATION: the aligner's inversion candidate search
+    // degrades as the flanking match length grows, so detection is reliable only
+    // for short-flank contexts and is NOT yet dependable on long (>=~20 bp flank)
+    // amplicon reads — improving that is aligner-algorithm work beyond scoring.
     let my_score = InversionScoring {
-        match_score: 9.0,
-        mismatch_score: -21.0,
-        gap_open: -25.0,
-        gap_extend: -1.0,
-        inversion_penalty: -40.0,
-        min_inversion_length: 20,
+        match_score: 10.0,
+        mismatch_score: -11.0,
+        gap_open: -15.0,
+        gap_extend: -5.0,
+        inversion_penalty: -10.0,
+        min_inversion_length: 8,
     };
 
     let my_aff_score = AffineScoring {
@@ -233,6 +239,16 @@ pub fn align_reads(
         gap_extend: -2.0,
         final_gap_multiplier: 1.0,
     };
+
+    // Prototype (item A): `--aligner inversion` routes the final single-reference
+    // alignment through the inversion-aware aligner. Serializing an inversion CIGAR
+    // to BAM still requires item B, so this only surfaces inversions to callers that
+    // inspect the AlignmentResult (e.g. tests); a read that truly inverts will emit
+    // InversionOpen/InversionClose tags that to_sam_record cannot yet write.
+    let use_inversions = matches!(aligner, RustAligner::Inversion);
+    if use_inversions {
+        info!("Inversion-aware alignment enabled (--aligner inversion); note: single-reference path only, BAM serialization of inversions pending (item B)");
+    }
     let start = Instant::now();
     let counters = Arc::new(AlignmentCounters::default());
 
@@ -392,7 +408,7 @@ pub fn align_reads(
                     local_alignment.as_mut().unwrap(),
                     &my_aff_score,
                     &my_score,
-                    &false,
+                    &use_inversions,
                     *max_reference_multiplier as f64,
                     *min_read_length,
                     &seq_len,
@@ -430,8 +446,13 @@ pub fn align_reads(
                                 counters.failed.fetch_add(1, AtomicOrdering::Relaxed);
                                 debug!("Unable to create alignment for read {}", name);
                             }
-                            Some(aln) => {
+                            Some(mut aln) => {
                                 assert_eq!(aln.reference_aligned.len(), aln.read_aligned.len());
+
+                                // Item B(ii): flatten inversion markers out of the CIGAR into
+                                // `<len>V+<pos>` events (emitted below as the `iv` tag) so the
+                                // read serializes to a single, standard BAM record.
+                                let inversion_events = aln.take_inversion_events();
 
                                 let read = SortingReadSetContainer::empty_tags(aln);
 
@@ -515,6 +536,12 @@ pub fn align_reads(
                                         crate::consensus::consensus_builders::PRIME_EDIT_TAG,
                                         prime_edits,
                                     );
+                                }
+
+                                // Item B(ii): called inversions as `iv:Z:<len>V+<pos>` (0-based,
+                                // ungapped reference coordinates; multiple joined by `&`).
+                                if !inversion_events.is_empty() {
+                                    added_tags.insert([b'i', b'v'], inversion_events.join("&"));
                                 }
 
                                 let output = Arc::clone(&output);
@@ -1072,8 +1099,8 @@ pub fn align_to_reference_choices(
     read_structure: &SequenceLayout,
     alignment_mat: &mut Alignment<Ix3>,
     my_aff_score: &AffineScoring,
-    _my_score: &InversionScoring,
-    _use_inversions: &bool,
+    my_score: &InversionScoring,
+    use_inversions: &bool,
     _max_reference_multiplier: f64,
     min_read_length: usize,
     _max_indel: &usize,
@@ -1155,27 +1182,48 @@ pub fn align_to_reference_choices(
                 (read.clone(), qual_sequence)
             };
 
-            let alignment = rust_bio_alignment(&ref_base.sequence, &forward_oriented_seq, &4, &10, &1).0;
-            //println!("{}", alignment);
+            let result = if *use_inversions {
+                // Prototype (item A): route the final single-reference alignment
+                // through the inversion-aware aligner. It returns an AlignmentResult
+                // whose CIGAR may carry InversionOpen/InversionClose markers when it
+                // finds an inversion at least `min_inversion_length` long.
+                // NOTE: inversion_alignment does not yet thread quality scores, and
+                // BAM serialization of an inversion CIGAR is item B, so a read that
+                // actually inverts will produce tags to_sam_record cannot write.
+                let mut inv = inversion_alignment(
+                    &ref_base.sequence,
+                    &forward_oriented_seq,
+                    &ref_name,
+                    read_name,
+                    my_score,
+                    my_aff_score,
+                    false,
+                );
+                inv.read_quals = oriented_quals;
+                inv
+            } else {
+                let alignment = rust_bio_alignment(&ref_base.sequence, &forward_oriented_seq, &4, &10, &1).0;
+                //println!("{}", alignment);
 
-            let alignment = cigar_to_alignment(
-                &ref_base.sequence,
-                &forward_oriented_seq,
-                &alignment,
-            );
+                let alignment = cigar_to_alignment(
+                    &ref_base.sequence,
+                    &forward_oriented_seq,
+                    &alignment,
+                );
 
-            let result = AlignmentResult {
-                reference_name: ref_name.clone(),
-                read_name: read_name.clone(),
-                reference_aligned: alignment.0,
-                read_aligned: alignment.1,
-                read_quals: oriented_quals,
-                cigar_string: alignment.2,
-                path: vec!(),
-                score: 0.0,
-                reference_start: 0,
-                read_start: 0,
-                bounding_box: None,
+                AlignmentResult {
+                    reference_name: ref_name.clone(),
+                    read_name: read_name.clone(),
+                    reference_aligned: alignment.0,
+                    read_aligned: alignment.1,
+                    read_quals: oriented_quals,
+                    cigar_string: alignment.2,
+                    path: vec!(),
+                    score: 0.0,
+                    reference_start: 0,
+                    read_start: 0,
+                    bounding_box: None,
+                }
             };
 
 
@@ -1201,7 +1249,7 @@ pub fn align_to_reference_choices(
             })
         }
         x if x > 1 => {
-            if read_structure.known_strand {
+            let base = if read_structure.known_strand {
                 search_multiple_references(
                     read_name,
                     read,
@@ -1247,6 +1295,38 @@ pub fn align_to_reference_choices(
                 );
 
                 select_best_alignment(forward, reverse_complemented)
+            };
+
+            // Item A (multi-reference): once a router has chosen the reference, re-align
+            // the read to that reference with the inversion-aware aligner and swap the
+            // result in, preserving the router confidence tags. The read is taken in the
+            // orientation the router settled on (read_aligned with gaps removed).
+            if *use_inversions {
+                base.map(|mut awr| {
+                    if let Some(existing) = awr.alignment.take() {
+                        let oriented_read: Vec<u8> = existing
+                            .read_aligned
+                            .iter()
+                            .filter(|b| **b != FASTA_UNSET)
+                            .cloned()
+                            .collect();
+                        let ref_name = String::from_utf8(awr.ref_name.clone()).unwrap();
+                        let mut inv = inversion_alignment(
+                            &awr.ref_sequence,
+                            &oriented_read,
+                            &ref_name,
+                            read_name,
+                            my_score,
+                            my_aff_score,
+                            false,
+                        );
+                        inv.read_quals = existing.read_quals.clone();
+                        awr.alignment = Some(inv);
+                    }
+                    awr
+                })
+            } else {
+                base
             }
         }
         x => {
@@ -1698,6 +1778,93 @@ mod tests {
         .unwrap()
         .alignment
         .unwrap()
+    }
+
+    /// Item A prototype helper: single forward reference, inversion-aware dispatch on.
+    fn align_single_forward_with_inversions(reference: &str, read: Vec<u8>) -> AlignmentResult {
+        let mut references = BTreeMap::new();
+        references.insert(
+            "reference".to_string(),
+            ReferenceRecord {
+                sequence: reference.to_string(),
+                umi_configurations: BTreeMap::new(),
+                targets: vec![],
+                target_types: vec![],
+                target_locations: None,
+                prime_edits: BTreeMap::new(),
+            },
+        );
+        let layout = SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 {
+                orientation: AlignedReadOrientation::Forward,
+            }],
+            known_strand: true,
+            references,
+        };
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let mut alignment_matrix = create_scoring_record_3d(
+            reference_manager.longest_ref + 1,
+            read.len() + 1,
+            AlignmentType::Affine,
+            false,
+        );
+        // Lenient inversion scoring (matches the known-good aligner unit tests) so a
+        // short synthetic inversion is reliably detected; production tuning lives in
+        // align_reads.
+        let inversion_score = InversionScoring {
+            match_score: 10.0,
+            mismatch_score: -11.0,
+            gap_open: -15.0,
+            gap_extend: -5.0,
+            inversion_penalty: -2.0,
+            min_inversion_length: 4,
+        };
+        align_to_reference_choices(
+            &"read".to_string(),
+            &read,
+            None,
+            &reference_manager,
+            &false,
+            &layout,
+            &mut alignment_matrix,
+            &AffineScoring::default_dna(),
+            &inversion_score,
+            &true, // use_inversions -> route to the inversion-aware aligner
+            2.0,
+            0,
+            &read.len(),
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .alignment
+        .unwrap()
+    }
+
+    #[test]
+    fn test_inversion_aligner_dispatch_detects_inverted_segment() {
+        // Item A prototype: with use_inversions = true (the `--aligner inversion`
+        // flag), the single-reference path routes to the inversion-aware aligner,
+        // which should detect a reverse-complemented internal block and mark it with
+        // InversionOpen/InversionClose. The plain affine path never emits those tags.
+        // Known-good inversion fixture from the aligner unit tests: the read's
+        // internal block is reverse-complemented relative to the reference.
+        let reference = "CCAATCTACTACTGCTTGCA";
+        let read = b"CCGTAGATTTACTGCTTGCA".to_vec();
+
+        let alignment = align_single_forward_with_inversions(reference, read);
+
+        let has_inversion = alignment.cigar_string.iter().any(|tag| {
+            matches!(tag, AlignmentTag::InversionOpen | AlignmentTag::InversionClose)
+        });
+        assert!(
+            has_inversion,
+            "inversion-aware dispatch should mark the inverted block; cigar = {:?}",
+            alignment.cigar_string
+        );
     }
 
     #[test]
@@ -2192,6 +2359,81 @@ mod tests {
         assert_eq!(read_aln, read);
         // Subst is treated as MatchMismatch, so all merge to M(4)
         assert_eq!(tags, vec![AlignmentTag::MatchMismatch(4)]);
+    }
+
+    #[test]
+    fn test_inversion_detected_with_long_flanks() {
+        // Regression for the long-flank detection fix: the candidate search uses a
+        // near-gapless scoring so inversions are detected even with realistic
+        // amplicon-length flanks (previously failed beyond ~10 bp of flank).
+        let sc = InversionScoring{match_score:10.0,mismatch_score:-11.0,gap_open:-15.0,gap_extend:-5.0,inversion_penalty:-10.0,min_inversion_length:8};
+        let aff = AffineScoring::default_dna();
+        let bank = b"GCCTCCACGGCCACTAGTATTATGCCCAGTACATGACCTTATGGGACTTTCCTACTTGGCAGTACATCTACGTATTAGTCATCGCTATTACCATGTACTCA";
+        for &(flank, midlen) in [(20usize, 20usize), (20, 25), (50, 25)].iter() {
+            let mid = &bank[flank..flank + midlen];
+            let f1 = &bank[0..flank];
+            let f2 = &bank[flank + midlen..(flank + midlen + 20).min(bank.len())];
+            let reference: Vec<u8> = [f1, mid, f2].concat();
+            let read: Vec<u8> = [f1, reverse_complement(&mid.to_vec()).as_slice(), f2].concat();
+            let res = crate::alignment::alignment_matrix::inversion_alignment(
+                &reference, &read, &"r".to_string(), &"q".to_string(), &sc, &aff, false,
+            );
+            let detected = res.cigar_string.iter().any(|t| {
+                matches!(t, AlignmentTag::InversionOpen | AlignmentTag::InversionClose)
+            });
+            assert!(
+                detected,
+                "inversion not detected at flank={} midlen={}; cigar={:?}",
+                flank, midlen, res.cigar_string
+            );
+        }
+    }
+
+    #[test]
+    fn test_inversion_flattened_to_iv_event_and_serializes() {
+        // Item B(ii): a detected inversion is flattened to an `iv` event and the
+        // record serializes to a single BAM line (no to_op panic). Uses a
+        // short-flank fixture the aligner reliably detects.
+        let bank = b"GCCTCCACGGCCACTAGTATTATGCCCAGTACATGACCTTATGGGACTTT";
+        let (flank, midlen) = (5usize, 20usize);
+        let mid = &bank[flank..flank + midlen];
+        let f1 = &bank[0..flank];
+        let f2 = &bank[flank + midlen..flank + midlen + 15];
+        let reference: Vec<u8> = [f1, mid, f2].concat();
+        let read: Vec<u8> = [f1, reverse_complement(&mid.to_vec()).as_slice(), f2].concat();
+
+        let mut alignment = align_single_forward_with_inversions(
+            std::str::from_utf8(&reference).unwrap(),
+            read,
+        );
+        // detection produced inversion markers
+        assert!(
+            alignment.cigar_string.iter().any(|t| matches!(
+                t,
+                AlignmentTag::InversionOpen | AlignmentTag::InversionClose
+            )),
+            "expected inversion markers before flattening; cigar = {:?}",
+            alignment.cigar_string
+        );
+        // flatten -> `<len>V+<pos>` event(s), marker-free coalesced cigar
+        let events = alignment.take_inversion_events();
+        assert!(!events.is_empty(), "expected an inversion event");
+        assert!(
+            events[0].contains("V+"),
+            "event should be <len>V+<pos>, got {:?}",
+            events
+        );
+        assert!(
+            !alignment.cigar_string.iter().any(|t| matches!(
+                t,
+                AlignmentTag::InversionOpen | AlignmentTag::InversionClose
+            )),
+            "flattened cigar must be marker-free; cigar = {:?}",
+            alignment.cigar_string
+        );
+        // serializes to a single BAM record without panicking on the inversion tags
+        let _record =
+            alignment.to_sam_record(&0, &std::collections::HashMap::new(), None);
     }
 
 }
