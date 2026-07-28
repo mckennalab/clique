@@ -273,7 +273,6 @@ impl AlignmentCandidate {
         }
     }
 
-    // TODO this is broken: quals and gaps aren't handled right
     pub fn add_alignment(&mut self, alignment: &AlignmentResult) -> Result<(), String> {
         let mut existing_index = 0;
         let mut incoming_ref_index = 0;

@@ -266,7 +266,6 @@ impl SequenceCorrector {
             1 => {
                 let mut knowns: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
 
-                // TODO: wrong for known list
                 // case 1 -- manually create the known list -- pad if too short
                 // Key the correction exactly as `add_corrected` looks it up: gapless, resized to
                 // `tag.length` (pad short, TRUNCATE long). Otherwise a tag longer than `tag.length`
