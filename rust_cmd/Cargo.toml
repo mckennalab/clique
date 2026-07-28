@@ -48,6 +48,10 @@ gb-io = "*"
 rust-htslib = "*"
 rust_star = { git = "https://github.com/mckennalab/ruststarcode.git"}
 
+[dev-dependencies]
+flate2 = "1.0.23"
+tempfile = "3"
+
 [build-dependencies]
 bindgen = "0.60.1"
 cmake = "0.1"
