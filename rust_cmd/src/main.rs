@@ -179,8 +179,8 @@ mod reference {
     pub mod router_benchmark;
 }
 
-/// Aligner selection. Currently informational: the affine-gap aligner is used
-/// regardless of this choice.
+/// Final alignment mode. WFA and Degenerate use the standard affine/global
+/// path; Inversion enables experimental inversion-aware alignment.
 #[derive(Debug, Default, Clone, ValueEnum)]
 enum Aligner {
     #[default]
@@ -278,7 +278,8 @@ enum Cmd {
         #[clap(long, default_value_t = 1)]
         threads: usize,
 
-        /// Aligner selection (currently informational).
+        /// Final alignment mode (`degenerate` currently aliases `wfa`;
+        /// `inversion` is experimental).
         #[clap(long, arg_enum, default_value_t = Aligner::WFA)]
         aligner: Aligner,
 
