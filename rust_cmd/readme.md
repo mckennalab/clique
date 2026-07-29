@@ -199,7 +199,7 @@ Companion records must have matching canonical read names. Standard `/1` and
 | --- | --- | --- |
 | `--min-read-length <N>` | `50` | Drop an assembled read shorter than `N` bases before reference alignment. |
 | `--max-reference-multiplier <N>` | `2` | Drop an assembled read whose length is greater than or equal to `(longest reference + 1) * N`. |
-| `--aligner <MODE>` | `wfa` | Select the final alignment mode. Values are `wfa`, `degenerate`, and `inversion`. |
+| `--aligner <MODE>` | `wfa` | Select the final alignment mode. Values are `wfa`, `degenerate`, `inversion`, and `convex`. |
 
 Current aligner behavior:
 
@@ -208,6 +208,7 @@ Current aligner behavior:
 | `wfa` | Default standard affine/global alignment path. |
 | `degenerate` | Currently follows the same non-inversion alignment path as `wfa`; it is retained for CLI compatibility. |
 | `inversion` | Enables experimental inversion-aware final alignment. Called inversions are flattened into an `iv` tag so the result remains a standard single BAM record. Validate this mode against controls before production use. |
+| `convex` | Global alignment with a convex (logarithmic) gap penalty, `gap_open + gap_extend * ln(length)`, instead of the affine penalty. A single long indel is preferred over several short gaps, which suits large CRISPR deletions/insertions. It runs in `O(n * m * (n + m))` per read, so it is slower than the affine path; the output is a standard BAM record with no extra tag. |
 
 Digits used as capture placeholders and `N` bases are treated as compatible
 with any read base during alignment. They do not require the read to contain
