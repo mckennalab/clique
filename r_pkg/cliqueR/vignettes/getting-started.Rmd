@@ -1,0 +1,296 @@
+---
+title: "Getting started with cliqueR"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with cliqueR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+`cliqueR` provides R-side configuration, execution, import, and analysis tools
+for the `clique` Rust CLI. The CLI does the compute-intensive work: reference
+assignment, alignment, capture extraction/correction, consensus generation,
+and CRISPR event calling.
+
+```{r}
+library(cliqueR)
+```
+
+## Prerequisites
+
+Build the CLI from the repository root:
+
+```sh
+cargo build --release --manifest-path rust_cmd/Cargo.toml
+export CLIQUE_BIN="$PWD/rust_cmd/target/release/clique"
+```
+
+Install `samtools` separately. Pipeline scripts use it to sort and index BAMs,
+and `read_longread_lineage()` uses `samtools view` to stream records into R.
+
+Check which executable R will use:
+
+```{r}
+clique_binary()
+
+# Override discovery for this R session, if needed.
+set_clique_binary("/absolute/path/to/clique")
+```
+
+## Create a read-structure YAML
+
+A read structure embeds each reference amplicon, target sequence, target
+chemistry, read orientation, and capture/UMI layout. For a basic layout, create
+it from FASTA records and a target table:
+
+```{r}
+targets <- data.frame(
+  target = c(
+    "GACGGCTATACAAGGCATCGCGG",
+    "CTCGTCAATACACCTTACGGAGG"
+  ),
+  type = c("Cas9WT", "Cas9ABE")
+)
+
+matches <- fasta_targets_to_yaml(
+  fasta_file = "amplicons.fa",
+  targets = targets,
+  output_file = "read_structure.yaml",
+  merge = "ConcatenateBothForward",
+  known_strand = TRUE,
+  reads = list(
+    list(type = "Read1", orientation = "Forward"),
+    list(type = "Read2", orientation = "ReverseComplement")
+  )
+)
+```
+
+The helper searches both strands and writes only target strings that occur in
+the forward reference. It reports which references contain each target.
+
+The generated file is a starting point. Edit it directly when the experiment
+needs:
+
+- `umi_configurations` for known or degenerate captures;
+- `target_locations` to select a repeated target occurrence;
+- `prime_edits` specifications;
+- index reads or spacers; or
+- per-reference differences that cannot be inferred from the FASTA.
+
+The full schema is documented in the Rust CLI README. Validate a finished
+layout before a large run by processing a small read subset.
+
+## Generate an align/collapse run
+
+The current recommended high-level path is `generate_clique_script()`. It
+writes a shell script so the complete command, input paths, and parameters can
+be inspected and retained with an analysis.
+
+```{r}
+generate_clique_script(
+  read_structure = "read_structure.yaml",
+  reference = "amplicons.fa",
+  read1 = "sample_R1.fastq.gz",
+  read2 = "sample_R2.fastq.gz",
+  output_script = "run_sample.sh",
+  output_dir = "results",
+  sample_name = "sample",
+  threads = 8,
+  collapse = TRUE
+)
+```
+
+Run it from a shell:
+
+```sh
+bash run_sample.sh
+```
+
+For `sample_name = "sample"` and `collapse = TRUE`, the script produces:
+
+| Output | Description |
+| --- | --- |
+| `results/sample.aligned.bam` | Direct `clique align` output |
+| `results/sample.sorted.bam` | Coordinate-sorted alignment |
+| `results/sample.sorted.bam.bai` | Index used by region-aware tools |
+| `results/sample.consensus.bam` | One consensus per retained molecule group |
+
+Set `correct_only = TRUE` to correct capture tags without generating
+consensuses. Set `execute = TRUE` only when the R process should run the script
+immediately.
+
+The typed `align()` and `collapse()` functions are reserved APIs in this
+development version and currently error. Use the script generator or
+`clique_run()` instead.
+
+## Use CLI flags not exposed by the generator
+
+`clique_run()` accepts one subcommand and a named list:
+
+```{r}
+result <- clique_run("collapse", list(
+  input_bam_file = "results/sample.sorted.bam",
+  output_bam_file = "results/sample.consensus.bam",
+  read_structure = "read_structure.yaml",
+  threads = 8L,
+  maximum_reads_before_downsampling = 100L,
+  correct_only = FALSE
+))
+
+result$status
+result$command
+```
+
+Underscores in names become dashes, so `input_bam_file` becomes
+`--input-bam-file`. `TRUE` creates a bare flag; `FALSE`, `NULL`, and `NA` are
+omitted. A nonzero process exit raises an R error containing the end of stderr.
+
+## Read a clique BAM
+
+Select the tags needed for the analysis explicitly:
+
+```{r}
+reads <- read_longread_lineage(
+  "results/sample.consensus.bam",
+  tags = c("e0", "e1", "ce", "pe", "rc", "dc", "ar")
+)
+
+head(reads)
+```
+
+The result contains `read_name`, `reference`, and one character column per tag.
+Missing tags are `NA`. Convert numeric tags before summarizing:
+
+```{r}
+reads$rc <- as.integer(reads$rc)
+reads$dc <- as.integer(reads$dc)
+
+aggregate(rc ~ reference, reads, sum)
+```
+
+Use `region = "reference_name"` to import one reference from an indexed BAM.
+When `tags = NULL`, the function discovers tags from the first record only;
+explicit selection is safer for optional annotations such as `pe`.
+
+See `vignette("bam-output", package = "cliqueR")` for the tag contract and
+event encodings.
+
+## Build a cell-by-target character matrix
+
+The `ce` tag contains one event field per configured target. Group records by a
+capture tag such as `e0`:
+
+```{r}
+characters <- build_indel_matrix(
+  reads,
+  sites = c("target_1", "target_2"),
+  cell_col = "e0",
+  event_col = "ce",
+  missing_threshold = 0.5
+)
+
+characters$matrix
+characters$state_map
+```
+
+At each target, `NONE` is state `0`, distinct edited alleles receive positive
+integer states, and missing calls are `-1`. If a cell has multiple records,
+the majority event string is selected independently at each target.
+
+## Reconstruct a tree
+
+For a fast exploratory tree, compute clique's missing-aware Hamming distance
+and use neighbor-joining:
+
+```{r}
+distance <- indel_distance(characters$matrix)
+tree <- tree_nj(distance, method = "bionj")
+```
+
+The package also supports unordered parsimony in R and four optional external
+backends:
+
+```{r}
+# Unordered maximum parsimony with phangorn
+parsimony_tree <- tree_parsimony(characters$matrix)
+
+# IQ-TREE 2 maximum likelihood (MORPH/MK model)
+iqtree <- tree_iqtree(
+  characters$matrix,
+  model = "MK+FQ",
+  threads = 8,
+  output_prefix = "results/sample.iqtree"
+)
+
+# VINE variational inference; request access to posterior samples
+vine_tree <- tree_vine(
+  characters$matrix,
+  threads = 8,
+  nsamples = 500,
+  return_posterior = TRUE,
+  output_prefix = "results/sample.vine"
+)
+vine_samples <- attr(vine_tree, "clique_posterior")
+
+# Cassiopeia through reticulate
+cassiopeia_tree <- tree_cassiopeia(
+  characters$matrix,
+  solver = "greedy"
+)
+
+# PHYLIP MIX with irreversible edit gains
+mix_tree <- tree_mix(
+  characters$matrix,
+  method = "camin-sokal",
+  output_prefix = "results/sample.mix"
+)
+```
+
+| Function | Inference | Dependency and constraints |
+| --- | --- | --- |
+| `tree_nj()` | NJ/BIONJ on clique distances | R package `ape` |
+| `tree_parsimony()` | Unordered parsimony ratchet | R packages `ape`, `phangorn` |
+| `tree_iqtree()` | Maximum likelihood | IQ-TREE 2; maximum 32 observed states per site |
+| `tree_vine()` | Variational Bayesian CRISPR model | VINE; ultrametric; mean tree plus optional posterior samples |
+| `tree_cassiopeia()` | Greedy, ILP, hybrid, UPGMA, or NJ | Python Cassiopeia; ILP needs Gurobi |
+| `tree_mix()` | Camin-Sokal or Wagner parsimony | PHYLIP MIX; edit states are one-hot expanded |
+
+Every default result is an `ape::phylo` whose tips are the original cell names.
+Set `output_prefix` for external command wrappers when the converted inputs,
+logs, posterior samples, or native outputs should be retained. Without it,
+temporary files are removed after the tree is imported.
+
+## Plot a tree
+
+Any of the trees above can be visualized through the same interface:
+
+```{r}
+
+cell_metadata <- data.frame(
+  cell_barcode = rownames(characters$matrix),
+  week = c("week0", "week1", "week2", "week3")
+)
+
+plot_lineage_tree(
+  tree,
+  annotations = cell_metadata,
+  mapping_column = "cell_barcode",
+  columns = "week",
+  layout = "circular",
+  tip_labels = FALSE
+)
+```
+
+`tree_nj()` requires the optional CRAN package `ape`. Tree plotting requires
+`ggplot2`, `ggtree`, and, for annotation rings, `ggnewscale`.
+
+Tree-comparison metrics and 10x/CellRanger import remain documented reserved
+APIs and are not implemented in this development release.

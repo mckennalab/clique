@@ -1,0 +1,263 @@
+---
+title: "cliqueR workflow playground"
+output:
+  html_notebook:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", warning = FALSE, message = FALSE)
+```
+
+This notebook walks the **R-side lineage-tracing workflow** end to end on the
+`clique` toolkit:
+
+```
+GenBank ──clique genbank-to-yaml──▶ read-structure YAML
+FASTQ  ──clique align────────────▶ BAM with `ce` (called-edit) tags
+BAM    ──read_longread_lineage───▶ per-read table
+table  ──build_indel_matrix──────▶ cell × site character matrix
+matrix ──indel_distance──────────▶ distance ──tree_nj──▶ lineage tree
+```
+
+Run it chunk by chunk in RStudio. The steps that call the Rust binary skip
+themselves gracefully if the binary or the example data isn't present, and the
+final synthetic example always runs so you can poke at the tree-building on its
+own.
+
+# 1. Setup
+
+Adjust `repo_dir` if this notebook isn't sitting in
+`r_pkg/cliqueR/inst/examples/` of the clique monorepo.
+
+```{r paths}
+repo_dir <- normalizePath("../../../..", mustWork = FALSE)  # repo root
+rust_dir <- file.path(repo_dir, "rust_cmd")
+pkg_dir  <- file.path(repo_dir, "r_pkg", "cliqueR")
+
+# Example data shipped with the Rust tree (used in sections 3–5).
+read_structure <- file.path(rust_dir, "2026_02_08_maryam_RNF2_none_left_right.yml")
+read1_full     <- file.path(rust_dir, "pR_NLR_8_S3_R1_001.fastq.gz")
+
+# A scratch directory for generated files.
+work_dir <- file.path(tempdir(), "cliqueR-play")
+dir.create(work_dir, showWarnings = FALSE)
+c(repo_dir = repo_dir, rust_dir = rust_dir, work_dir = work_dir)
+```
+
+Load `cliqueR` (installed if available, otherwise straight from the source
+tree via `pkgload`):
+
+```{r load-pkg}
+# Prefer the live source tree so you always get the current code; fall back to
+# an installed cliqueR.
+if (dir.exists(pkg_dir) && requireNamespace("pkgload", quietly = TRUE)) {
+  pkgload::load_all(pkg_dir, quiet = TRUE)
+} else {
+  library(cliqueR)
+}
+```
+
+Point `cliqueR` at the `clique` binary. It searches `CLIQUE_BIN`, then `PATH`,
+then `rust_cmd/target/release/clique`; here we also fall back to a debug build.
+
+```{r binary}
+if (!nzchar(Sys.getenv("CLIQUE_BIN"))) {
+  cands <- file.path(rust_dir, "target", c("release", "debug"), "clique")
+  hit <- cands[file.exists(cands)]
+  if (length(hit)) set_clique_binary(hit[1])
+}
+
+# TRUE if we can actually run the CLI sections below.
+run_cli <- tryCatch({ clique_binary(); TRUE }, error = function(e) FALSE) &&
+  file.exists(read_structure) && file.exists(read1_full)
+
+if (run_cli) {
+  message("clique binary: ", clique_binary())
+} else {
+  message("CLI sections will be skipped. Build the binary with: ",
+          "cd rust_cmd && cargo build --release")
+}
+```
+
+# 2. GenBank → read-structure YAML
+
+`clique genbank-to-yaml` turns an annotated GenBank file into the read-structure
+YAML the pipeline needs. A feature is picked up when a tag (default
+`lineage_target`) appears in its name; UMI/barcode parameters and CRISPR target
+types are read from `/clique_*` qualifiers. Here we write a tiny GenBank record
+and convert it.
+
+```{r genbank}
+demo_gb <- file.path(work_dir, "demo.gb")
+demo_yaml <- file.path(work_dir, "demo.yaml")
+
+writeLines(c(
+  "LOCUS       demo_amplicon             90 bp    DNA     linear   SYN 07-JUL-2026",
+  "FEATURES             Location/Qualifiers",
+  "     misc_feature    1..16",
+  "                     /label=\"lineage_target cell barcode\"",
+  "                     /clique_sort_type=\"KnownTag\"",
+  "                     /clique_max_distance=\"2\"",
+  "     misc_feature    17..28",
+  "                     /label=\"lineage_target umi\"",
+  "                     /clique_sort_type=\"DegenerateTag\"",
+  "     misc_feature    30..52",
+  "                     /label=\"lineage_target guide1\"",
+  "                     /clique_type=\"Cas9WT\"",
+  "     misc_feature    60..82",
+  "                     /label=\"lineage_target guide2 Cas9ABE\"",
+  "ORIGIN",
+  "        1 aaaaaaaaaa aaaaaacccc ccccccccgG ACGGCTATAC AAGGCATCGC GGTTTTTTTC",
+  "       61 TCGTCAATAC ACCTTACGGA GGAAAAAAAA",
+  "//"
+), demo_gb)
+
+if (run_cli) {
+  clique_run("genbank-to-yaml", list(
+    genbank        = demo_gb,
+    output         = demo_yaml,
+    reference_name = "demo"
+  ), echo = FALSE)
+  cat(readLines(demo_yaml), sep = "\n")
+} else {
+  message("skipped (no binary)")
+}
+```
+
+The barcode and UMI spans come back as symbol runs (`0000…`, `1111…`) in the
+reference sequence — that's how the Rust extractor locates them.
+
+# 3. Align reads → BAM
+
+We align a small subset of the RNF2 example reads (a base-editing amplicon with
+three near-identical references: `unedited`, `left`, `right`). Subsetting keeps
+the demo fast; drop `n_reads` or point `read1_full` at your own FASTQ to scale
+up.
+
+```{r subset-fastq}
+subset_fastq <- function(in_gz, out_gz, n_reads = 3000) {
+  ci <- gzfile(in_gz, "rt"); on.exit(close(ci), add = TRUE)
+  co <- gzfile(out_gz, "wt"); on.exit(close(co), add = TRUE)
+  writeLines(readLines(ci, n = n_reads * 4L), co)
+  out_gz
+}
+
+sub_fq      <- file.path(work_dir, "sub_R1.fastq.gz")
+aligned_bam <- file.path(work_dir, "aligned.bam")
+
+if (run_cli) {
+  subset_fastq(read1_full, sub_fq, n_reads = 3000)
+  clique_run("align", list(
+    read1           = sub_fq,
+    read_structure  = read_structure,
+    output_bam_file = aligned_bam,
+    threads         = 2
+  ), echo = FALSE)
+  message("wrote ", aligned_bam, " (", file.size(aligned_bam), " bytes)")
+} else {
+  message("skipped (no binary/data)")
+}
+```
+
+# 4. Read the BAM into R
+
+`read_longread_lineage()` streams the BAM through `samtools` and pulls the aux
+tags. The one we care about is `ce` — the called-edit string per read.
+
+```{r read-bam}
+have_bam <- run_cli && file.exists(aligned_bam) && nzchar(Sys.which("samtools"))
+if (have_bam) {
+  lineage <- read_longread_lineage(aligned_bam, tags = c("ce"))
+  cat("reads:", nrow(lineage), "\n")
+  print(head(lineage, 4))
+  cat("\nCalled-edit (ce) distribution — these are the ABE base edits:\n")
+  print(head(sort(table(lineage$ce), decreasing = TRUE), 8))
+} else {
+  message("skipped (need a BAM and samtools on PATH)")
+}
+```
+
+Each `ce` value is `_`-joined per target site; each site is `NONE` or
+`&`-joined events like `1S+108+G` (an A→G base edit at reference position 108).
+
+# 5. Indel matrix → tree (real data)
+
+```{r real-tree, fig.width = 7, fig.height = 5}
+if (have_bam) {
+  # These references carry a single target, so the tree here is illustrative
+  # (one site). Take a handful of reads spanning distinct edit states so the
+  # plot stays legible; each read is treated as its own "cell".
+  demo_reads <- lineage[!duplicated(lineage$ce), ]
+  demo_reads <- head(demo_reads, 12)
+
+  im <- build_indel_matrix(demo_reads)            # cell x site integer matrix
+  cat("matrix:", nrow(im$matrix), "cells x", ncol(im$matrix), "site(s)\n")
+  print(im$state_map[[1]])                         # edit string -> integer state
+
+  d  <- indel_distance(im$matrix)
+  tr <- tree_nj(d)
+  plot(tr, cex = 0.6, main = "RNF2 subset (single-site, illustrative)")
+} else {
+  message("skipped (no BAM)")
+}
+```
+
+# 6. A richer, self-contained example
+
+Real lineage trees come from **many cut sites across many cells**. This block
+needs no binary — it hand-builds a per-read table (as if it came from section 4)
+with 3 sites and a nested clade structure, including a cell with several reads to
+show majority-vote consensus.
+
+```{r synthetic-tree, fig.width = 7, fig.height = 5}
+lineage_syn <- data.frame(
+  read_name = c("A1a", "A1b", "A1c", "A2", "A3",
+                "B1", "B2", "B3", "C1", "C2"),
+  cell      = c("A1", "A1", "A1", "A2", "A3",
+                "B1", "B2", "B3", "C1", "C2"),
+  reference = "amplicon",
+  ce = c(
+    "8D+12_2I+30+AC_NONE",   # A1 read 1
+    "8D+12_2I+30+AC_NONE",   # A1 read 2 (agrees)
+    "8D+12_NONE_NONE",       # A1 read 3 (site2 dropout -> outvoted)
+    "8D+12_2I+30+AC_NONE",   # A2
+    "8D+12_NONE_NONE",       # A3
+    "NONE_NONE_5D+50",       # B1
+    "NONE_NONE_5D+50",       # B2
+    "NONE_NONE_NONE",        # B3 (all reference)
+    "3D+11_NONE_5D+50",      # C1
+    "3D+11_NONE_NONE"        # C2
+  ),
+  stringsAsFactors = FALSE
+)
+
+im  <- build_indel_matrix(lineage_syn, cell_col = "cell",
+                          sites = c("site1", "site2", "site3"))
+im$matrix
+lapply(im$state_map, identity)
+
+d   <- indel_distance(im$matrix)
+tr  <- tree_nj(d, method = "bionj")
+plot(tr, cex = 0.9, main = "Synthetic 3-site lineage")
+```
+
+Cell `A1` had three reads; the majority call (`8D+12_2I+30+AC_NONE`) wins, so its
+site-2 dropout read doesn't skew the matrix.
+
+# 7. Where to go next
+
+The `tr` object is a standard `ape::phylo` (Newick-serializable with
+`ape::write.tree(tr)`), which is exactly what the downstream tools consume:
+
+- **SCOUT** (`hrstuart/SCOUT`) — Ornstein–Uhlenbeck modelling of gene expression
+  along the tree; feed it `write.tree(tr)` plus a per-cell expression CSV.
+- **Cassiopeia** — swap `tree_nj()` for `tree_cassiopeia(im$matrix, ...)` once
+  that wrapper is wired up (Python via reticulate).
+- **PATH** — trait-heritability testing on the same tree.
+
+To scale to real single-cell data, use a read structure with a cell-barcode UMI
+(so reads carry an `e0`-style tag) and pass `cell_col = "e0"` to
+`build_indel_matrix()`; reads then collapse to one row per cell.
+```

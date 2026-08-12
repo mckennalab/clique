@@ -1,0 +1,74 @@
+url: ~
+template:
+  bootstrap: 5
+
+reference:
+  - title: Binary discovery
+    desc: Locate and override the `clique` Rust executable.
+    contents:
+      - clique_binary
+      - set_clique_binary
+
+  - title: Low-level CLI
+    desc: Direct invocation of any clique subcommand.
+    contents:
+      - clique_run
+
+  - title: Configuration and execution
+    desc: Build read structures and reproducible pipeline scripts.
+    contents:
+      - fasta_targets_to_yaml
+      - generate_clique_script
+
+  - title: Reserved pipeline wrappers
+    desc: Planned typed wrappers; not implemented in this development release.
+    contents:
+      - align
+      - collapse
+
+  - title: IO
+    desc: Parse clique output for downstream analysis.
+    contents:
+      - read_longread_lineage
+
+  - title: Reserved 10x import
+    desc: Planned Cell Ranger integration; not implemented in this development release.
+    contents:
+      - read_10x_lineage
+
+  - title: Indel character matrix
+    desc: Convert per-cell consensus alignments into solver-ready matrices.
+    contents:
+      - build_indel_matrix
+      - indel_distance
+
+  - title: Tree reconstruction
+    desc: Build trees in R or through optional external backends.
+    contents:
+      - build_trees
+      - tree_nj
+      - tree_parsimony
+      - tree_mix
+      - tree_iqtree
+      - tree_vine
+      - tree_cassiopeia
+
+  - title: Visualization
+    contents:
+      - plot_lineage_tree
+      - clique_categorical_palette
+
+  - title: Tree comparison metrics
+    desc: Reserved APIs; not implemented in this development release.
+    contents:
+      - rf_distance
+      - triplet_correctness
+      - quartet_distance
+      - ancestor_recall
+
+articles:
+  - title: Get started
+    navbar: ~
+    contents:
+      - getting-started
+      - bam-output

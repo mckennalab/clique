@@ -1,0 +1,201 @@
+---
+title: "Clique BAM output and auxiliary tags"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Clique BAM output and auxiliary tags}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+Clique writes standard BAM records plus auxiliary tags that preserve extracted
+captures, event calls, molecule depth, and consensus provenance. This vignette
+documents the fields most useful from R. The Rust CLI README is the
+authoritative format contract.
+
+## Import records into R
+
+```{r}
+library(cliqueR)
+
+reads <- read_longread_lineage(
+  "sample.consensus.bam",
+  tags = c("e0", "o0", "ce", "pe", "rc", "dc", "ar", "rm")
+)
+```
+
+The function returns one row per BAM record:
+
+- `read_name` is BAM `QNAME`;
+- `reference` is BAM `RNAME`; and
+- requested auxiliary tags become character columns.
+
+Missing tags are `NA`. Values are not type-converted:
+
+```{r}
+reads$rc <- as.integer(reads$rc)
+reads$dc <- as.integer(reads$dc)
+reads$rm <- as.numeric(reads$rm)
+```
+
+Passing `tags = NULL` discovers auxiliary tags from the first record and always
+adds `ce`. Pass explicit names when tags may vary by record.
+
+## Capture tags
+
+Each YAML `umi_configurations` entry has a single-digit `symbol`. The symbol,
+not the human-readable configuration name, determines the BAM tag:
+
+```yaml
+umi_configurations:
+  cell_barcode:
+    symbol: '0'
+    sort_type: KnownTag
+    length: 16
+    order: 0
+    max_distance: 2
+  molecule_umi:
+    symbol: '1'
+    sort_type: DegenerateTag
+    length: 12
+    order: 1
+    max_distance: 2
+```
+
+This layout produces `e0`/`o0` for the cell barcode and `e1`/`o1` for the
+molecule UMI.
+
+| Tag | Stage | Meaning |
+| --- | --- | --- |
+| `e<symbol>` | Align | Value extracted from that input read |
+| `e<symbol>` | Collapse | Corrected value used to define the molecule group |
+| `o<symbol>` | Collapse | Value from the representative selected read before correction |
+
+A `KnownTag` capture can be corrected to its allowlisted value. A
+`DegenerateTag` capture can be corrected to its cluster representative.
+Consequently, `e<symbol>` and `o<symbol>` need not match in a collapsed BAM.
+
+## Consensus depth and provenance
+
+| Tag | Meaning |
+| --- | --- |
+| `rc` | Number of reads assigned to the corrected molecule group |
+| `dc` | Number selected to build the consensus after downsampling |
+| `ar` | Comma-separated selected input QNAMEs, in selection order |
+
+For a normally collapsed record:
+
+```text
+length(strsplit(ar, ",")[[1]]) == dc <= rc
+```
+
+For example, `rc = 10`, `dc = 4`, and four names in `ar` mean ten reads formed
+the corrected group and four were used for consensus construction. The other
+six were omitted by `--maximum-reads-before-downsampling`.
+
+The consensus `QNAME` is the first selected read name, not a generated molecule
+identifier. `ar` contains selected reads only; it is not a complete list of all
+`rc` group members after downsampling.
+
+In `--correct-only` mode, clique emits one corrected record per retained input
+record. In that mode `rc`, `dc`, and the number of names in `ar` are all one.
+
+Summarize molecule support in R:
+
+```{r}
+support <- transform(
+  reads,
+  rc = as.integer(rc),
+  dc = as.integer(dc)
+)
+
+summary(support$rc)
+sum(support$rc - support$dc, na.rm = TRUE)
+```
+
+## Alignment and event tags
+
+| Tag | Meaning |
+| --- | --- |
+| `rm` | Fraction of called, non-`N`, non-capture reference bases matching the output alignment |
+| `as`, `rs` | Clique internal alignment scores; these are not standard SAM `AS` scores |
+| `ce` | Chemistry-filtered CRISPR event calls |
+| `pe` | Prime-edit classification when a reference has `PrimeEdit` targets |
+
+The `ce` tag uses 0-based ungapped reference coordinates:
+
+| Event | Encoding |
+| --- | --- |
+| Deletion | `<length>D+<reference-position>` |
+| Insertion | `<length>I+<reference-position>+<inserted-bases>` |
+| Substitution | `1S+<reference-position>+<alternate-base>` |
+| No qualifying event | `NONE` |
+
+Multiple events at one target are joined with `&`. Target fields are joined
+with `_` in the same order as `targets` in the read-structure YAML. Event
+filtering depends on the target chemistry, so `ce` is not an unfiltered list of
+all alignment differences.
+
+`build_indel_matrix()` splits `ce` on `_`. It intentionally keeps an
+`&`-joined multi-event allele together as one character state.
+
+For each `PrimeEdit` target, `pe` can contain:
+
+- `WT`
+- `PRECISE`
+- `PARTIAL`
+- `PRECISE_PLUS_BYPRODUCT`
+- `SCAFFOLD_INCORPORATION`
+- `INDEL`
+- `OTHER`
+- `NO_CALL`
+
+Non-prime targets in a mixed target list are represented by `NA`. As with `ce`,
+fields follow YAML target order.
+
+## Reference-routing diagnostics
+
+An alignment record can also include diagnostics from an optional reference
+classifier:
+
+| Tags | Classifier and meaning |
+| --- | --- |
+| `dm`, `di`, `da` | Discriminating-position margin, informative positions, ambiguity |
+| `ib`, `im`, `ik`, `ia` | IDF best score, margin ratio, informative k-mers, ambiguity |
+| `pb`, `pm`, `pi`, `pa` | POA best branch-vote score, margin, informative columns, ambiguity |
+
+These describe reference assignment on align output and are not
+collapse-group annotations.
+
+## SAM conventions
+
+- Alignment `QNAME` is the input read name; consensus `QNAME` is the first
+  selected read name.
+- Clique normalizes sequences into reference orientation. `FLAG` is currently
+  `0`, so reverse complementation is not represented by SAM flag `0x10`.
+- `MAPQ` is unset (`255`) and must not be interpreted as mapping confidence.
+- `RNAME`, `POS`, and `CIGAR` refer to a configured amplicon, not necessarily a
+  genomic chromosome.
+- Clique output order is not guaranteed to be coordinate-sorted, and the CLI
+  does not automatically create a BAM index.
+
+Inspect raw records with:
+
+```sh
+samtools view -H sample.consensus.bam
+samtools view sample.consensus.bam | cut -f1-6,12- | head
+```
+
+Sort and index when a downstream tool requires coordinate order:
+
+```sh
+samtools sort -o sample.consensus.sorted.bam sample.consensus.bam
+samtools index sample.consensus.sorted.bam
+```

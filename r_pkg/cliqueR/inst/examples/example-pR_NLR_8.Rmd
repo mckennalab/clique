@@ -1,0 +1,216 @@
+---
+title: "cliqueR: end-to-end example on the pR_NLR_8 test data"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>"
+)
+```
+
+This walkthrough runs `cliqueR` against the `pR_NLR_8` paired-end FASTQ pair
+that ships alongside the Rust source tree (`rust_cmd/pR_NLR_8_S3_R*_001.fastq.gz`).
+The implemented layers (binary discovery, low-level CLI) execute live; the
+higher-level R wrappers (IO, trees, metrics) are still stubs as of v0.0.0.9000
+and their chunks are marked `eval = FALSE`.
+
+**To re-run this end-to-end against your own data:** edit the `data_dir` and
+filename variables in the *Paths* chunk and flip the `eval = FALSE` knob on
+the CLI chunks. Expect a few minutes of wall-clock time on a typical laptop.
+
+# 1. Setup
+
+```{r libs}
+library(cliqueR)
+```
+
+## Paths
+
+Adjust these for your environment. Defaults point at the files in the sibling
+`rust_cmd/` directory of this monorepo.
+
+```{r paths}
+# Default points at the sibling rust_cmd/ in this monorepo (four levels up
+# from inst/examples/example-pR_NLR_8.Rmd). Override `data_dir` for your data.
+data_dir <- normalizePath("../../../../rust_cmd", mustWork = FALSE)
+
+read1          <- file.path(data_dir, "pR_NLR_8_S3_R1_001.fastq.gz")
+read2          <- file.path(data_dir, "pR_NLR_8_S3_R2_001.fastq.gz")
+read_structure <- file.path(data_dir, "2026_02_08_maryam_RNF2_none_left_right.yml")
+
+work_dir       <- tempfile("cliqueR-example-")
+dir.create(work_dir)
+aligned_bam    <- file.path(work_dir, "pR_NLR_8.aligned.bam")
+consensus_bam  <- file.path(work_dir, "pR_NLR_8.consensus.bam")
+
+stopifnot(
+  file.exists(read1),
+  file.exists(read2),
+  file.exists(read_structure)
+)
+list(read1 = read1, read2 = read2, read_structure = read_structure,
+     work_dir = work_dir)
+```
+
+# 2. Locate the Rust binary
+
+`cliqueR` looks at `CLIQUE_BIN`, then `PATH`, then
+`rust_cmd/target/release/clique` relative to the current working directory.
+
+```{r binary, error = TRUE}
+clique_binary()
+```
+
+If the call above errored, build the binary or override the path:
+
+```{r binary-override, eval = FALSE}
+# Build once: cd ../../../rust_cmd && cargo build --release
+set_clique_binary(file.path(data_dir, "target/release/clique"))
+clique_binary()
+```
+
+## Sanity check: version banner
+
+```{r version, eval = FALSE}
+clique_run("--version", list(), echo = FALSE)$stdout
+```
+
+# 3. Align FASTQ → BAM
+
+This invokes `clique align` directly via `clique_run()` — the typed `align()`
+wrapper is still a stub.
+
+```{r align, eval = FALSE}
+res_align <- clique_run("align", list(
+  read1                      = read1,
+  read2                      = read2,
+  read_structure             = read_structure,
+  output_bam_file            = aligned_bam,
+  threads                    = 4L,
+  aligner                    = "WFA",
+  min_read_length            = 50L,
+  max_reference_multiplier   = 2L
+))
+res_align$status   # 0 on success
+file.size(aligned_bam)
+```
+
+Once `align()` lands, the equivalent typed call will be:
+
+```{r align-wrapped, eval = FALSE}
+align(
+  read1          = read1,
+  read2          = read2,
+  read_structure = read_structure,
+  output_bam     = aligned_bam,
+  threads        = 4L
+)
+```
+
+# 4. Collapse aligned reads to per-UMI consensus
+
+```{r collapse, eval = FALSE}
+res_collapse <- clique_run("collapse", list(
+  input_bam_file  = aligned_bam,
+  output_bam_file = consensus_bam,
+  read_structure  = read_structure,
+  threads         = 4L,
+  max_deletion    = 0L
+))
+res_collapse$status
+file.size(consensus_bam)
+```
+
+Typed equivalent (when `collapse()` is implemented):
+
+```{r collapse-wrapped, eval = FALSE}
+collapse(
+  input_bam      = aligned_bam,
+  read_structure = read_structure,
+  output_bam     = consensus_bam,
+  threads        = 4L
+)
+```
+
+# 5. Pull consensus reads into R
+
+`pR_NLR_8` is a paired-end short-read sample. Use `read_10x_lineage()` when
+you have a CellRanger output directory, or `read_longread_lineage()` for
+PacBio / Nanopore amplicon BAMs.
+
+```{r io, eval = FALSE}
+# Long-read style: read every tag straight from the BAM
+lineage <- read_longread_lineage(
+  bam_path       = consensus_bam,
+  read_structure = read_structure,
+  tags           = c("CB", "UB")
+)
+head(lineage)
+```
+
+# 6. Build an indel character matrix
+
+```{r indel-matrix, eval = FALSE}
+sites <- c("site1", "site2", "site3")  # adjust to the read-structure YAML
+im <- build_indel_matrix(lineage, sites = sites, missing_threshold = 0.5)
+dim(im$matrix)
+head(im$state_map[[sites[1]]])
+```
+
+# 7. Reconstruct a tree
+
+Three solver families, same input:
+
+```{r trees, eval = FALSE}
+d        <- indel_distance(im$matrix)
+tree_nj_ <- tree_nj(d, method = "bionj")
+tree_par <- tree_parsimony(im$matrix)
+tree_cas <- tree_cassiopeia(im$matrix, solver = "greedy")
+```
+
+# 8. Visualize
+
+```{r viz, eval = FALSE}
+plot_lineage_tree(
+  tree_nj_,
+  metadata = cell_meta,   # tibble with cell_barcode column
+  color_by = "cluster",
+  layout   = "circular"
+)
+```
+
+# 9. Compare against a ground-truth tree
+
+For benchmarking with simulated data or known fate maps:
+
+```{r metrics, eval = FALSE}
+rf_distance(tree_nj_, ground_truth)
+triplet_correctness(tree_nj_, ground_truth, n_triplets = 1e5)
+quartet_distance(tree_nj_, ground_truth)
+ancestor_recall(tree_nj_, ground_truth)
+```
+
+# 10. Inspect intermediate artifacts
+
+The work directory persists until the R session ends — useful for debugging
+a failed run:
+
+```{r workdir, eval = FALSE}
+list.files(work_dir, recursive = TRUE)
+```
+
+```{r cleanup, include = FALSE, eval = FALSE}
+unlink(work_dir, recursive = TRUE)
+```
+
+# Session info
+
+```{r session}
+sessionInfo()
+```

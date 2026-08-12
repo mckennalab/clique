@@ -1,0 +1,46 @@
+Package: cliqueR
+Title: Lineage Tracing Analysis with the Clique Toolkit
+Version: 0.0.0.9000
+Authors@R:
+    person("Aaron", "McKenna", email = "aaronatwpi@gmail.com", role = c("aut", "cre"))
+Description: R interface to the clique Rust command-line tool for amplicon and
+    UMI processing. Provides helpers for read-structure configuration, pipeline
+    execution, BAM tag import, edit character matrices, lineage-tree
+    reconstruction with in-process and external backends, and annotated tree
+    visualization.
+URL: https://github.com/aaronmck/clique
+BugReports: https://github.com/aaronmck/clique/issues
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+SystemRequirements: clique (Rust binary, built from rust_cmd/); optional
+    tree backends: IQ-TREE 2, VINE, PHYLIP MIX, and Python Cassiopeia
+Depends:
+    R (>= 4.1)
+Imports:
+    processx,
+    rlang
+Suggests:
+    testthat (>= 3.0.0),
+    withr,
+    fs,
+    tibble,
+    dplyr,
+    tidyr,
+    readr,
+    purrr,
+    Matrix,
+    ape,
+    phangorn,
+    Rsamtools,
+    DropletUtils,
+    ggtree,
+    treeio,
+    ggplot2,
+    ggnewscale,
+    reticulate,
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+Config/roxygen2/version: 8.0.0
