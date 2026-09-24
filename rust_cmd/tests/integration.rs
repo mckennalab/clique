@@ -174,6 +174,65 @@ fn align_single_reference_all_map() {
 }
 
 #[test]
+fn align_exact_read_cache_reuses_alignment_and_preserves_names() {
+    let dir = TempDir::new().unwrap();
+    let mut alternate = AMPLICON.as_bytes().to_vec();
+    alternate[35] = if alternate[35] == b'A' { b'C' } else { b'A' };
+    let alternate = String::from_utf8(alternate).unwrap();
+    let yaml_text = format!(
+        "---\nmerge: \"ConcatenateBothForward\"\nknown_strand: true\nreads:\n  - !Read1\n    orientation: Forward\nreferences:\n  original:\n    sequence: \"{}\"\n    targets: []\n    target_types: []\n    umi_configurations:\n  alternate:\n    sequence: \"{}\"\n    targets: []\n    target_types: []\n    umi_configurations:\n",
+        AMPLICON, alternate
+    );
+    let yaml = write_text(&dir, "panel.yaml", &yaml_text);
+    let reads = vec![
+        ("original0".to_string(), AMPLICON.to_string()),
+        ("original1".to_string(), AMPLICON.to_string()),
+        ("alternate0".to_string(), alternate.clone()),
+        ("alternate1".to_string(), alternate),
+    ];
+    let r1 = write_fastq(&dir, "r1.fastq.gz", &reads);
+    let bam = dir.path().join("out.bam").to_string_lossy().into_owned();
+    let summary = dir.path().join("summary.tsv").to_string_lossy().into_owned();
+
+    let out = run_align(
+        &yaml,
+        &r1,
+        &bam,
+        &summary,
+        &[
+            "--no-poa-default",
+            "--alignment-cache",
+            "--alignment-cache-size",
+            "2",
+            "--threads",
+            "1",
+        ],
+    );
+    assert_success(&out, "align with exact-read cache");
+
+    let s = parse_summary(&summary);
+    assert_eq!(summary_val(&s, "Alignment totals", "All", "Aligned"), "4");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Capacity"), "2");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Policy"), "TinyLFU/Aged-LFU");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Hits"), "2");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Misses"), "2");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Admitted"), "2");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Rejected"), "0");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Evicted"), "0");
+
+    if let Some(rows) = samtools_view(&bam) {
+        let names = rows.iter().map(|row| row[0].as_str()).collect::<Vec<_>>();
+        assert_eq!(names, vec!["original0", "original1", "alternate0", "alternate1"]);
+        assert_eq!(rows[0][2], "original");
+        assert_eq!(rows[1][2], "original");
+        assert_eq!(rows[2][2], "alternate");
+        assert_eq!(rows[3][2], "alternate");
+    } else {
+        eprintln!("(samtools not found: skipping cached BAM-name checks)");
+    }
+}
+
+#[test]
 fn align_multi_reference_routing() {
     // two near-identical alleles differing at three positions -> POA auto-default
     let left = AMPLICON;

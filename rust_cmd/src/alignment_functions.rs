@@ -2,7 +2,9 @@
 //! reference among the candidates (a k-mer vote fast path with an exhaustive
 //! fallback), run the aligner, extract tags, and hand results to the writer.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
@@ -10,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use crate::alignment::alignment_matrix::{
     convex_alignment, create_scoring_record_3d, inversion_alignment, perform_3d_global_traceback, perform_affine_alignment,
     perform_affine_alignment_bandwidth, Alignment, AlignmentResult, AlignmentTag, AlignmentType,
+    reorder_quals_for_inversions,
 };
 use crate::alignment::scoring_functions::{AffineScoring, ConvexScoring, InversionScoring};
 use crate::linked_alignment::{
@@ -98,6 +101,8 @@ struct AlignmentCounters {
     too_long: AtomicUsize,
     failed: AtomicUsize,
     ambiguous_reference_calls: AtomicUsize,
+    alignment_cache_hits: AtomicUsize,
+    alignment_cache_misses: AtomicUsize,
     aligned_by_reference: Mutex<BTreeMap<String, usize>>,
 }
 
@@ -109,6 +114,12 @@ pub struct AlignmentRunStats {
     pub too_long: usize,
     pub failed: usize,
     pub ambiguous_reference_calls: usize,
+    pub alignment_cache_capacity: usize,
+    pub alignment_cache_hits: usize,
+    pub alignment_cache_misses: usize,
+    pub alignment_cache_admissions: usize,
+    pub alignment_cache_rejections: usize,
+    pub alignment_cache_evictions: usize,
     pub aligned_by_reference: BTreeMap<String, usize>,
     pub elapsed_seconds: f64,
 }
@@ -172,6 +183,40 @@ impl AlignmentRunStats {
 
         let mut summary = RunSummary::new("Alignment run summary");
         summary.add_table(overall);
+        if self.alignment_cache_capacity > 0 {
+            let lookups = self.alignment_cache_hits + self.alignment_cache_misses;
+            let hit_rate = if lookups == 0 {
+                0.0
+            } else {
+                100.0 * self.alignment_cache_hits as f64 / lookups as f64
+            };
+            let mut cache = SummaryTable::new(
+                "Exact-read alignment cache",
+                &[
+                    "Scope",
+                    "Policy",
+                    "Capacity",
+                    "Hits",
+                    "Misses",
+                    "Hit rate (%)",
+                    "Admitted",
+                    "Rejected",
+                    "Evicted",
+                ],
+            );
+            cache.push_row([
+                "All".to_string(),
+                "TinyLFU/Aged-LFU".to_string(),
+                self.alignment_cache_capacity.to_string(),
+                self.alignment_cache_hits.to_string(),
+                self.alignment_cache_misses.to_string(),
+                format!("{:.2}", hit_rate),
+                self.alignment_cache_admissions.to_string(),
+                self.alignment_cache_rejections.to_string(),
+                self.alignment_cache_evictions.to_string(),
+            ]);
+            summary.add_table(cache);
+        }
         summary.add_table(references);
         summary
     }
@@ -196,6 +241,7 @@ pub fn align_reads(
     use_poa: bool,
     poa_min_margin: usize,
     no_poa_default: bool,
+    alignment_cache_size: usize,
 ) -> AlignmentRunStats {
     let read_iterator = ReadIterator::new(
         PathBuf::from(&read1),
@@ -386,6 +432,18 @@ pub fn align_reads(
     };
     let poa_graph = poa_graph.as_ref();
 
+    let alignment_cache = if alignment_cache_size > 0 {
+        info!(
+            "Exact-read alignment cache enabled with capacity {}",
+            alignment_cache_size
+        );
+        Some(Arc::new(Mutex::new(AlignmentCache::new(
+            alignment_cache_size,
+        ))))
+    } else {
+        None
+    };
+
     read_iterator.par_bridge().for_each(|mut xx: UnifiedRead| {
         counters.input_reads.fetch_add(1, AtomicOrdering::Relaxed);
         STORE.with(|arc_mtx| {
@@ -408,26 +466,56 @@ pub fn align_reads(
                     name, seq_len, min_read_length
                 );
             } else if seq_len < max_read_size {
-                let aligned = align_to_reference_choices(
-                    name,
-                    xx.seq(),
-                    qual,
-                    rm,
-                    &true,
-                    read_structure,
-                    local_alignment.as_mut().unwrap(),
-                    &my_aff_score,
-                    &my_score,
-                    &use_inversions,
-                    &convex_score,
-                    &use_convex,
-                    *max_reference_multiplier as f64,
-                    *min_read_length,
-                    &seq_len,
-                    discriminating_classifier,
-                    idf_index,
-                    poa_graph,
-                );
+                let cached = alignment_cache.as_ref().and_then(|cache| {
+                    cache
+                        .lock()
+                        .expect("Unable to lock exact-read alignment cache")
+                        .get(xx.seq(), name, qual.clone())
+                });
+                let aligned = match cached {
+                    Some(alignment) => {
+                        counters
+                            .alignment_cache_hits
+                            .fetch_add(1, AtomicOrdering::Relaxed);
+                        Some(alignment)
+                    }
+                    None => {
+                        if alignment_cache.is_some() {
+                            counters
+                                .alignment_cache_misses
+                                .fetch_add(1, AtomicOrdering::Relaxed);
+                        }
+                        let computed = align_to_reference_choices(
+                            name,
+                            xx.seq(),
+                            qual,
+                            rm,
+                            &true,
+                            read_structure,
+                            local_alignment.as_mut().unwrap(),
+                            &my_aff_score,
+                            &my_score,
+                            &use_inversions,
+                            &convex_score,
+                            &use_convex,
+                            *max_reference_multiplier as f64,
+                            *min_read_length,
+                            &seq_len,
+                            discriminating_classifier,
+                            idf_index,
+                            poa_graph,
+                        );
+                        if let (Some(cache), Some(alignment)) =
+                            (alignment_cache.as_ref(), computed.as_ref())
+                        {
+                            cache
+                                .lock()
+                                .expect("Unable to lock exact-read alignment cache")
+                                .insert(xx.seq().clone(), alignment);
+                        }
+                        computed
+                    }
+                };
 
                 match aligned {
                     None => {
@@ -615,6 +703,15 @@ pub fn align_reads(
         .lock()
         .expect("Unable to lock per-reference alignment counts")
         .clone();
+    let cache_policy_stats = alignment_cache
+        .as_ref()
+        .map(|cache| {
+            cache
+                .lock()
+                .expect("Unable to lock exact-read alignment cache")
+                .policy_stats()
+        })
+        .unwrap_or_default();
     AlignmentRunStats {
         input_reads: counters.input_reads.load(AtomicOrdering::Relaxed),
         aligned_reads: counters.aligned_reads.load(AtomicOrdering::Relaxed),
@@ -624,6 +721,16 @@ pub fn align_reads(
         ambiguous_reference_calls: counters
             .ambiguous_reference_calls
             .load(AtomicOrdering::Relaxed),
+        alignment_cache_capacity: alignment_cache_size,
+        alignment_cache_hits: counters
+            .alignment_cache_hits
+            .load(AtomicOrdering::Relaxed),
+        alignment_cache_misses: counters
+            .alignment_cache_misses
+            .load(AtomicOrdering::Relaxed),
+        alignment_cache_admissions: cache_policy_stats.admissions,
+        alignment_cache_rejections: cache_policy_stats.rejections,
+        alignment_cache_evictions: cache_policy_stats.evictions,
         aligned_by_reference,
         elapsed_seconds: start.elapsed().as_secs_f64(),
     }
@@ -865,12 +972,313 @@ pub struct AlignmentWithRef {
     alignment: Option<AlignmentResult>,
     ref_name: Vec<u8>,
     ref_sequence: Vec<u8>,
+    /// Whether the selected alignment used the reverse complement of the input
+    /// read. This lets exact-read cache hits apply the same transformation to
+    /// the current record's quality scores without rerunning alignment.
+    reverse_complemented: bool,
     /// Set when the reference was chosen by the discriminating-position classifier.
     classification: Option<DiscriminatingInfo>,
     /// Set when the reference was routed by the IDF-weighted k-mer index.
     idf_info: Option<IdfInfo>,
     /// Set when the reference was chosen by the POA-graph classifier.
     poa_info: Option<PoaInfo>,
+}
+
+impl AlignmentWithRef {
+    /// Replace the record-specific metadata on a cached alignment. Alignment
+    /// coordinates and routing confidence depend only on the exact sequence,
+    /// while the read name and quality scores belong to each FASTQ record.
+    fn set_read_metadata(&mut self, read_name: &str, mut qualities: Option<Vec<u8>>) {
+        if self.reverse_complemented {
+            if let Some(quality_values) = &mut qualities {
+                quality_values.reverse();
+            }
+        }
+
+        if let Some(alignment) = &mut self.alignment {
+            if alignment
+                .cigar_string
+                .iter()
+                .any(|tag| matches!(tag, AlignmentTag::InversionOpen | AlignmentTag::InversionClose))
+            {
+                qualities = qualities.map(|quality_values| {
+                    reorder_quals_for_inversions(&alignment.cigar_string, quality_values)
+                });
+            }
+            alignment.read_name = read_name.to_string();
+            alignment.read_quals = qualities;
+        }
+    }
+}
+
+#[derive(Clone)]
+struct AlignmentCacheEntry {
+    alignment: AlignmentWithRef,
+    last_used: u64,
+    frequency: u8,
+}
+
+const FREQUENCY_SKETCH_ROWS: usize = 4;
+const FREQUENCY_SKETCH_MAX_COUNT: u8 = 15;
+const FREQUENCY_BUCKET_COUNT: usize = FREQUENCY_SKETCH_MAX_COUNT as usize + 1;
+const FREQUENCY_SKETCH_SAMPLE_MULTIPLIER: usize = 10;
+const FREQUENCY_SKETCH_MIN_WIDTH: usize = 64;
+const FREQUENCY_SKETCH_SEEDS: [u64; FREQUENCY_SKETCH_ROWS] = [
+    0x9e37_79b9_7f4a_7c15,
+    0xc2b2_ae3d_27d4_eb4f,
+    0x1656_67b1_9e37_79f9,
+    0x85eb_ca77_c2b2_ae63,
+];
+
+/// A small, aging Count-Min Sketch used for TinyLFU admission decisions.
+/// Four saturating counters are updated per lookup. Periodically halving all
+/// counters keeps estimates focused on the recent workload and prevents old
+/// popularity from pinning an entry forever.
+struct FrequencySketch {
+    width: usize,
+    counters: Vec<u8>,
+    samples: usize,
+    sample_size: usize,
+}
+
+impl FrequencySketch {
+    fn new(cache_capacity: usize) -> Self {
+        let requested_width = cache_capacity
+            .saturating_mul(2)
+            .max(FREQUENCY_SKETCH_MIN_WIDTH);
+        let width = requested_width
+            .checked_next_power_of_two()
+            .unwrap_or(1usize << (usize::BITS - 1));
+        Self {
+            width,
+            counters: vec![0; width.saturating_mul(FREQUENCY_SKETCH_ROWS)],
+            samples: 0,
+            sample_size: cache_capacity
+                .saturating_mul(FREQUENCY_SKETCH_SAMPLE_MULTIPLIER)
+                .max(1),
+        }
+    }
+
+    fn hash(sequence: &[u8]) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        sequence.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn mix(mut value: u64) -> u64 {
+        value ^= value >> 30;
+        value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value ^= value >> 27;
+        value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+
+    fn index(&self, hash: u64, row: usize) -> usize {
+        let mixed = Self::mix(hash ^ FREQUENCY_SKETCH_SEEDS[row]);
+        row * self.width + (mixed as usize & (self.width - 1))
+    }
+
+    fn record(&mut self, sequence: &[u8]) -> bool {
+        let hash = Self::hash(sequence);
+        for row in 0..FREQUENCY_SKETCH_ROWS {
+            let index = self.index(hash, row);
+            self.counters[index] = self.counters[index]
+                .saturating_add(1)
+                .min(FREQUENCY_SKETCH_MAX_COUNT);
+        }
+        self.samples = self.samples.saturating_add(1);
+        if self.samples >= self.sample_size {
+            for counter in &mut self.counters {
+                *counter >>= 1;
+            }
+            self.samples /= 2;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn estimate(&self, sequence: &[u8]) -> u8 {
+        let hash = Self::hash(sequence);
+        (0..FREQUENCY_SKETCH_ROWS)
+            .map(|row| self.counters[self.index(hash, row)])
+            .min()
+            .unwrap_or(0)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct AlignmentCachePolicyStats {
+    admissions: usize,
+    rejections: usize,
+    evictions: usize,
+}
+
+/// A bounded, process-local cache keyed by exact assembled read sequence.
+/// An aging TinyLFU sketch scores candidates, while 16 lazy frequency buckets
+/// make the globally least-frequent entry available in constant time. Recency
+/// breaks frequency ties without an ordered-tree update on every cache hit.
+struct AlignmentCache {
+    capacity: usize,
+    clock: u64,
+    entries: HashMap<Vec<u8>, AlignmentCacheEntry>,
+    frequency_buckets: Vec<VecDeque<(Vec<u8>, u64)>>,
+    frequency_records: usize,
+    frequency: FrequencySketch,
+    policy_stats: AlignmentCachePolicyStats,
+}
+
+impl AlignmentCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            clock: 0,
+            entries: HashMap::with_capacity(capacity),
+            frequency_buckets: (0..FREQUENCY_BUCKET_COUNT)
+                .map(|_| VecDeque::new())
+                .collect(),
+            frequency_records: 0,
+            frequency: FrequencySketch::new(capacity),
+            policy_stats: AlignmentCachePolicyStats::default(),
+        }
+    }
+
+    fn next_stamp(&mut self) -> u64 {
+        self.clock = self.clock.wrapping_add(1);
+        self.clock
+    }
+
+    fn get(
+        &mut self,
+        sequence: &[u8],
+        read_name: &str,
+        qualities: Option<Vec<u8>>,
+    ) -> Option<AlignmentWithRef> {
+        if self.frequency.record(sequence) {
+            self.age_resident_frequencies();
+        }
+        let stamp = self.next_stamp();
+        let sequence_key = sequence.to_vec();
+        let estimated_frequency = self.frequency.estimate(sequence);
+        let mut alignment = match self.entries.get_mut(sequence) {
+            Some(entry) => {
+                entry.last_used = stamp;
+                entry.frequency = estimated_frequency;
+                entry.alignment.clone()
+            }
+            None => return None,
+        };
+        self.push_frequency_record(sequence_key, estimated_frequency, stamp);
+        alignment.set_read_metadata(read_name, qualities);
+        Some(alignment)
+    }
+
+    fn insert(&mut self, sequence: Vec<u8>, alignment: &AlignmentWithRef) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        let stamp = self.next_stamp();
+        let candidate_frequency = self.frequency.estimate(&sequence);
+        if let Some(entry) = self.entries.get_mut(sequence.as_slice()) {
+            entry.alignment = alignment.clone();
+            entry.last_used = stamp;
+            entry.frequency = candidate_frequency;
+            self.push_frequency_record(sequence, candidate_frequency, stamp);
+            return;
+        }
+
+        if self.entries.len() >= self.capacity {
+            let Some((victim_frequency, victim_sequence, _victim_stamp)) =
+                self.least_frequent_resident()
+            else {
+                return;
+            };
+            if candidate_frequency <= victim_frequency {
+                self.policy_stats.rejections += 1;
+                return;
+            }
+
+            self.frequency_buckets[victim_frequency as usize].pop_front();
+            self.frequency_records -= 1;
+            self.entries.remove(victim_sequence.as_slice());
+            self.policy_stats.evictions += 1;
+        }
+
+        self.entries.insert(
+            sequence.clone(),
+            AlignmentCacheEntry {
+                alignment: alignment.clone(),
+                last_used: stamp,
+                frequency: candidate_frequency,
+            },
+        );
+        self.push_frequency_record(sequence, candidate_frequency, stamp);
+        self.policy_stats.admissions += 1;
+    }
+
+    fn age_resident_frequencies(&mut self) {
+        let frequency = &self.frequency;
+        for (sequence, entry) in &mut self.entries {
+            entry.frequency = frequency.estimate(sequence);
+        }
+        self.rebuild_frequency_buckets();
+    }
+
+    fn push_frequency_record(&mut self, sequence: Vec<u8>, frequency: u8, stamp: u64) {
+        self.frequency_buckets[frequency as usize].push_back((sequence, stamp));
+        self.frequency_records += 1;
+        if self.frequency_records > self.capacity.saturating_mul(4).max(1) {
+            self.rebuild_frequency_buckets();
+        }
+    }
+
+    fn least_frequent_resident(&mut self) -> Option<(u8, Vec<u8>, u64)> {
+        for frequency in 0..FREQUENCY_BUCKET_COUNT {
+            loop {
+                let Some((sequence, stamp)) =
+                    self.frequency_buckets[frequency].front().cloned()
+                else {
+                    break;
+                };
+                let is_current = self
+                    .entries
+                    .get(sequence.as_slice())
+                    .map(|entry| {
+                        entry.frequency as usize == frequency && entry.last_used == stamp
+                    })
+                    .unwrap_or(false);
+                if is_current {
+                    return Some((frequency as u8, sequence, stamp));
+                }
+                self.frequency_buckets[frequency].pop_front();
+                self.frequency_records -= 1;
+            }
+        }
+        None
+    }
+
+    fn rebuild_frequency_buckets(&mut self) {
+        let mut residents = self
+            .entries
+            .iter()
+            .map(|(sequence, entry)| {
+                (entry.frequency, entry.last_used, sequence.clone())
+            })
+            .collect::<Vec<_>>();
+        residents.sort_by_key(|(frequency, stamp, _sequence)| (*frequency, *stamp));
+        self.frequency_buckets = (0..FREQUENCY_BUCKET_COUNT)
+            .map(|_| VecDeque::new())
+            .collect();
+        for (frequency, stamp, sequence) in residents {
+            self.frequency_buckets[frequency as usize].push_back((sequence, stamp));
+        }
+        self.frequency_records = self.entries.len();
+    }
+
+    fn policy_stats(&self) -> AlignmentCachePolicyStats {
+        self.policy_stats
+    }
 }
 
 fn alignment_score(candidate: &AlignmentWithRef) -> f64 {
@@ -1145,7 +1553,7 @@ pub fn align_to_reference_choices(
             // exactly one reference: take the sole entry (its map key is not guaranteed to be 0).
             let ref_base = &rm.references.values().next().unwrap();
             let ref_name = String::from_utf8(ref_base.name.clone()).unwrap();
-            let (forward_oriented_seq, oriented_quals) = if !read_structure.known_strand {
+            let (forward_oriented_seq, oriented_quals, reverse_complemented) = if !read_structure.known_strand {
                 let orientation_search =
                     orient_by_longest_segment(&read, &ref_base.sequence, &ref_base.suffix_table);
                 let forward_seed_score = orientation_search
@@ -1185,15 +1593,15 @@ pub fn align_to_reference_choices(
                     }
                 };
                 if orientation {
-                    (read.clone(), qual_sequence)
+                    (read.clone(), qual_sequence, false)
                 } else {
                     // reverse-complementing the read reverses base order, so the quals must be
                     // reversed too to stay paired with the aligned bases.
                     let reversed_quals = qual_sequence.map(|mut q| { q.reverse(); q });
-                    (reverse_complement(&read), reversed_quals)
+                    (reverse_complement(&read), reversed_quals, true)
                 }
             } else {
-                (read.clone(), qual_sequence)
+                (read.clone(), qual_sequence, false)
             };
 
             let result = if *use_inversions {
@@ -1265,6 +1673,7 @@ pub fn align_to_reference_choices(
                 alignment: Some(result),
                 ref_name: ref_base.name.clone(),
                 ref_sequence: ref_base.sequence.clone(),
+                reverse_complemented,
                 classification: None,
                 idf_info: None,
                 poa_info: None,
@@ -1314,7 +1723,11 @@ pub fn align_to_reference_choices(
                     classifier,
                     idf,
                     poa,
-                );
+                )
+                .map(|mut alignment| {
+                    alignment.reverse_complemented = true;
+                    alignment
+                });
 
                 select_best_alignment(forward, reverse_complemented)
             };
@@ -1504,6 +1917,7 @@ fn quick_alignment_search(
                     )),
                     ref_name: reference.name.clone(),
                     ref_sequence: reference.sequence.clone(),
+                    reverse_complemented: false,
                     classification: None,
                     idf_info: None,
                     poa_info: None,
@@ -1578,6 +1992,7 @@ fn exhaustive_alignment_search(
                 alignment: Some(y.0.clone()),
                 ref_name: y.2.clone(),
                 ref_sequence: y.1.clone(),
+                reverse_complemented: false,
                 classification: None,
                 idf_info: None,
                 poa_info: None,
@@ -1691,7 +2106,8 @@ mod tests {
     use crate::alignment_functions::{
         align_to_reference_choices, cigar_to_alignment, exhaustive_alignment_search,
         has_confident_kmer_support, quick_alignment_search, simplify_cigar_string,
-        reference_histogram_bar, AlignmentRunStats, REFERENCE_HISTOGRAM_WIDTH,
+        reference_histogram_bar, AlignmentCache, AlignmentRunStats, AlignmentWithRef,
+        REFERENCE_HISTOGRAM_WIDTH,
     };
     use crate::read_strategies::sequence_layout::{
         AlignedReadOrientation, ReadPosition, ReferenceRecord, SequenceLayout,
@@ -1710,6 +2126,12 @@ mod tests {
             too_long: 2,
             failed: 1,
             ambiguous_reference_calls: 2,
+            alignment_cache_capacity: 0,
+            alignment_cache_hits: 0,
+            alignment_cache_misses: 0,
+            alignment_cache_admissions: 0,
+            alignment_cache_rejections: 0,
+            alignment_cache_evictions: 0,
             aligned_by_reference: BTreeMap::from([
                 ("reference_a".to_string(), 4),
                 ("reference_b".to_string(), 2),
@@ -1733,6 +2155,140 @@ mod tests {
         assert_eq!(reference_histogram_bar(5, 10), "#".repeat(20));
         assert_eq!(reference_histogram_bar(1, 100), "#");
         assert_eq!(reference_histogram_bar(0, 100), "");
+    }
+
+    fn cache_alignment(reverse_complemented: bool) -> AlignmentWithRef {
+        AlignmentWithRef {
+            alignment: Some(AlignmentResult {
+                reference_name: "reference".to_string(),
+                read_name: "first_read".to_string(),
+                reference_aligned: b"ACGT".to_vec(),
+                read_aligned: b"ACGT".to_vec(),
+                read_quals: Some(vec![40; 4]),
+                cigar_string: vec![
+                    AlignmentTag::MatchMismatch(1),
+                    AlignmentTag::InversionOpen,
+                    AlignmentTag::MatchMismatch(2),
+                    AlignmentTag::InversionClose,
+                    AlignmentTag::MatchMismatch(1),
+                ],
+                path: vec![],
+                score: 40.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            }),
+            ref_name: b"reference".to_vec(),
+            ref_sequence: b"ACGT".to_vec(),
+            reverse_complemented,
+            classification: None,
+            idf_info: None,
+            poa_info: None,
+        }
+    }
+
+    #[test]
+    fn exact_read_cache_uses_tinylfu_admission_and_replaces_record_metadata() {
+        let mut cache = AlignmentCache::new(2);
+        assert!(cache.get(b"AAAA", "miss", None).is_none());
+        cache.insert(b"AAAA".to_vec(), &cache_alignment(true));
+        assert!(cache.get(b"CCCC", "miss", None).is_none());
+        cache.insert(b"CCCC".to_vec(), &cache_alignment(false));
+
+        let hit = cache
+            .get(b"AAAA", "second_read", Some(vec![1, 2, 3, 4]))
+            .expect("cached exact sequence");
+        let aligned = hit.alignment.expect("cached alignment");
+        assert_eq!(aligned.read_name, "second_read");
+        // Reverse orientation is applied first, followed by the inversion block.
+        assert_eq!(aligned.read_quals, Some(vec![4, 2, 3, 1]));
+
+        // A one-hit candidate does not displace an equally frequent resident.
+        assert!(cache.get(b"GGGG", "first_miss", None).is_none());
+        cache.insert(b"GGGG".to_vec(), &cache_alignment(false));
+        assert!(cache.entries.contains_key(b"CCCC".as_slice()));
+        assert!(!cache.entries.contains_key(b"GGGG".as_slice()));
+
+        // The second observation makes GGGG more frequent than CCCC, so it is
+        // admitted and the globally least-frequent resident is evicted.
+        assert!(cache.get(b"GGGG", "second_miss", None).is_none());
+        cache.insert(b"GGGG".to_vec(), &cache_alignment(false));
+        assert!(!cache.entries.contains_key(b"CCCC".as_slice()));
+        assert!(cache.get(b"AAAA", "hit", None).is_some());
+        assert!(cache.get(b"GGGG", "hit", None).is_some());
+
+        let stats = cache.policy_stats();
+        assert_eq!(stats.admissions, 3);
+        assert_eq!(stats.rejections, 1);
+        assert_eq!(stats.evictions, 1);
+    }
+
+    #[test]
+    fn exact_read_cache_resists_a_one_hit_scan() {
+        let mut cache = AlignmentCache::new(2);
+        for sequence in [b"AAAA".as_slice(), b"CCCC".as_slice()] {
+            assert!(cache.get(sequence, "initial", None).is_none());
+            cache.insert(sequence.to_vec(), &cache_alignment(false));
+        }
+
+        // Make both residents established entries, then scan unique sequences.
+        assert!(cache.get(b"AAAA", "hot_a", None).is_some());
+        assert!(cache.get(b"CCCC", "hot_c", None).is_some());
+        for sequence in [
+            b"GGGG".as_slice(),
+            b"TTTT".as_slice(),
+            b"ACGT".as_slice(),
+        ] {
+            assert!(cache.get(sequence, "scan", None).is_none());
+            cache.insert(sequence.to_vec(), &cache_alignment(false));
+        }
+
+        assert!(cache.entries.contains_key(b"AAAA".as_slice()));
+        assert!(cache.entries.contains_key(b"CCCC".as_slice()));
+        let stats = cache.policy_stats();
+        assert_eq!(stats.admissions, 2);
+        assert_eq!(stats.rejections, 3);
+        assert_eq!(stats.evictions, 0);
+    }
+
+    #[test]
+    fn exact_read_cache_evicts_global_lowest_frequency_not_oldest_entry() {
+        let mut cache = AlignmentCache::new(3);
+        for sequence in [
+            b"AAAA".as_slice(),
+            b"CCCC".as_slice(),
+            b"GGGG".as_slice(),
+        ] {
+            assert!(cache.get(sequence, "initial", None).is_none());
+            cache.insert(sequence.to_vec(), &cache_alignment(false));
+        }
+
+        // AAAA becomes the oldest resident after CCCC and GGGG are touched,
+        // but its higher frequency should protect it from eviction.
+        for _ in 0..3 {
+            assert!(cache.get(b"AAAA", "hot", None).is_some());
+        }
+        assert!(cache.get(b"CCCC", "recent", None).is_some());
+        assert!(cache.get(b"GGGG", "recent", None).is_some());
+
+        // TTTT must become more frequent than the lowest-frequency residents
+        // before admission; CCCC is the older member of that frequency tie.
+        for observation in 0..3 {
+            assert!(cache.get(b"TTTT", "candidate", None).is_none());
+            cache.insert(b"TTTT".to_vec(), &cache_alignment(false));
+            if observation < 2 {
+                assert!(!cache.entries.contains_key(b"TTTT".as_slice()));
+            }
+        }
+
+        assert!(cache.entries.contains_key(b"AAAA".as_slice()));
+        assert!(!cache.entries.contains_key(b"CCCC".as_slice()));
+        assert!(cache.entries.contains_key(b"GGGG".as_slice()));
+        assert!(cache.entries.contains_key(b"TTTT".as_slice()));
+        let stats = cache.policy_stats();
+        assert_eq!(stats.admissions, 4);
+        assert_eq!(stats.rejections, 2);
+        assert_eq!(stats.evictions, 1);
     }
 
     fn multi_reference_layout(known_strand: bool) -> SequenceLayout {

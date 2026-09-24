@@ -326,6 +326,17 @@ enum Cmd {
         #[clap(long, action=clap::ArgAction::SetTrue)]
         no_poa_default: bool,
 
+        /// Reuse routing and alignment results when the exact same assembled
+        /// read sequence is seen again.
+        #[clap(long, action=clap::ArgAction::SetTrue)]
+        alignment_cache: bool,
+
+        /// Maximum exact read sequences retained by --alignment-cache. An
+        /// aging TinyLFU frequency estimate controls admission when full and
+        /// evicts the least-frequent resident (oldest use breaks ties).
+        #[clap(long, default_value = "10000")]
+        alignment_cache_size: usize,
+
     },
     /// Generate a read-structure YAML from an annotated GenBank file.
     GenbankToYaml {
@@ -446,6 +457,8 @@ fn main() {
             poa_classifier,
             poa_min_margin,
             no_poa_default,
+            alignment_cache,
+            alignment_cache_size,
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
@@ -471,6 +484,11 @@ fn main() {
                 *poa_classifier,
                 *poa_min_margin,
                 *no_poa_default,
+                if *alignment_cache {
+                    *alignment_cache_size
+                } else {
+                    0
+                },
             );
             stats
                 .summary()

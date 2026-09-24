@@ -1083,7 +1083,7 @@ pub(crate) fn convex_alignment(
 /// reversed), so the qualities of the read bases inside an InversionOpen ..
 /// InversionClose span must be reversed to stay paired with the aligned bases;
 /// forward blocks keep read order. `quals` are the read's qualities in read order.
-fn reorder_quals_for_inversions(cigar: &[AlignmentTag], quals: Vec<u8>) -> Vec<u8> {
+pub(crate) fn reorder_quals_for_inversions(cigar: &[AlignmentTag], quals: Vec<u8>) -> Vec<u8> {
     if !cigar
         .iter()
         .any(|t| matches!(t, AlignmentTag::InversionOpen | AlignmentTag::InversionClose))
@@ -2038,4 +2038,3 @@ mod tests {
         assert!(results.reference_aligned.len() > 0);
     }
 }
-

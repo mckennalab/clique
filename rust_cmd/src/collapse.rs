@@ -392,7 +392,6 @@ pub fn collapse(
                     });
 
                 // collapse the final reads down to a single sequence and write everything to the disk
-                
                 match output_approach {
                     ReadOutputApproach::Collapse => {
                         info!("writing consensus reads for reference {}", ref_name);
