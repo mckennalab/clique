@@ -233,6 +233,81 @@ fn align_exact_read_cache_reuses_alignment_and_preserves_names() {
 }
 
 #[test]
+fn align_cache_can_mask_degenerate_reference_positions() {
+    let dir = TempDir::new().unwrap();
+    let mut reference = AMPLICON.as_bytes().to_vec();
+    let umi_start = 24;
+    for position in umi_start..umi_start + 4 {
+        reference[position] = b'0';
+    }
+    let reference = String::from_utf8(reference).unwrap();
+    let yaml_text = format!(
+        "---\nmerge: \"ConcatenateBothForward\"\nknown_strand: true\nreads:\n  - !Read1\n    orientation: Forward\nreferences:\n  amplicon:\n    sequence: \"{}\"\n    targets: []\n    target_types: []\n    umi_configurations:\n      umi:\n        symbol: '0'\n        sort_type: \"DegenerateTag\"\n        length: 4\n        order: 0\n        max_distance: 0\n",
+        reference
+    );
+    let yaml = write_text(&dir, "masked.yaml", &yaml_text);
+    let umi_values = ["ACGT", "TGCA", "GGGG", "CATA"];
+    let reads = umi_values
+        .iter()
+        .enumerate()
+        .map(|(index, umi)| {
+            let mut sequence = AMPLICON.as_bytes().to_vec();
+            sequence[umi_start..umi_start + 4].copy_from_slice(umi.as_bytes());
+            (
+                format!("masked{}", index),
+                String::from_utf8(sequence).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let r1 = write_fastq(&dir, "masked.fastq.gz", &reads);
+    let bam = dir.path().join("masked.bam").to_string_lossy().into_owned();
+    let summary = dir
+        .path()
+        .join("masked-summary.tsv")
+        .to_string_lossy()
+        .into_owned();
+
+    let out = run_align(
+        &yaml,
+        &r1,
+        &bam,
+        &summary,
+        &[
+            "--no-poa-default",
+            "--alignment-cache",
+            "--alignment-cache-mask-degenerate",
+            "--alignment-cache-size",
+            "2",
+            "--threads",
+            "1",
+        ],
+    );
+    assert_success(&out, "align with degenerate-masked cache");
+
+    let s = parse_summary(&summary);
+    assert_eq!(summary_val(&s, "Alignment totals", "All", "Aligned"), "4");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Hits"), "3");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Masked hits"), "3");
+    assert_eq!(summary_val(&s, "Exact-read alignment cache", "All", "Misses"), "1");
+    assert_eq!(
+        summary_val(&s, "Exact-read alignment cache", "All", "Key"),
+        "Degenerate (4 positions)"
+    );
+
+    if let Some(rows) = samtools_view(&bam) {
+        assert_eq!(rows.len(), reads.len());
+        for ((_, expected_sequence), (expected_umi, row)) in
+            reads.iter().zip(umi_values.iter().zip(rows.iter()))
+        {
+            assert_eq!(&row[9], expected_sequence);
+            assert_eq!(sam_tag(row, "e0").as_deref(), Some(*expected_umi));
+        }
+    } else {
+        eprintln!("(samtools not found: skipping masked-cache BAM checks)");
+    }
+}
+
+#[test]
 fn align_multi_reference_routing() {
     // two near-identical alleles differing at three positions -> POA auto-default
     let left = AMPLICON;

@@ -326,8 +326,8 @@ enum Cmd {
         #[clap(long, action=clap::ArgAction::SetTrue)]
         no_poa_default: bool,
 
-        /// Reuse routing and alignment results when the exact same assembled
-        /// read sequence is seen again.
+        /// Reuse routing and alignment results when the same cache key is seen
+        /// again (exact sequence unless degenerate masking is enabled).
         #[clap(long, action=clap::ArgAction::SetTrue)]
         alignment_cache: bool,
 
@@ -336,6 +336,12 @@ enum Cmd {
         /// evicts the least-frequent resident (oldest use breaks ties).
         #[clap(long, default_value = "10000")]
         alignment_cache_size: usize,
+
+        /// Mask digit-marked positions shared by every reference when forming
+        /// cache keys. Cached alignments still receive the current read's bases
+        /// and qualities before UMI extraction.
+        #[clap(long, action=clap::ArgAction::SetTrue)]
+        alignment_cache_mask_degenerate: bool,
 
     },
     /// Generate a read-structure YAML from an annotated GenBank file.
@@ -459,6 +465,7 @@ fn main() {
             no_poa_default,
             alignment_cache,
             alignment_cache_size,
+            alignment_cache_mask_degenerate,
         } => {
             let my_yaml = SequenceLayout::from_yaml(read_structure);
             let rm = ReferenceManager::from_yaml_input(&my_yaml, 8, 4);
@@ -489,6 +496,7 @@ fn main() {
                 } else {
                     0
                 },
+                *alignment_cache_mask_degenerate,
             );
             stats
                 .summary()
