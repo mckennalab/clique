@@ -83,6 +83,11 @@ if (is.na(tree_size) || tree_size < 2L || is.na(level) || level < 1L ||
 # replaces several simulator functions with its own versions below.
 source(file.path(source_root, "load_origin.R"))
 source(file.path(script_dir, "flare-wt-crispr-recorder.R"))
+# Sourcing the recorder registers it. The simulator consults the registry at
+# each hook point, so the four wrappers that used to be assigned over
+# prepare_physicell_recording_model(), mutate_physicell_barcode_segment(),
+# physicell_baseline_target_layout() and lineage_benchmark_character_matrix()
+# here are gone: there is nothing left to forget to install.
 if (!requireNamespace("Matrix", quietly = TRUE)) {
   stop("The Matrix package is required to generate recorder conditions.")
 }
@@ -367,11 +372,7 @@ output_root <- normalizePath(output_root, mustWork = TRUE)
 base_recording_params <- lineage_benchmark_recording_params
 base_mito_params <- lineage_benchmark_mito_params
 base_targets_per_integration <- lineage_benchmark_targets_per_integration
-base_prepare_recording_model <- prepare_physicell_recording_model
-base_mutate_barcode_segment <- mutate_physicell_barcode_segment
-base_target_layout <- physicell_baseline_target_layout
 base_logical_target_matrix <- lineage_benchmark_logical_target_matrix
-base_character_matrix <- lineage_benchmark_character_matrix
 base_logical_target_manifest <- lineage_benchmark_logical_target_manifest
 base_simulate_recorder <- simulate_lineage_benchmark_recorder
 active_config <- NULL
@@ -382,74 +383,6 @@ lineage_benchmark_targets_per_integration <- function(system) {
   } else {
     base_targets_per_integration(system)
   }
-}
-
-prepare_physicell_recording_model <- function(params,
-                                              cell_type = NULL,
-                                              num_integrations = NULL,
-                                              founder_label_sites = 0,
-                                              params_dir = ".",
-                                              seed = NULL) {
-  model <- base_prepare_recording_model(
-    params = params,
-    cell_type = cell_type,
-    num_integrations = num_integrations,
-    founder_label_sites = founder_label_sites,
-    params_dir = params_dir,
-    seed = seed
-  )
-  attach_flare_wt_crispr_model(model, params)
-}
-
-mutate_physicell_barcode_segment <- function(profile,
-                                             duration,
-                                             rate_set,
-                                             model,
-                                             segment_start = 0) {
-  if (isTRUE(model$is_wt_crispr)) {
-    return(mutate_flare_wt_crispr_segment(
-      profile = profile,
-      duration = duration,
-      rate_set = rate_set,
-      model = model,
-      segment_start = segment_start
-    ))
-  }
-  base_mutate_barcode_segment(
-    profile = profile,
-    duration = duration,
-    rate_set = rate_set,
-    model = model,
-    segment_start = segment_start
-  )
-}
-
-physicell_baseline_target_layout <- function(model) {
-  if (isTRUE(model$is_wt_crispr)) {
-    flare_wt_crispr_target_layout(model)
-  } else {
-    base_target_layout(model)
-  }
-}
-
-# Tree building reads character_matrix, so this is the override that decides
-# whether WT-Cas9 deletions reach it as distinct alleles or as a binary "edited"
-# flag. The logical-target override below is not enough on its own: nothing
-# downstream consumes that matrix.
-lineage_benchmark_character_matrix <- function(raw_alleles,
-                                               binary_scores,
-                                               model,
-                                               integrations) {
-  # FLARE_BINARY_CHARACTERS=1 restores the old binary encoding, so the same
-  # conditions can be generated both ways and the encoding measured against
-  # itself rather than against a differently-seeded earlier run.
-  if (isTRUE(model$is_wt_crispr) &&
-        !nzchar(Sys.getenv("FLARE_BINARY_CHARACTERS"))) {
-    return(flare_wt_crispr_logical_target_matrix(
-      raw_alleles, model, integrations
-    ))
-  }
-  base_character_matrix(raw_alleles, binary_scores, model, integrations)
 }
 
 lineage_benchmark_logical_target_matrix <- function(state_matrix,

@@ -410,3 +410,25 @@ annotate_flare_wt_crispr_manifest <- function(target_layout) {
   )
   target_layout
 }
+
+# Registration. Sourcing this file is now sufficient to dispatch the recorder:
+# the simulator consults the registry at each of its four hook points, so there
+# is nothing for a caller to install and nothing it can forget to install. The
+# previous arrangement needed four wrappers assigned over simulator functions in
+# another file, and configuring the parameters without them produced a run that
+# looked right and silently used the native nuclease path throughout.
+register_origin_recorder(
+  "flare_wt_crispr",
+  applies = function(model) isTRUE(model$is_wt_crispr),
+  prepare = function(model, params) attach_flare_wt_crispr_model(model, params),
+  mutate = mutate_flare_wt_crispr_segment,
+  layout = flare_wt_crispr_target_layout,
+  character_matrix = function(raw_alleles, binary_scores, model, integrations) {
+    # FLARE_BINARY_CHARACTERS=1 restores the pre-allele encoding so the two can
+    # be compared on identical simulated data.
+    if (nzchar(Sys.getenv("FLARE_BINARY_CHARACTERS"))) {
+      return(physicell_prime_character_matrix(raw_alleles, binary_scores, model))
+    }
+    flare_wt_crispr_logical_target_matrix(raw_alleles, model, integrations)
+  }
+)
