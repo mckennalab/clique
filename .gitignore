@@ -1,0 +1,5 @@
+# Tree-building harness output. The scripts beside it are small and are tracked;
+# results/ is pipeline output and runs to several gigabytes.
+/rust_cmd/test_harness/tree_building/results/
+/rust_cmd/test_harness/**/simulation/
+/rust_cmd/test_harness/**/reconstruction/
