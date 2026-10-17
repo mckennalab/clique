@@ -1388,4 +1388,368 @@ mod tests {
         let sum: f64 = result[0..4].iter().sum();
         assert!((sum - 1.0).abs() < 0.01 || result[4] < 0.01);
     }
+
+    #[test]
+    fn test_calculate_conc_qual_score_more_agreeing_reads_raise_quality() {
+        let reference = b"ACGT".to_vec();
+        let (one_read_bases, one_read_quals) =
+            calculate_conc_qual_score(&vec![reference.clone(), b"ACGT".to_vec()], &vec![vec![3; 4]]);
+        let (three_read_bases, three_read_quals) = calculate_conc_qual_score(
+            &vec![reference.clone(), b"ACGT".to_vec(), b"ACGT".to_vec(), b"ACGT".to_vec()],
+            &vec![vec![3; 4]; 3],
+        );
+
+        assert_eq!(one_read_bases, b"ACGT");
+        assert_eq!(three_read_bases, b"ACGT");
+        assert_eq!(one_read_quals.len(), 4);
+        for (one, three) in one_read_quals.iter().zip(three_read_quals.iter()) {
+            assert!(three > one, "three reads Q{} should beat one read Q{}", three, one);
+        }
+    }
+
+    #[test]
+    fn test_calculate_conc_qual_score_disagreement_lowers_quality() {
+        let reference = b"ACGT".to_vec();
+        let (agree_bases, agree_quals) = calculate_conc_qual_score(
+            &vec![reference.clone(), b"ACGT".to_vec(), b"ACGT".to_vec(), b"ACGT".to_vec()],
+            &vec![vec![3; 4]; 3],
+        );
+        let (disagree_bases, disagree_quals) = calculate_conc_qual_score(
+            &vec![reference.clone(), b"ACGT".to_vec(), b"ACGT".to_vec(), b"AGGT".to_vec()],
+            &vec![vec![3; 4]; 3],
+        );
+
+        // the majority (and reference) base still wins, but with less confidence
+        assert_eq!(disagree_bases, agree_bases);
+        assert!(disagree_quals[1] < agree_quals[1]);
+        assert_eq!(disagree_quals[0], agree_quals[0]);
+        assert_eq!(disagree_quals[2..], agree_quals[2..]);
+    }
+
+    #[test]
+    fn test_calculate_conc_qual_score_reads_outvote_reference_and_stay_bounded() {
+        let reference = b"AAAA".to_vec();
+        let mut alignments = vec![reference];
+        alignments.extend(vec![b"ACAA".to_vec(); 10]);
+        let (bases, quals) = calculate_conc_qual_score(&alignments, &vec![vec![40; 4]; 10]);
+
+        assert_eq!(bases, b"ACAA");
+        assert_eq!(quals, vec![40; 4]);
+    }
+
+    #[test]
+    fn test_calculate_conc_qual_score_gaps_do_not_consume_qualities() {
+        // the read's single low-quality base must line up with 'G', after the gap
+        let (bases, quals) = calculate_conc_qual_score(
+            &vec![b"ACGT".to_vec(), b"A-GT".to_vec()],
+            &vec![vec![40, 3, 40]],
+        );
+
+        assert_eq!(bases.len(), 4);
+        assert_eq!(bases[2], b'G');
+        assert!(quals[2] < quals[0]);
+        assert!(quals[2] < quals[3]);
+    }
+
+    #[test]
+    #[ignore = "suspected bug: gaps never contribute to the call, so a deletion shared by every read is reported as the reference base"]
+    fn test_calculate_conc_qual_score_calls_shared_deletion() {
+        let (bases, _) = calculate_conc_qual_score(
+            &vec![b"ACGT".to_vec(), b"A-GT".to_vec(), b"A-GT".to_vec(), b"A-GT".to_vec()],
+            &vec![vec![40; 3]; 3],
+        );
+        assert_eq!(bases, b"A-GT");
+    }
+
+    #[test]
+    fn test_consensus_write_stats_accumulate_merges_counts_and_histogram() {
+        let mut total = ConsensusWriteStats::default();
+        total.record_group(3, 3, true);
+        total.record_group(1, 1, true);
+
+        let mut other = ConsensusWriteStats::default();
+        other.record_group(3, 2, true);
+        other.record_group(5, 5, false);
+        total.accumulate(&other);
+
+        assert_eq!(
+            total,
+            ConsensusWriteStats {
+                input_reads: 12,
+                groups_attempted: 4,
+                reads_selected: 11,
+                reads_downsampled: 1,
+                output_reads: 3,
+                failed_groups: 1,
+                reads_per_consensus: BTreeMap::from([(1, 1), (3, 2)]),
+            }
+        );
+    }
+
+    #[derive(Default)]
+    struct CapturingWriter {
+        records: Vec<(SortingReadSetContainer, HashMap<[u8; 2], String>)>,
+    }
+
+    impl OutputAlignmentWriter for CapturingWriter {
+        fn write_read(
+            &mut self,
+            read_set_container: &SortingReadSetContainer,
+            additional_tags: &HashMap<[u8; 2], String>,
+        ) -> std::io::Result<()> {
+            self.records
+                .push((read_set_container.clone(), additional_tags.clone()));
+            Ok(())
+        }
+
+        fn close(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn keyed_read(read_name: &str, umi: &[u8], bases: &[u8]) -> SortingReadSetContainer {
+        let mut read = downsampling_read(read_name, bases);
+        read.ordered_sorting_keys = vec![(
+            '0',
+            crate::read_strategies::read_disk_sorter::CorrectedKey::new(
+                '0',
+                umi.to_vec(),
+                umi.to_vec(),
+            ),
+        )];
+        read
+    }
+
+    fn shard_reads(
+        directory: &tempfile::TempDir,
+        reads: Vec<SortingReadSetContainer>,
+    ) -> ShardReader<SortingReadSetContainer> {
+        let path = directory.path().join("reads.sharded");
+        {
+            let mut writer: shardio::ShardWriter<SortingReadSetContainer> =
+                shardio::ShardWriter::new(&path, 32, 256, 1 << 16).unwrap();
+            let mut sender = writer.get_sender();
+            reads.into_iter().for_each(|read| sender.send(read).unwrap());
+            sender.finished().unwrap();
+            writer.finish().unwrap();
+        }
+        ShardReader::open(path).unwrap()
+    }
+
+    // (umi, sequence, rc, dc, names) per output record, sorted by umi
+    fn summarize_records(
+        writer: &CapturingWriter,
+    ) -> Vec<(Vec<u8>, Vec<u8>, String, String, String)> {
+        let mut records = writer
+            .records
+            .iter()
+            .map(|(read, tags)| {
+                assert_eq!(read.ordered_sorting_keys.len(), 1);
+                let mut names = tags[&[b'a', b'r']].split(',').collect::<Vec<_>>();
+                names.sort();
+                (
+                    read.ordered_sorting_keys[0].1.corrected.clone(),
+                    read.aligned_read.read_aligned.clone(),
+                    tags[&[b'r', b'c']].clone(),
+                    tags[&[b'd', b'c']].clone(),
+                    names.join(","),
+                )
+            })
+            .collect::<Vec<_>>();
+        records.sort();
+        records
+    }
+
+    #[test]
+    fn test_write_consensus_reads_emits_one_record_per_molecule() {
+        let layout = downsampling_layout();
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 2, 1);
+        let directory = tempfile::tempdir().unwrap();
+        let reader = shard_reads(
+            &directory,
+            vec![
+                keyed_read("x_1", b"GGGG", b"AAAA"),
+                keyed_read("y_1", b"CCCC", b"ACAA"),
+                keyed_read("x_2", b"GGGG", b"AAAA"),
+                keyed_read("z_1", b"TTTT", b"AAGA"),
+                keyed_read("y_2", b"CCCC", b"ACAA"),
+                keyed_read("x_3", b"GGGG", b"AAAA"),
+            ],
+        );
+
+        let mut writer = CapturingWriter::default();
+        let stats = write_consensus_reads(
+            &reader,
+            &mut writer,
+            1,
+            &reference_manager,
+            &layout,
+            &2,
+            &MergeStrategy::Stretcher,
+            &2,
+        );
+
+        let records = summarize_records(&writer);
+        assert_eq!(records.len(), 3);
+        assert_eq!(
+            records[0],
+            (b"CCCC".to_vec(), b"ACAA".to_vec(), "2".to_string(), "2".to_string(), "y_1,y_2".to_string())
+        );
+        // the three-read molecule is downsampled to two reads but still reports all three
+        assert_eq!(records[1].0, b"GGGG");
+        assert_eq!(records[1].1, b"AAAA");
+        assert_eq!(records[1].2, "3");
+        assert_eq!(records[1].3, "2");
+        assert_eq!(records[1].4.split(',').count(), 2);
+        assert_eq!(
+            records[2],
+            (b"TTTT".to_vec(), b"AAGA".to_vec(), "1".to_string(), "1".to_string(), "z_1".to_string())
+        );
+
+        assert_eq!(
+            stats,
+            ConsensusWriteStats {
+                input_reads: 6,
+                groups_attempted: 3,
+                reads_selected: 5,
+                reads_downsampled: 1,
+                output_reads: 3,
+                failed_groups: 0,
+                reads_per_consensus: BTreeMap::from([(1, 1), (2, 1), (3, 1)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_write_consensus_reads_calls_majority_base() {
+        let layout = downsampling_layout();
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 2, 1);
+        let directory = tempfile::tempdir().unwrap();
+        let reader = shard_reads(
+            &directory,
+            vec![
+                keyed_read("m_1", b"GGGG", b"ATAA"),
+                keyed_read("m_2", b"GGGG", b"ATAA"),
+                keyed_read("m_3", b"GGGG", b"ATAA"),
+                keyed_read("m_4", b"GGGG", b"AAAA"),
+            ],
+        );
+
+        let mut writer = CapturingWriter::default();
+        write_consensus_reads(
+            &reader,
+            &mut writer,
+            1,
+            &reference_manager,
+            &layout,
+            &0,
+            &MergeStrategy::Stretcher,
+            &1,
+        );
+
+        assert_eq!(
+            summarize_records(&writer),
+            vec![(
+                b"GGGG".to_vec(),
+                b"ATAA".to_vec(),
+                "4".to_string(),
+                "4".to_string(),
+                "m_1,m_2,m_3,m_4".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn test_write_corrected_reads_emits_every_read_with_unit_counts() {
+        let layout = downsampling_layout();
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 2, 1);
+        let directory = tempfile::tempdir().unwrap();
+        let reader = shard_reads(
+            &directory,
+            vec![
+                keyed_read("x_1", b"GGGG", b"AAAA"),
+                keyed_read("x_2", b"GGGG", b"ATAA"),
+                keyed_read("y_1", b"CCCC", b"ACAA"),
+            ],
+        );
+
+        let mut writer = CapturingWriter::default();
+        let stats = write_corrected_reads(&reader, &mut writer, 1, &reference_manager, &layout);
+
+        // reads sharing a UMI are not merged: each keeps its own sequence
+        assert_eq!(
+            summarize_records(&writer),
+            vec![
+                (b"CCCC".to_vec(), b"ACAA".to_vec(), "1".to_string(), "1".to_string(), "y_1".to_string()),
+                (b"GGGG".to_vec(), b"AAAA".to_vec(), "1".to_string(), "1".to_string(), "x_1".to_string()),
+                (b"GGGG".to_vec(), b"ATAA".to_vec(), "1".to_string(), "1".to_string(), "x_2".to_string()),
+            ]
+        );
+        assert_eq!(
+            stats,
+            ConsensusWriteStats {
+                input_reads: 3,
+                groups_attempted: 3,
+                reads_selected: 3,
+                reads_downsampled: 0,
+                output_reads: 3,
+                failed_groups: 0,
+                reads_per_consensus: BTreeMap::from([(1, 3)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_write_consensus_reads_bam_records_carry_umi_and_read_count_tags() {
+        use crate::alignment_manager::BamFileAlignmentWriter;
+        use rust_htslib::bam::{record::Aux, Read};
+
+        let layout = downsampling_layout();
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 2, 1);
+        let directory = tempfile::tempdir().unwrap();
+        let reader = shard_reads(
+            &directory,
+            vec![
+                keyed_read("x_1", b"GGGG", b"AAAA"),
+                keyed_read("x_2", b"GGGG", b"AAAA"),
+                keyed_read("y_1", b"CCCC", b"ACAA"),
+            ],
+        );
+        let bam_path = directory.path().join("consensus.bam");
+        {
+            let mut writer = BamFileAlignmentWriter::new(&bam_path, &reference_manager);
+            write_consensus_reads(
+                &reader,
+                &mut writer,
+                1,
+                &reference_manager,
+                &layout,
+                &0,
+                &MergeStrategy::Stretcher,
+                &1,
+            );
+            writer.close().unwrap();
+        }
+
+        let mut bam = rust_htslib::bam::Reader::from_path(&bam_path).unwrap();
+        let mut records = bam
+            .records()
+            .map(|record| {
+                let record = record.unwrap();
+                let tag = |name: &[u8]| match record.aux(name).unwrap() {
+                    Aux::String(value) => value.to_string(),
+                    other => panic!("unexpected tag type {:?}", other),
+                };
+                (tag(b"e0"), tag(b"rc"), record.seq().as_bytes())
+            })
+            .collect::<Vec<_>>();
+        records.sort();
+        assert_eq!(
+            records,
+            vec![
+                ("CCCC".to_string(), "1".to_string(), b"ACAA".to_vec()),
+                ("GGGG".to_string(), "2".to_string(), b"AAAA".to_vec()),
+            ]
+        );
+    }
 }

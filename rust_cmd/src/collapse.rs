@@ -1454,7 +1454,7 @@ mod tests {
     use super::*;
     use crate::alignment::alignment_matrix::AlignmentResult;
     use crate::alignment_manager::OutputAlignmentWriter;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, VecDeque};
 
     const FASTA_A: u8 = b'A';
     #[allow(dead_code)]
@@ -2068,4 +2068,625 @@ mod tests {
         assert_eq!(cons, String::from("TGGTATGCTGGG").as_bytes().to_vec());
     }
 
+
+    #[test]
+    fn test_consensus_histogram_bar_scales_to_width() {
+        assert_eq!(consensus_histogram_bar(0, 10), "");
+        assert_eq!(consensus_histogram_bar(5, 0), "");
+        assert_eq!(
+            consensus_histogram_bar(10, 10),
+            "#".repeat(CONSENSUS_HISTOGRAM_WIDTH)
+        );
+        assert_eq!(consensus_histogram_bar(5, 10), "#".repeat(20));
+        // partial bars round up, so any non-zero bin stays visible
+        assert_eq!(consensus_histogram_bar(1, 3), "#".repeat(14));
+        assert_eq!(consensus_histogram_bar(1, 1_000_000), "#");
+        // never wider than the histogram, even for inconsistent input
+        assert_eq!(
+            consensus_histogram_bar(20, 10),
+            "#".repeat(CONSENSUS_HISTOGRAM_WIDTH)
+        );
+    }
+
+    fn distinct_filtering_counts() -> BamReadFiltering {
+        BamReadFiltering {
+            total_reads: 1000,
+            unmapped_flag_reads: 1,
+            secondary_flag_reads: 2,
+            supplementary_flag_reads: 3,
+            failed_alignment_filters: 4,
+            failed_alignment_creation: 5,
+            duplicate_reads: 6,
+            invalid_tags: 7,
+        }
+    }
+
+    #[test]
+    fn test_bam_read_filtering_accumulate_sums_every_counter() {
+        let mut total = distinct_filtering_counts();
+        total.accumulate(&BamReadFiltering {
+            total_reads: 500,
+            unmapped_flag_reads: 10,
+            secondary_flag_reads: 20,
+            supplementary_flag_reads: 30,
+            failed_alignment_filters: 40,
+            failed_alignment_creation: 50,
+            duplicate_reads: 60,
+            invalid_tags: 70,
+        });
+
+        assert_eq!(total.total_reads, 1500);
+        assert_eq!(total.unmapped_flag_reads, 11);
+        assert_eq!(total.secondary_flag_reads, 22);
+        assert_eq!(total.supplementary_flag_reads, 33);
+        assert_eq!(total.failed_alignment_filters, 44);
+        assert_eq!(total.failed_alignment_creation, 55);
+        assert_eq!(total.duplicate_reads, 66);
+        assert_eq!(total.invalid_tags, 77);
+        assert_eq!(total.passing_reads(), 1500 - 308);
+    }
+
+    #[test]
+    fn test_push_collapse_result_row_reports_counts() {
+        let output = ConsensusWriteStats {
+            input_reads: 900,
+            groups_attempted: 120,
+            reads_selected: 850,
+            reads_downsampled: 50,
+            output_reads: 115,
+            failed_groups: 5,
+            reads_per_consensus: BTreeMap::new(),
+        };
+        let mut table = SummaryTable::new("t", &["a"; 10]);
+        push_collapse_result_row(&mut table, "ref", &distinct_filtering_counts(), 900, &output);
+
+        // 1000 total - 28 filtered = 972 passing; 72 of those were lost to UMI correction
+        let mut expected = SummaryTable::new("t", &["a"; 10]);
+        expected.push_row([
+            "ref", "1000", "972", "900", "72", "120", "850", "50", "5", "115",
+        ]);
+        assert_eq!(table, expected);
+    }
+
+    #[test]
+    fn test_push_filtering_row_reports_each_exclusion() {
+        let mut table = SummaryTable::new("t", &["a"; 8]);
+        push_filtering_row(&mut table, "ref", &distinct_filtering_counts());
+
+        let mut expected = SummaryTable::new("t", &["a"; 8]);
+        expected.push_row(["ref", "1", "2", "3", "4", "5", "6", "7"]);
+        assert_eq!(table, expected);
+    }
+
+    #[test]
+    fn test_create_input_set_reads_lines_and_reverse_complements() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, b"AACG\nTTGC\n").unwrap();
+        let filename = file.path().to_str().unwrap();
+
+        assert_eq!(
+            create_input_set(filename, &false),
+            vec![b"AACG".to_vec(), b"TTGC".to_vec()]
+        );
+        assert_eq!(
+            create_input_set(filename, &true),
+            vec![b"CGTT".to_vec(), b"GCAA".to_vec()]
+        );
+    }
+
+    fn allowlist_config(filename: &str, reverse_complement: Option<bool>) -> UMIConfiguration {
+        let mut config = known_tag_layout(Some(filename), Some(false)).references["reference"]
+            .umi_configurations["cell_id"]
+            .clone();
+        config.length = 6;
+        config.reverse_complement_sequences = reverse_complement;
+        config
+    }
+
+    #[test]
+    fn test_extract_known_list_reads_allowlist() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, b"AAACCC\nGGGTTA\nACGTAC\n").unwrap();
+        let filename = file.path().to_str().unwrap();
+
+        assert_eq!(
+            extract_known_list(&allowlist_config(filename, None), &8),
+            vec![b"AAACCC".to_vec(), b"GGGTTA".to_vec(), b"ACGTAC".to_vec()]
+        );
+        assert_eq!(
+            extract_known_list(&allowlist_config(filename, Some(true)), &8),
+            vec![b"GGGTTT".to_vec(), b"TAACCC".to_vec(), b"GTACGT".to_vec()]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "line 2 has length 5; expected 6")]
+    fn test_extract_known_list_rejects_wrong_length_entries() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, b"AAACCC\nGGGTT\n").unwrap();
+        extract_known_list(&allowlist_config(file.path().to_str().unwrap(), None), &8);
+    }
+
+    // Two UMIs whose capture order (`order`) is the reverse of their symbol order.
+    const UMI_REFERENCE: &str = "AAAAAA000000CCCCCC111111GGGGGG";
+
+    fn umi_configuration(
+        symbol: char,
+        order: usize,
+        sort_type: UMISortType,
+        file: Option<String>,
+        levenshtein_distance: Option<bool>,
+    ) -> UMIConfiguration {
+        UMIConfiguration {
+            symbol,
+            file,
+            reverse_complement_sequences: None,
+            sort_type,
+            length: 6,
+            order,
+            pad: None,
+            max_distance: 1,
+            maximum_subsequences: None,
+            max_gaps: None,
+            minimum_collapsing_difference: None,
+            levenshtein_distance,
+        }
+    }
+
+    fn umi_layout(configurations: Vec<(&str, UMIConfiguration)>) -> SequenceLayout {
+        let mut references = BTreeMap::new();
+        references.insert(
+            "reference".to_string(),
+            ReferenceRecord {
+                sequence: UMI_REFERENCE.to_string(),
+                umi_configurations: configurations
+                    .into_iter()
+                    .map(|(name, config)| (name.to_string(), config))
+                    .collect(),
+                targets: vec![],
+                target_types: vec![],
+                target_locations: Some(vec![]),
+                prime_edits: BTreeMap::new(),
+            },
+        );
+        SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![],
+            known_strand: true,
+            references,
+        }
+    }
+
+    fn umi_read_bases(umi_0: &[u8], umi_1: &[u8]) -> Vec<u8> {
+        [b"AAAAAA".as_slice(), umi_0, b"CCCCCC", umi_1, b"GGGGGG"].concat()
+    }
+
+    fn write_single_record_bam(
+        directory: &tempfile::TempDir,
+        layout: &SequenceLayout,
+        read: AlignmentResult,
+    ) -> Record {
+        let reference_manager = ReferenceManager::from_yaml_input(layout, 8, 4);
+        let bam_path = directory.path().join("input.bam");
+        {
+            let mut writer = BamFileAlignmentWriter::new(&bam_path, &reference_manager);
+            writer
+                .write_read(&SortingReadSetContainer::empty_tags(read), &HashMap::new())
+                .unwrap();
+            writer.close().unwrap();
+        }
+        let mut reader = bam::io::reader::Builder::default()
+            .build_from_path(&bam_path)
+            .unwrap();
+        reader.read_header().unwrap();
+        let record = reader.records().next().unwrap().unwrap();
+        record
+    }
+
+    fn container_from_record(layout: &SequenceLayout, record: &Record) -> Option<SortingReadSetContainer> {
+        let reference_manager = ReferenceManager::from_yaml_input(layout, 8, 4);
+        let reference_id = *reference_manager
+            .reference_name_to_ref
+            .get(b"reference".as_slice())
+            .unwrap();
+        let reference_sequence = reference_manager.references[&reference_id].sequence.clone();
+        create_sorted_read_container(
+            &"reference".to_string(),
+            &&reference_manager,
+            &mut BamReadFiltering::default(),
+            &&reference_id,
+            &reference_sequence,
+            &layout.references["reference"],
+            record,
+        )
+    }
+
+    #[test]
+    fn test_create_sorted_read_container_orders_tags_by_capture_order() {
+        let layout = umi_layout(vec![
+            ("molecule", umi_configuration('0', 1, UMISortType::DegenerateTag, None, None)),
+            ("cell", umi_configuration('1', 0, UMISortType::DegenerateTag, None, None)),
+        ]);
+        let bases = umi_read_bases(b"ACGTAC", b"TTGCAA")[2..].to_vec();
+        let quals: Vec<u8> = (10..10 + bases.len() as u8).collect();
+        let directory = tempfile::tempdir().unwrap();
+        let record = write_single_record_bam(
+            &directory,
+            &layout,
+            AlignmentResult {
+                reference_name: "reference".to_string(),
+                read_name: "read_1".to_string(),
+                reference_aligned: UMI_REFERENCE.as_bytes()[2..].to_vec(),
+                read_aligned: bases.clone(),
+                read_quals: Some(quals.clone()),
+                cigar_string: vec![AlignmentTag::MatchMismatch(bases.len())],
+                path: vec![],
+                score: 0.0,
+                reference_start: 2,
+                read_start: 0,
+                bounding_box: None,
+            },
+        );
+
+        let container = container_from_record(&layout, &record).unwrap();
+
+        // '1' is captured first (order 0), so it must lead the unsorted key queue
+        assert_eq!(
+            container.ordered_unsorted_keys,
+            VecDeque::from(vec![('1', b"TTGCAA".to_vec()), ('0', b"ACGTAC".to_vec())])
+        );
+        assert!(container.ordered_sorting_keys.is_empty());
+        assert_eq!(container.aligned_read.read_name, "read_1");
+        assert_eq!(container.aligned_read.reference_name, "reference");
+        assert_eq!(container.aligned_read.reference_start, 2);
+        assert_eq!(container.aligned_read.read_quals, Some(quals));
+        assert_eq!(container.aligned_read.read_aligned, [b"--".as_slice(), &bases].concat());
+        assert_eq!(container.aligned_read.reference_aligned, UMI_REFERENCE.as_bytes());
+    }
+
+    #[test]
+    fn test_create_sorted_read_container_rejects_gapped_umi() {
+        let mut gap_limited = umi_configuration('0', 0, UMISortType::DegenerateTag, None, None);
+        gap_limited.max_gaps = Some(0);
+        let layout = umi_layout(vec![
+            ("cell", gap_limited),
+            ("molecule", umi_configuration('1', 1, UMISortType::DegenerateTag, None, None)),
+        ]);
+        // two bases of UMI '0' are deleted from the read
+        let full = umi_read_bases(b"ACGTAC", b"TTGCAA");
+        let bases = [&full[..8], &full[10..]].concat();
+        let directory = tempfile::tempdir().unwrap();
+        let record = write_single_record_bam(
+            &directory,
+            &layout,
+            AlignmentResult {
+                reference_name: "reference".to_string(),
+                read_name: "gapped".to_string(),
+                reference_aligned: UMI_REFERENCE.as_bytes().to_vec(),
+                read_aligned: [&full[..8], b"--".as_slice(), &full[10..]].concat(),
+                read_quals: Some(vec![30; bases.len()]),
+                cigar_string: vec![
+                    AlignmentTag::MatchMismatch(8),
+                    AlignmentTag::Del(2),
+                    AlignmentTag::MatchMismatch(20),
+                ],
+                path: vec![],
+                score: 0.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        );
+
+        assert!(container_from_record(&layout, &record).is_none());
+    }
+
+    fn umi_tagged_read(name: &str, umi_0: &[u8], umi_1: &[u8]) -> SortingReadSetContainer {
+        let bases = umi_read_bases(umi_0, umi_1);
+        SortingReadSetContainer {
+            ordered_sorting_keys: vec![],
+            ordered_unsorted_keys: VecDeque::from(vec![
+                ('0', umi_0.to_vec()),
+                ('1', umi_1.to_vec()),
+            ]),
+            aligned_read: AlignmentResult {
+                reference_name: "reference".to_string(),
+                read_name: name.to_string(),
+                reference_aligned: UMI_REFERENCE.as_bytes().to_vec(),
+                read_quals: Some(vec![30; bases.len()]),
+                cigar_string: vec![AlignmentTag::MatchMismatch(bases.len())],
+                read_aligned: bases,
+                path: vec![],
+                score: 30.0,
+                reference_start: 0,
+                read_start: 0,
+                bounding_box: None,
+            },
+        }
+    }
+
+    fn shard_reads(
+        directory: &mut InstanceLivedTempDir,
+        reads: Vec<SortingReadSetContainer>,
+    ) -> ShardReader<SortingReadSetContainer> {
+        let path = directory.temp_file("input.sharded");
+        {
+            let mut writer: ShardWriter<SortingReadSetContainer> =
+                ShardWriter::new(&path, 32, 256, 1 << 16).unwrap();
+            let mut sender = writer.get_sender();
+            reads.into_iter().for_each(|read| sender.send(read).unwrap());
+            sender.finished().unwrap();
+            writer.finish().unwrap();
+        }
+        ShardReader::open(path).unwrap()
+    }
+
+    fn sorted_keys(reader: &ShardReader<SortingReadSetContainer>) -> Vec<SortingReadSetContainer> {
+        reader
+            .iter_range(&Range::all())
+            .unwrap()
+            .map(|read| read.unwrap())
+            .collect()
+    }
+
+    // (read name, corrected keys, original keys) for every read in the reader
+    fn corrected_keys_by_read(
+        reader: &ShardReader<SortingReadSetContainer>,
+    ) -> BTreeMap<String, (Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+        sorted_keys(reader)
+            .into_iter()
+            .map(|read| {
+                (
+                    read.aligned_read.read_name.clone(),
+                    (
+                        read.ordered_sorting_keys.iter().map(|k| k.1.corrected.clone()).collect(),
+                        read.ordered_sorting_keys.iter().map(|k| k.1.original.clone()).collect(),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    #[derive(Default)]
+    struct CapturingWriter {
+        records: Vec<(SortingReadSetContainer, HashMap<[u8; 2], String>)>,
+    }
+
+    impl OutputAlignmentWriter for CapturingWriter {
+        fn write_read(
+            &mut self,
+            read_set_container: &SortingReadSetContainer,
+            additional_tags: &HashMap<[u8; 2], String>,
+        ) -> std::io::Result<()> {
+            self.records
+                .push((read_set_container.clone(), additional_tags.clone()));
+            Ok(())
+        }
+
+        fn close(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_sort_level_corrects_umis_within_capture_order_groups() {
+        const CELL_A: &[u8] = b"ACGTAC";
+        const CELL_A_ERROR: &[u8] = b"ACGTAT";
+        const CELL_B: &[u8] = b"TGCATG";
+        const MOLECULE_1: &[u8] = b"GGGAAA";
+        const MOLECULE_1_ERROR: &[u8] = b"GGGAAT";
+        const MOLECULE_2: &[u8] = b"CCCTTT";
+
+        let layout = umi_layout(vec![
+            ("cell", umi_configuration('0', 0, UMISortType::DegenerateTag, None, None)),
+            ("molecule", umi_configuration('1', 1, UMISortType::DegenerateTag, None, None)),
+        ]);
+        let mut reads = vec![];
+        for index in 0..10 {
+            reads.push(umi_tagged_read(&format!("a1_{}", index), CELL_A, MOLECULE_1));
+        }
+        for index in 0..4 {
+            reads.push(umi_tagged_read(&format!("a2_{}", index), CELL_A, MOLECULE_2));
+        }
+        reads.push(umi_tagged_read("a1_umi_error", CELL_A, MOLECULE_1_ERROR));
+        reads.push(umi_tagged_read("a1_cell_error", CELL_A_ERROR, MOLECULE_1));
+        // the same erroneous molecule UMI in a different cell must not join cell A's molecule
+        reads.push(umi_tagged_read("b_only", CELL_B, MOLECULE_1_ERROR));
+
+        let mut directory = InstanceLivedTempDir::new().unwrap();
+        let input = shard_reads(&mut directory, reads);
+        let mut lookups = get_known_level_lookups(&layout);
+        let levels = layout.get_sorted_umi_configurations(&"reference".to_string());
+
+        let (count_0, level_0) =
+            sort_level(&mut directory, &input, &levels[0], &0, &17, &mut lookups);
+        assert_eq!(count_0, 17);
+        let (count_1, level_1) =
+            sort_level(&mut directory, &level_0, &levels[1], &1, &count_0, &mut lookups);
+        assert_eq!(count_1, 17);
+
+        let keys = corrected_keys_by_read(&level_1);
+        assert_eq!(keys.len(), 17);
+        assert_eq!(
+            keys["a1_cell_error"],
+            (
+                vec![CELL_A.to_vec(), MOLECULE_1.to_vec()],
+                vec![CELL_A_ERROR.to_vec(), MOLECULE_1.to_vec()]
+            )
+        );
+        assert_eq!(
+            keys["a1_umi_error"].0,
+            vec![CELL_A.to_vec(), MOLECULE_1.to_vec()]
+        );
+        assert_eq!(keys["a2_0"].0, vec![CELL_A.to_vec(), MOLECULE_2.to_vec()]);
+        assert_eq!(keys["b_only"].0, vec![CELL_B.to_vec(), MOLECULE_1_ERROR.to_vec()]);
+
+        let mut group_sizes = BTreeMap::new();
+        keys.values()
+            .for_each(|(corrected, _)| *group_sizes.entry(corrected.clone()).or_insert(0) += 1);
+        assert_eq!(
+            group_sizes,
+            BTreeMap::from([
+                (vec![CELL_A.to_vec(), MOLECULE_1.to_vec()], 12),
+                (vec![CELL_A.to_vec(), MOLECULE_2.to_vec()], 4),
+                (vec![CELL_B.to_vec(), MOLECULE_1_ERROR.to_vec()], 1),
+            ])
+        );
+
+        // one consensus per molecule, each carrying its molecule's read count
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let mut writer = CapturingWriter::default();
+        let stats = write_consensus_reads(
+            &level_1,
+            &mut writer,
+            2,
+            &reference_manager,
+            &layout,
+            &0,
+            &MergeStrategy::Stretcher,
+            &1,
+        );
+        let mut read_counts = writer
+            .records
+            .iter()
+            .map(|(read, tags)| {
+                (
+                    read.ordered_sorting_keys
+                        .iter()
+                        .map(|k| k.1.corrected.clone())
+                        .collect::<Vec<_>>(),
+                    tags[&[b'r', b'c']].clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        read_counts.sort();
+        assert_eq!(
+            read_counts,
+            vec![
+                (vec![CELL_A.to_vec(), MOLECULE_2.to_vec()], "4".to_string()),
+                (vec![CELL_A.to_vec(), MOLECULE_1.to_vec()], "12".to_string()),
+                (vec![CELL_B.to_vec(), MOLECULE_1_ERROR.to_vec()], "1".to_string()),
+            ]
+        );
+        assert_eq!(stats.output_reads, 3);
+        assert_eq!(stats.reads_per_consensus, BTreeMap::from([(1, 1), (4, 1), (12, 1)]));
+    }
+
+    #[test]
+    fn test_sort_level_corrects_known_tags_and_drops_unmatched() {
+        let mut allowlist = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut allowlist, b"ACGTAC\nTGCATG\n").unwrap();
+        let filename = allowlist.path().to_str().unwrap().to_string();
+
+        // exercise both the Hamming known list and the default Levenshtein trie
+        for levenshtein in [Some(false), None] {
+            let layout = umi_layout(vec![
+                (
+                    "cell",
+                    umi_configuration('0', 0, UMISortType::KnownTag, Some(filename.clone()), levenshtein),
+                ),
+                ("molecule", umi_configuration('1', 1, UMISortType::DegenerateTag, None, None)),
+            ]);
+            let reads = vec![
+                umi_tagged_read("exact", b"ACGTAC", b"GGGAAA"),
+                umi_tagged_read("one_off", b"TGCATC", b"GGGAAA"),
+                umi_tagged_read("unknown", b"GGGGGG", b"GGGAAA"),
+            ];
+
+            let mut directory = InstanceLivedTempDir::new().unwrap();
+            let input = shard_reads(&mut directory, reads);
+            let mut lookups = get_known_level_lookups(&layout);
+            let levels = layout.get_sorted_umi_configurations(&"reference".to_string());
+            let (count, output) =
+                sort_level(&mut directory, &input, &levels[0], &0, &3, &mut lookups);
+
+            assert_eq!(count, 2, "levenshtein {:?}", levenshtein);
+            let keys = corrected_keys_by_read(&output);
+            assert_eq!(
+                keys,
+                BTreeMap::from([
+                    ("exact".to_string(), (vec![b"ACGTAC".to_vec()], vec![b"ACGTAC".to_vec()])),
+                    ("one_off".to_string(), (vec![b"TGCATG".to_vec()], vec![b"TGCATC".to_vec()])),
+                ]),
+                "levenshtein {:?}",
+                levenshtein
+            );
+            // the next level's key is still waiting to be sorted
+            assert!(sorted_keys(&output)
+                .iter()
+                .all(|read| read.ordered_unsorted_keys == VecDeque::from(vec![('1', b"GGGAAA".to_vec())])));
+        }
+    }
+
+    #[test]
+    fn test_collapse_writes_one_consensus_per_molecule_with_read_counts() {
+        use rust_htslib::bam::{record::Aux, Read};
+
+        let layout = umi_layout(vec![
+            ("cell", umi_configuration('0', 0, UMISortType::DegenerateTag, None, None)),
+            ("molecule", umi_configuration('1', 1, UMISortType::DegenerateTag, None, None)),
+        ]);
+        let reference_manager = ReferenceManager::from_yaml_input(&layout, 8, 4);
+        let directory = tempfile::tempdir().unwrap();
+        let input_bam = directory.path().join("input.bam");
+        let output_bam = directory.path().join("output.bam");
+        {
+            let mut writer = BamFileAlignmentWriter::new(&input_bam, &reference_manager);
+            let mut write = |name: &str, molecule: &[u8]| {
+                let read = umi_tagged_read(name, b"ACGTAC", molecule);
+                writer.write_read(&read, &HashMap::new()).unwrap();
+            };
+            for index in 0..3 {
+                write(&format!("m1_{}", index), b"GGGAAA");
+            }
+            for index in 0..2 {
+                write(&format!("m2_{}", index), b"CCCTTT");
+            }
+            writer.close().unwrap();
+        }
+
+        let mut temp_directory = InstanceLivedTempDir::new().unwrap();
+        let stats = collapse(
+            &output_bam.to_string_lossy().into_owned(),
+            &mut temp_directory,
+            &layout,
+            &input_bam.to_string_lossy().into_owned(),
+            &MergeStrategy::Stretcher,
+            &ReadOutputApproach::Collapse,
+            &AlignmentFilterConfig::default(),
+            &1,
+            &0,
+        );
+
+        let mut reader = rust_htslib::bam::Reader::from_path(&output_bam).unwrap();
+        let mut molecules = reader
+            .records()
+            .map(|record| {
+                let record = record.unwrap();
+                let tag = |name: &[u8]| match record.aux(name).unwrap() {
+                    Aux::String(value) => value.to_string(),
+                    other => panic!("unexpected tag type {:?}", other),
+                };
+                (tag(b"e1"), tag(b"rc"), record.seq().as_bytes())
+            })
+            .collect::<Vec<_>>();
+        molecules.sort();
+        assert_eq!(
+            molecules,
+            vec![
+                ("CCCTTT".to_string(), "2".to_string(), umi_read_bases(b"ACGTAC", b"CCCTTT")),
+                ("GGGAAA".to_string(), "3".to_string(), umi_read_bases(b"ACGTAC", b"GGGAAA")),
+            ]
+        );
+
+        let reference = &stats.references[0];
+        assert_eq!(reference.filtering.passing_reads(), 5);
+        assert_eq!(reference.reads_after_umi_correction, 5);
+        assert_eq!(reference.output.output_reads, 2);
+        assert_eq!(
+            reference.output.reads_per_consensus,
+            BTreeMap::from([(2, 1), (3, 1)])
+        );
+    }
 }
