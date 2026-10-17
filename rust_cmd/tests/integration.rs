@@ -498,3 +498,220 @@ fn align_then_collapse_degenerate_umi() {
         eprintln!("(samtools not found: skipping consensus-record count)");
     }
 }
+
+// --- unknown-strand amplicons, base-editor chemistries, split captures -----
+
+// 188 bp amplicon whose two 24 bp ends are reverse complements of each other,
+// like Nanopore amplicons primed from palindromic adapters. Targets (20 bp)
+// start at 44 (Cas12ABE), 84 (Cas12CBE) and 124 (Cas12ABECBE).
+const PALINDROMIC_END: &str = "GCTAAAGACAATTACATAACATAC";
+const PALINDROMIC_CORE: [&str; 7] = [
+    "ACGTCAGCACGAAACTTGTT",
+    "GGCCCAGTGTGAATCGCTTA", // target 1, Cas12ABE
+    "AGGGTTAAGTAAGTGTGATG",
+    "CATACGCCTTTACTTGCTGT", // target 2, Cas12CBE
+    "GTCCACCCCATCGGACTGGC",
+    "ATTTTTATTACACTCAGAAA", // target 3, Cas12ABECBE
+    "CAGAACTCGGGTAATTTTGA",
+];
+
+fn palindromic_amplicon() -> String {
+    format!("{}{}{}", PALINDROMIC_END, PALINDROMIC_CORE.concat(), rc(PALINDROMIC_END))
+}
+
+fn substitute(seq: &str, edits: &[(usize, u8, u8)]) -> String {
+    let mut bytes = seq.as_bytes().to_vec();
+    for &(pos, from, to) in edits {
+        assert_eq!(bytes[pos], from, "fixture: expected {} at {}", from as char, pos);
+        bytes[pos] = to;
+    }
+    String::from_utf8(bytes).unwrap()
+}
+
+/// A sequenced read of `molecule`: Nanopore reads carry a leading copy of the
+/// adapter-side end, which for these amplicons matches the reference's 3' end.
+fn flanked_read(molecule: &str) -> String {
+    format!("{}{}", rc(PALINDROMIC_END), molecule)
+}
+
+fn base_editor_yaml(reference: &str) -> String {
+    format!(
+        "---\nmerge: \"ConcatenateBothForward\"\nknown_strand: false\nreads:\n  - !Read1\n    orientation: Forward\nreferences:\n  amplicon:\n    sequence: \"{}\"\n    targets: [\"{}\", \"{}\", \"{}\"]\n    target_types: [\"Cas12ABE\", \"Cas12CBE\", \"Cas12ABECBE\"]\n    umi_configurations:\n",
+        reference, PALINDROMIC_CORE[1], PALINDROMIC_CORE[3], PALINDROMIC_CORE[5]
+    )
+}
+
+#[test]
+fn align_unknown_strand_orients_reads_with_palindromic_ends() {
+    // Forward and reverse-complement copies of the same molecule must both
+    // align end to end on the forward reference. Before the orientation fix the
+    // leading flank's hit on the reference's 3' end derailed the seed chain
+    // and reads were flipped.
+    let reference = palindromic_amplicon();
+    let dir = TempDir::new().unwrap();
+    let yaml = write_text(&dir, "ref.yaml", &base_editor_yaml(&reference));
+    let mut reads = reads_named("fwd", 3, &flanked_read(&reference));
+    reads.extend(reads_named("rev", 3, &rc(&flanked_read(&reference))));
+    let r1 = write_fastq(&dir, "r1.fastq.gz", &reads);
+    let bam = dir.path().join("out.bam").to_string_lossy().into_owned();
+    let summary = dir.path().join("summary.tsv").to_string_lossy().into_owned();
+
+    let out = run_align(&yaml, &r1, &bam, &summary, &[]);
+    assert_success(&out, "align unknown strand");
+    assert_eq!(summary_val(&parse_summary(&summary), "Alignment totals", "All", "Aligned"), "6");
+
+    if let Some(rows) = samtools_view(&bam) {
+        assert_eq!(rows.len(), 6);
+        for row in &rows {
+            assert_eq!(row[3], "1", "read {} should start at reference position 1", row[0]);
+            let cigar = format!("{}I{}M", PALINDROMIC_END.len(), reference.len());
+            assert_eq!(row[5], cigar, "read {}: flank then the whole amplicon", row[0]);
+            assert_eq!(row[9], flanked_read(&reference), "read {} should be stored in reference orientation", row[0]);
+            assert_eq!(sam_tag(row, "ce").as_deref(), Some("NONE_NONE_NONE"), "read {}", row[0]);
+        }
+    } else {
+        eprintln!("(samtools not found: skipping orientation checks)");
+    }
+}
+
+#[test]
+fn align_base_editor_chemistries_on_both_strands() {
+    // One edited molecule read in both orientations. Each target carries an
+    // edit of its own chemistry plus, for the single-chemistry targets, an
+    // edit of the other chemistry that must be ignored.
+    let reference = palindromic_amplicon();
+    let edited = substitute(
+        &reference,
+        &[
+            (44 + 5, b'A', b'G'),  // target 1 Cas12ABE: A>G kept
+            (44 + 2, b'C', b'T'),  // target 1 Cas12ABE: C>T ignored
+            (84 + 4, b'C', b'T'),  // target 2 Cas12CBE: C>T kept
+            (84 + 11, b'A', b'G'), // target 2 Cas12CBE: A>G ignored
+            (124 + 6, b'A', b'G'), // target 3 Cas12ABECBE: A>G kept
+            (124 + 12, b'C', b'T'), // target 3 Cas12ABECBE: C>T kept
+        ],
+    );
+    let expected = "1S+49+G_1S+88+T_1S+130+G&1S+136+T";
+
+    let dir = TempDir::new().unwrap();
+    let yaml = write_text(&dir, "be.yaml", &base_editor_yaml(&reference));
+    let reads = vec![
+        ("forward".to_string(), flanked_read(&edited)),
+        ("reverse".to_string(), rc(&flanked_read(&edited))),
+        ("unedited_reverse".to_string(), rc(&flanked_read(&reference))),
+    ];
+    let r1 = write_fastq(&dir, "r1.fastq.gz", &reads);
+    let bam = dir.path().join("out.bam").to_string_lossy().into_owned();
+    let summary = dir.path().join("summary.tsv").to_string_lossy().into_owned();
+
+    let out = run_align(&yaml, &r1, &bam, &summary, &[]);
+    assert_success(&out, "align base editors");
+    assert_eq!(summary_val(&parse_summary(&summary), "Alignment totals", "All", "Aligned"), "3");
+
+    if let Some(rows) = samtools_view(&bam) {
+        for row in &rows {
+            let ce = sam_tag(row, "ce").unwrap_or_else(|| panic!("read {} has no ce tag", row[0]));
+            let want = if row[0] == "unedited_reverse" { "NONE_NONE_NONE" } else { expected };
+            assert_eq!(ce, want, "read {}", row[0]);
+        }
+    } else {
+        eprintln!("(samtools not found: skipping ce-tag checks)");
+    }
+}
+
+#[test]
+fn align_then_collapse_split_capture_on_both_strands() {
+    // Capture 0 is split by fixed TT spacers (0000TT0000TT0000); capture 1 is
+    // contiguous. Molecules are told apart by either capture, and reads of one
+    // molecule may come from either strand.
+    let left = &PALINDROMIC_CORE[0];
+    let middle = format!("{}{}", PALINDROMIC_CORE[1], PALINDROMIC_CORE[2]);
+    let right = &PALINDROMIC_CORE[6];
+    let reference = format!(
+        "{}{}0000TT0000TT0000{}11111111{}{}",
+        PALINDROMIC_END, left, middle, right, rc(PALINDROMIC_END)
+    );
+    let dir = TempDir::new().unwrap();
+    let yaml_text = format!(
+        "---\nmerge: \"ConcatenateBothForward\"\nknown_strand: false\nreads:\n  - !Read1\n    orientation: Forward\nreferences:\n  amplicon:\n    sequence: \"{}\"\n    targets: []\n    target_types: []\n    umi_configurations:\n      split:\n        symbol: '0'\n        sort_type: \"DegenerateTag\"\n        length: 12\n        order: 0\n        max_distance: 1\n        minimum_collapsing_difference: 2.0\n      contiguous:\n        symbol: '1'\n        sort_type: \"DegenerateTag\"\n        length: 8\n        order: 1\n        max_distance: 1\n        minimum_collapsing_difference: 2.0\n",
+        reference
+    );
+    let yaml = write_text(&dir, "split.yaml", &yaml_text);
+
+    let molecule = |v: &str, b: &str| -> String {
+        format!(
+            "{}{}{}{}TT{}TT{}{}{}{}{}",
+            rc(PALINDROMIC_END),
+            PALINDROMIC_END, left, &v[0..4], &v[4..8], &v[8..12], middle, b, right, rc(PALINDROMIC_END)
+        )
+    };
+    let (v1, v2) = ("ACGTCATGGATC", "TGCAGTACCTAG");
+    let (b1, b2) = ("AACCGGTT", "GTGTCACA");
+    let m1 = molecule(v1, b1);
+    let m2 = molecule(v1, b2); // shares capture 0 with m1
+    let m3 = molecule(v2, b1); // shares capture 1 with m1
+    let mut reads = reads_named("m1f", 2, &m1);
+    reads.extend(reads_named("m1r", 2, &rc(&m1)));
+    reads.extend(reads_named("m2f", 1, &m2));
+    reads.extend(reads_named("m2r", 2, &rc(&m2)));
+    reads.extend(reads_named("m3r", 2, &rc(&m3)));
+    let r1 = write_fastq(&dir, "r1.fastq.gz", &reads);
+
+    let aligned_bam = dir.path().join("aligned.bam").to_string_lossy().into_owned();
+    let align_summary = dir.path().join("align_summary.tsv").to_string_lossy().into_owned();
+    let out = run_align(&yaml, &r1, &aligned_bam, &align_summary, &[]);
+    assert_success(&out, "align (split capture)");
+    assert_eq!(summary_val(&parse_summary(&align_summary), "Alignment totals", "All", "Aligned"), "9");
+
+    if let Some(rows) = samtools_view(&aligned_bam) {
+        for row in &rows {
+            let (v, b) = match &row[0][0..2] {
+                "m1" => (v1, b1),
+                "m2" => (v1, b2),
+                _ => (v2, b1),
+            };
+            assert_eq!(sam_tag(row, "e0").as_deref(), Some(v), "split capture of {}", row[0]);
+            assert_eq!(sam_tag(row, "e1").as_deref(), Some(b), "contiguous capture of {}", row[0]);
+        }
+    } else {
+        eprintln!("(samtools not found: skipping capture-tag checks)");
+    }
+
+    let collapsed_bam = dir.path().join("collapsed.bam").to_string_lossy().into_owned();
+    let collapse_summary = dir.path().join("collapse_summary.tsv").to_string_lossy().into_owned();
+    let out = Command::new(clique_bin())
+        .arg("collapse")
+        .arg("--read-structure").arg(&yaml)
+        .arg("--input-bam-file").arg(&aligned_bam)
+        .arg("--output-bam-file").arg(&collapsed_bam)
+        .arg("--summary-output").arg(&collapse_summary)
+        .output()
+        .expect("run clique collapse");
+    assert_success(&out, "collapse (split capture)");
+
+    let s = parse_summary(&collapse_summary);
+    assert_eq!(summary_val(&s, "Collapse results", "All", "Output records"), "3", "three distinct capture pairs");
+
+    if let Some(rows) = samtools_view(&collapsed_bam) {
+        let mut pairs: Vec<(String, String, String)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    sam_tag(row, "e0").unwrap_or_default(),
+                    sam_tag(row, "e1").unwrap_or_default(),
+                    sam_tag(row, "rc").unwrap_or_default(),
+                )
+            })
+            .collect();
+        pairs.sort();
+        let mut want = vec![
+            (v1.to_string(), b1.to_string(), "4".to_string()),
+            (v1.to_string(), b2.to_string(), "3".to_string()),
+            (v2.to_string(), b1.to_string(), "2".to_string()),
+        ];
+        want.sort();
+        assert_eq!(pairs, want, "consensus capture pairs and read counts");
+    } else {
+        eprintln!("(samtools not found: skipping consensus capture checks)");
+    }
+}

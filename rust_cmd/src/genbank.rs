@@ -487,6 +487,39 @@ ORIGIN
     }
 
     #[test]
+    fn test_parse_target_type_ignores_case_and_separators() {
+        assert_eq!(parse_target_type("Cas12ABE"), Some(TargetType::Cas12ABE));
+        assert_eq!(parse_target_type("cas12-cbe"), Some(TargetType::Cas12CBE));
+        assert_eq!(parse_target_type("CAS12_ABE_CBE"), Some(TargetType::Cas12ABECBE));
+        assert_eq!(parse_target_type("Cas12A WT"), Some(TargetType::Cas12AWT));
+        assert_eq!(parse_target_type("prime editing"), Some(TargetType::PrimeEdit));
+        assert_eq!(parse_target_type("Cas12"), None);
+        assert_eq!(parse_target_type(""), None);
+    }
+
+    #[test]
+    fn test_every_type_token_parses() {
+        for token in TYPE_TOKENS {
+            assert!(parse_target_type(token).is_some(), "token {} does not parse", token);
+        }
+    }
+
+    #[test]
+    fn test_target_type_from_name_prefers_longest_token() {
+        // "Cas12ABECBE" contains "Cas12ABE"; the combined editor must win.
+        assert_eq!(
+            target_type_from_name("lineage_target site7 cas12abecbe"),
+            Some(TargetType::Cas12ABECBE)
+        );
+        assert_eq!(target_type_from_name("Target 41 Cas12CBE"), Some(TargetType::Cas12CBE));
+        assert_eq!(
+            target_type_from_name("site Cas9ABEPalindrome"),
+            Some(TargetType::Cas9ABEPalindrome)
+        );
+        assert_eq!(target_type_from_name("Target 1"), None);
+    }
+
+    #[test]
     fn test_generates_umis_and_targets() {
         let layout =
             genbank_to_layout(&parse_one(), &GenbankToYamlOptions::default()).unwrap();

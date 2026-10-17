@@ -747,6 +747,127 @@ mod tests {
         assert_eq!(call_target(&events2, 100, &TargetType::Cas9WT), NONE_EVENT);
     }
 
+    const BASE_EDITORS: [TargetType; 6] = [
+        TargetType::Cas9ABE,
+        TargetType::Cas9CBE,
+        TargetType::Cas9ABECBE,
+        TargetType::Cas12ABE,
+        TargetType::Cas12CBE,
+        TargetType::Cas12ABECBE,
+    ];
+
+    #[test]
+    fn test_base_editor_window_boundaries() {
+        // Window offsets 2..=19 inclusive; target starts at 100 so the window
+        // is absolute [102, 119]. Use an edit each chemistry accepts.
+        for target_type in BASE_EDITORS.iter() {
+            assert_eq!(target_type.editing_window(), (2, 19), "{:?}", target_type);
+            let (ref_base, read_base) = match target_type.event_class() {
+                EventClass::CytosineBaseEdit => (b'C', b'T'),
+                _ => (b'A', b'G'),
+            };
+            for (offset, kept) in [(1usize, false), (2, true), (19, true), (20, false)] {
+                let pos = 100 + offset;
+                let events = vec![Event::Substitution { ref_pos: pos, ref_base, read_base }];
+                let want = if kept {
+                    format!("1S+{}+{}", pos, read_base as char)
+                } else {
+                    NONE_EVENT.to_string()
+                };
+                assert_eq!(
+                    call_target(&events, 100, target_type),
+                    want,
+                    "{:?} at offset {}",
+                    target_type,
+                    offset
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_base_editor_substitution_matrix() {
+        // Every one of the 12 possible substitutions against every base-editor
+        // type: ABE keeps A>G/T>C, CBE keeps C>T/G>A, ABECBE keeps all four.
+        let bases = [b'A', b'C', b'G', b'T'];
+        for target_type in BASE_EDITORS.iter() {
+            let class = target_type.event_class();
+            for &ref_base in bases.iter() {
+                for &read_base in bases.iter().filter(|b| **b != ref_base) {
+                    let abe = matches!((ref_base, read_base), (b'A', b'G') | (b'T', b'C'));
+                    let cbe = matches!((ref_base, read_base), (b'C', b'T') | (b'G', b'A'));
+                    let kept = match class {
+                        EventClass::AdenineBaseEdit => abe,
+                        EventClass::CytosineBaseEdit => cbe,
+                        EventClass::DualBaseEdit => abe || cbe,
+                        other => panic!("{:?} is not a base editor ({:?})", target_type, other),
+                    };
+                    let events = vec![Event::Substitution { ref_pos: 10, ref_base, read_base }];
+                    let call = call_target(&events, 0, target_type);
+                    assert_eq!(
+                        call != NONE_EVENT,
+                        kept,
+                        "{:?}: {}>{} gave {}",
+                        target_type,
+                        ref_base as char,
+                        read_base as char,
+                        call
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_cas12_base_editors_share_cas9_chemistry() {
+        assert_eq!(TargetType::Cas12ABE.event_class(), EventClass::AdenineBaseEdit);
+        assert_eq!(TargetType::Cas12CBE.event_class(), EventClass::CytosineBaseEdit);
+        assert_eq!(TargetType::Cas12ABECBE.event_class(), EventClass::DualBaseEdit);
+        assert_eq!(TargetType::Cas12AWT.event_class(), EventClass::DoubleStrandBreak);
+        assert_eq!(TargetType::Cas12AWT.editing_window(), (14, 23));
+    }
+
+    #[test]
+    fn test_base_editor_accepts_lowercase_bases() {
+        let events = vec![Event::Substitution { ref_pos: 5, ref_base: b'c', read_base: b't' }];
+        assert_eq!(call_target(&events, 0, &TargetType::Cas12CBE), "1S+5+t");
+        assert_eq!(call_target(&events, 0, &TargetType::Cas12ABE), NONE_EVENT);
+    }
+
+    #[test]
+    fn test_call_read_events_mixed_chemistries() {
+        // Three targets on one reference, each a different base-editor type;
+        // the same read carries A>G and C>T in every window.
+        let t1 = "GGCCCAGTGTGAATCGCTTA";
+        let t2 = "CATACGCCTTTACTTGCTGT";
+        let t3 = "ATTTTTATTACACTCAGAAA";
+        let refseq = format!("ACGTCAGCAC{}AGGGTTAAGT{}GTCCACCCCA{}CAGAACTCGG", t1, t2, t3);
+        let reference = make_reference(
+            &refseq,
+            vec![t1, t2, t3],
+            vec![TargetType::Cas12ABE, TargetType::Cas12CBE, TargetType::Cas12ABECBE],
+        );
+        assert_eq!(reference.target_locations, Some(vec![10, 40, 70]));
+
+        let ref_aligned = refseq.as_bytes().to_vec();
+        let mut read_aligned = ref_aligned.clone();
+        for (pos, from, to) in [
+            (10 + 5, b'A', b'G'),
+            (10 + 2, b'C', b'T'),
+            (40 + 4, b'C', b'T'),
+            (40 + 11, b'A', b'G'),
+            (70 + 6, b'A', b'G'),
+            (70 + 12, b'C', b'T'),
+        ] {
+            assert_eq!(read_aligned[pos], from);
+            read_aligned[pos] = to;
+        }
+        assert_eq!(
+            call_read_events(&ref_aligned, &read_aligned, &reference),
+            "1S+15+G_1S+44+T_1S+76+G&1S+82+T"
+        );
+    }
+
     fn make_reference(sequence: &str, targets: Vec<&str>, types: Vec<TargetType>) -> ReferenceRecord {
         let mut record = ReferenceRecord {
             sequence: sequence.to_string(),
