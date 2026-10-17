@@ -2037,4 +2037,572 @@ mod tests {
         assert!(results.score > 0.0);
         assert!(results.reference_aligned.len() > 0);
     }
+
+    // 60 bp of non-repetitive amplicon sequence shared by the inversion / banding tests below
+    const TEST_AMPLICON: &str = "GCCTCCACGGCCACTAGTATTATGCCCAGTACATGACCTTATGGGACTTTCCTACTTGGC";
+
+    fn test_inversion_scoring() -> InversionScoring {
+        InversionScoring {
+            match_score: 10.0,
+            mismatch_score: -11.0,
+            gap_open: -15.0,
+            gap_extend: -5.0,
+            inversion_penalty: -2.0,
+            min_inversion_length: 8,
+        }
+    }
+
+    fn test_affine_scoring() -> AffineScoring {
+        AffineScoring {
+            match_score: 10.0,
+            mismatch_score: -11.0,
+            special_character_score: 8.0,
+            gap_open: -15.0,
+            gap_extend: -5.0,
+            final_gap_multiplier: 1.0,
+        }
+    }
+
+    /// reference[0..start] + revcomp(reference[start..end]) + reference[end..]
+    fn invert_block(reference: &[u8], start: usize, end: usize) -> Vec<u8> {
+        let mut read = reference[0..start].to_vec();
+        read.extend(reverse_complement(&reference[start..end]));
+        read.extend_from_slice(&reference[end..]);
+        read
+    }
+
+    fn has_inversion_marker(cigar: &[AlignmentTag]) -> bool {
+        cigar.iter().any(|t| matches!(t, AlignmentTag::InversionOpen | AlignmentTag::InversionClose))
+    }
+
+    fn ungapped(aligned: &[u8]) -> Vec<u8> {
+        aligned.iter().filter(|b| **b != FASTA_UNSET).cloned().collect()
+    }
+
+    fn cigar_ops(result: &AlignmentResult) -> Vec<Op> {
+        result.to_cigar_string().iter().map(|op| op.unwrap()).collect()
+    }
+
+    #[test]
+    fn inversion_alignment_detects_block_with_exact_bounds() {
+        // block [16, 36) is chosen so the bases flanking it are not complementary,
+        // which makes the inversion boundaries unambiguous
+        let reference = str_to_fasta_vec(TEST_AMPLICON);
+        let read = invert_block(&reference, 16, 36);
+
+        for local in [false, true] {
+            let mut results = inversion_alignment(&reference, &read, &"ref".to_string(), &"read".to_string(), &test_inversion_scoring(), &test_affine_scoring(), local, None);
+            assert_eq!(results.cigar_string, vec![
+                AlignmentTag::MatchMismatch(16),
+                AlignmentTag::InversionOpen,
+                AlignmentTag::MatchMismatch(20),
+                AlignmentTag::InversionClose,
+                AlignmentTag::MatchMismatch(24),
+            ], "local = {}", local);
+            // the inverted block is reported in reference orientation, so it lines up base-for-base
+            assert_eq!(results.reference_aligned, reference);
+            assert_eq!(results.read_aligned, reference);
+            // 60 matches plus the inversion penalty
+            assert_eq!(results.score, 598.0);
+            assert_eq!(results.take_inversion_events(), vec!["20V+16".to_string()]);
+        }
+    }
+
+    #[test]
+    fn inversion_alignment_flanks_keep_normal_indels() {
+        // inversion plus a 1 bp deletion in the right flank (one T of the TTT run at 47..50)
+        let reference = str_to_fasta_vec(TEST_AMPLICON);
+        let mut read = invert_block(&reference, 16, 36);
+        read.remove(48);
+
+        let results = inversion_alignment(&reference, &read, &"ref".to_string(), &"read".to_string(), &test_inversion_scoring(), &test_affine_scoring(), false, None);
+        assert_eq!(results.cigar_string, vec![
+            AlignmentTag::MatchMismatch(16),
+            AlignmentTag::InversionOpen,
+            AlignmentTag::MatchMismatch(20),
+            AlignmentTag::InversionClose,
+            AlignmentTag::MatchMismatch(13),
+            AlignmentTag::Del(1),
+            AlignmentTag::MatchMismatch(10),
+        ]);
+        assert_eq!(fasta_vec_to_string(&results.reference_aligned), TEST_AMPLICON);
+        assert_eq!(fasta_vec_to_string(&results.read_aligned), "GCCTCCACGGCCACTAGTATTATGCCCAGTACATGACCTTATGGGACTT-CCTACTTGGC");
+    }
+
+    #[test]
+    fn inversion_alignment_no_false_inversion_on_clean_mismatch_or_indel_reads() {
+        let reference = str_to_fasta_vec(TEST_AMPLICON);
+
+        let mut mismatches = reference.clone();
+        mismatches[20] = b'A';
+        mismatches[40] = b'C';
+
+        let mut indels = reference.clone();
+        indels.remove(30);
+        indels.insert(45, b'T');
+
+        let cases = vec![
+            ("clean", reference.clone(), vec![AlignmentTag::MatchMismatch(60)]),
+            ("mismatches", mismatches, vec![AlignmentTag::MatchMismatch(60)]),
+            ("indels", indels, vec![
+                AlignmentTag::MatchMismatch(30),
+                AlignmentTag::Del(1),
+                AlignmentTag::MatchMismatch(15),
+                AlignmentTag::Ins(1),
+                AlignmentTag::MatchMismatch(14),
+            ]),
+        ];
+
+        for (name, read, expected_cigar) in cases {
+            let mut results = inversion_alignment(&reference, &read, &"ref".to_string(), &"read".to_string(), &test_inversion_scoring(), &test_affine_scoring(), false, None);
+            assert!(!has_inversion_marker(&results.cigar_string), "{}: unexpected inversion {:?}", name, results.cigar_string);
+            assert_eq!(results.cigar_string, expected_cigar, "{}", name);
+            assert!(results.take_inversion_events().is_empty(), "{}", name);
+            assert_eq!(ungapped(&results.read_aligned), read, "{}", name);
+        }
+    }
+
+    #[test]
+    fn inversion_aware_alignment_without_candidates_matches_affine_scores() {
+        // with no inversion candidates the inversion-aware DP must reduce to plain global affine
+        let reference = str_to_fasta_vec("GCCTCCACGGCCACTAGTATTATG");
+        let read = str_to_fasta_vec("GCCTCCAGGCCACTAGTTTATGA");
+
+        let mut inv_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_inversion_aware_alignment(&mut inv_mat, &HashMap::new(), &reference, &read, &test_inversion_scoring());
+
+        let mut aff_mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment(&mut aff_mat, &reference, &read, &test_affine_scoring());
+
+        assert_eq!(inv_mat.scores, aff_mat.scores);
+
+        let inv_result = perform_3d_global_traceback(&mut inv_mat, Some(&HashMap::new()), &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+        let aff_result = perform_3d_global_traceback(&mut aff_mat, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+        assert_eq!(inv_result.score, aff_result.score);
+        assert!(!has_inversion_marker(&inv_result.cigar_string));
+    }
+
+    #[test]
+    fn inversion_aware_alignment_takes_candidate_jump() {
+        // all-mismatch sequences; a high-scoring inversion candidate spanning cells (2,2)..(3,3)
+        // should be taken: score = candidate + best score at (1,1) + inversion penalty
+        let reference = str_to_fasta_vec("AAAA");
+        let read = str_to_fasta_vec("CCCC");
+
+        let candidate = AlignmentResult {
+            reference_name: "ref".to_string(),
+            read_name: "read".to_string(),
+            reference_aligned: str_to_fasta_vec("AA"),
+            read_aligned: str_to_fasta_vec("GG"),
+            read_quals: None,
+            cigar_string: vec![AlignmentTag::MatchMismatch(2)],
+            path: vec![AlignmentLocation { x: 2, y: 3 }, AlignmentLocation { x: 3, y: 2 }],
+            score: 100.0,
+            reference_start: 0,
+            read_start: 0,
+            bounding_box: None,
+        };
+        let start = AlignmentLocation { x: 2, y: 2 };
+        let end = AlignmentLocation { x: 3, y: 3 };
+        let mut candidates = HashMap::new();
+        candidates.insert(end, BoundedAlignment { alignment_result: candidate, bounding_box: (start, end) });
+
+        let mut mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_inversion_aware_alignment(&mut mat, &candidates, &reference, &read, &test_inversion_scoring());
+
+        // (1,1) is a single mismatch (-11); 100 - 11 - 2 = 87
+        assert_eq!(mat.scores[[3, 3, 0]], 87.0);
+        assert_eq!(mat.traceback[[3, 3, 0]], AlignmentDirection::Inv(start, end, InvMove::Diag(1)));
+        assert_eq!(mat.scores[[4, 4, 0]], 76.0);
+        // cells without a candidate are scored normally
+        assert_eq!(mat.scores[[2, 2, 0]], -22.0);
+
+        let result = perform_3d_global_traceback(&mut mat, Some(&candidates), &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+        assert_eq!(result.score, 76.0);
+        assert_eq!(result.cigar_string, vec![
+            AlignmentTag::MatchMismatch(1),
+            AlignmentTag::InversionOpen,
+            AlignmentTag::MatchMismatch(2),
+            AlignmentTag::InversionClose,
+            AlignmentTag::MatchMismatch(1),
+        ]);
+        assert_eq!(fasta_vec_to_string(&result.reference_aligned), "AAAA");
+        assert_eq!(fasta_vec_to_string(&result.read_aligned), "CGGC");
+    }
+
+    #[test]
+    fn inversion_aware_alignment_skips_candidate_worse_than_direct_path() {
+        // same layout as above, but the candidate scores too little to beat matching straight through
+        let reference = str_to_fasta_vec("AAAA");
+        let read = str_to_fasta_vec("AAAA");
+        let candidate = AlignmentResult::from_match_segment(b"TT", b"TT", &"ref".to_string(), &"read".to_string(), 2, 2, &test_affine_scoring());
+        let start = AlignmentLocation { x: 2, y: 2 };
+        let end = AlignmentLocation { x: 3, y: 3 };
+        let mut candidates = HashMap::new();
+        candidates.insert(end, BoundedAlignment { alignment_result: candidate, bounding_box: (start, end) });
+
+        let mut mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_inversion_aware_alignment(&mut mat, &candidates, &reference, &read, &test_inversion_scoring());
+
+        // direct path: 3 matches = 30; inversion path: 10 + 20 - 2 = 28
+        assert_eq!(mat.scores[[3, 3, 0]], 30.0);
+        assert_eq!(mat.traceback[[3, 3, 0]], AlignmentDirection::Diag(1));
+    }
+
+    #[test]
+    fn slice_out_inversions_splits_on_markers() {
+        let path: Vec<AlignmentLocation> = (1..=8).map(|i| AlignmentLocation { x: i, y: i }).collect();
+        let result = AlignmentResult {
+            reference_name: "ref".to_string(),
+            read_name: "read".to_string(),
+            reference_aligned: str_to_fasta_vec("AAACCGTT"),
+            read_aligned: str_to_fasta_vec("AAAGG-TT"),
+            read_quals: None,
+            cigar_string: vec![
+                AlignmentTag::MatchMismatch(3),
+                AlignmentTag::InversionOpen,
+                AlignmentTag::MatchMismatch(2),
+                AlignmentTag::Del(1),
+                AlignmentTag::InversionClose,
+                AlignmentTag::MatchMismatch(2),
+            ],
+            path: path.clone(),
+            score: 50.0,
+            reference_start: 4,
+            read_start: 7,
+            bounding_box: None,
+        };
+
+        let slices = result.slice_out_inversions();
+        assert_eq!(slices.len(), 3);
+
+        assert_eq!(fasta_vec_to_string(&slices[0].reference_aligned), "AAA");
+        assert_eq!(fasta_vec_to_string(&slices[0].read_aligned), "AAA");
+        assert_eq!(slices[0].cigar_string, vec![AlignmentTag::MatchMismatch(3)]);
+        assert_eq!(slices[0].path, path[0..3].to_vec());
+
+        assert_eq!(fasta_vec_to_string(&slices[1].reference_aligned), "CCG");
+        assert_eq!(fasta_vec_to_string(&slices[1].read_aligned), "GG-");
+        assert_eq!(slices[1].cigar_string, vec![AlignmentTag::MatchMismatch(2), AlignmentTag::Del(1)]);
+        assert_eq!(slices[1].path, path[3..6].to_vec());
+
+        assert_eq!(fasta_vec_to_string(&slices[2].reference_aligned), "TT");
+        assert_eq!(fasta_vec_to_string(&slices[2].read_aligned), "TT");
+        assert_eq!(slices[2].cigar_string, vec![AlignmentTag::MatchMismatch(2)]);
+        assert_eq!(slices[2].path, path[6..8].to_vec());
+
+        for slice in &slices {
+            assert_eq!(slice.reference_start, 4);
+            assert_eq!(slice.read_start, 7);
+        }
+    }
+
+    #[test]
+    fn slice_out_inversions_without_markers_returns_whole_alignment() {
+        let result = AlignmentResult::from_match_segment(b"ACGT", b"ACCT", &"ref".to_string(), &"read".to_string(), 1, 1, &test_affine_scoring());
+        let slices = result.slice_out_inversions();
+        assert_eq!(slices.len(), 1);
+        assert_eq!(slices[0].reference_aligned, result.reference_aligned);
+        assert_eq!(slices[0].read_aligned, result.read_aligned);
+        assert_eq!(slices[0].cigar_string, result.cigar_string);
+        assert_eq!(slices[0].path, result.path);
+    }
+
+    #[test]
+    fn convert_inverted_path_maps_revcomp_coordinates_back_to_read() {
+        // position y (1-based) in the reverse-complemented read is position len + 1 - y in the read
+        let mut result = AlignmentResult::from_match_segment(b"ACG", b"ACG", &"ref".to_string(), &"read".to_string(), 3, 2, &test_affine_scoring());
+        result.path = vec![AlignmentLocation { x: 3, y: 2 }, AlignmentLocation { x: 4, y: 3 }, AlignmentLocation { x: 5, y: 4 }];
+        result.cigar_string = vec![AlignmentTag::MatchMismatch(2), AlignmentTag::Ins(1)];
+
+        for (total_length, expected_ys) in [(10usize, [7usize, 8, 9]), (9, [6, 7, 8])] {
+            let converted = result.convert_inverted_path(total_length);
+            let expected_path: Vec<AlignmentLocation> = [5usize, 4, 3].iter().zip(expected_ys.iter())
+                .map(|(x, y)| AlignmentLocation { x: *x, y: *y }).collect();
+            assert_eq!(converted.path, expected_path, "length {}", total_length);
+            assert_eq!(converted.bounding_box, Some((
+                AlignmentLocation { x: 3, y: expected_ys[0] },
+                AlignmentLocation { x: 5, y: expected_ys[2] })));
+            // everything except the path/bounding box is carried over unchanged
+            assert_eq!(converted.reference_aligned, result.reference_aligned);
+            assert_eq!(converted.read_aligned, result.read_aligned);
+            assert_eq!(converted.cigar_string, result.cigar_string);
+            assert_eq!(converted.score, result.score);
+        }
+    }
+
+    #[test]
+    fn convert_inverted_path_on_real_revcomp_hit_pairs_complementary_bases() {
+        let reference = str_to_fasta_vec(TEST_AMPLICON);
+        let read = invert_block(&reference, 16, 36);
+        let rc_read = reverse_complement(&read);
+
+        let mut mat = create_scoring_record_3d(reference.len() + 1, rc_read.len() + 1, AlignmentType::Affine, true);
+        perform_affine_alignment(&mut mat, &reference, &rc_read, &test_affine_scoring());
+        let hit = perform_3d_global_traceback(&mut mat, None, &reference, &rc_read, &"ref".to_string(), &"read".to_string(), None, None);
+        assert_eq!(hit.path.len(), 20);
+
+        let converted = hit.convert_inverted_path(read.len());
+        // converted coordinates index the original read: each pair is a reference base vs its complement
+        for loc in &converted.path {
+            assert_eq!(reverse_complement(&[read[loc.y - 1]]), vec![reference[loc.x - 1]], "at {:?}", loc);
+        }
+        // 1-based bounds of the inverted block in both reference and read
+        assert_eq!(converted.bounding_box, Some((AlignmentLocation { x: 17, y: 17 }, AlignmentLocation { x: 36, y: 36 })));
+    }
+
+    #[test]
+    fn local_and_global_3d_scores_differ_after_mismatch() {
+        // after a leading mismatch, global carries the penalty forward; local restarts at zero
+        let reference = str_to_fasta_vec("CA");
+        let read = str_to_fasta_vec("GA");
+        let scoring = test_affine_scoring();
+
+        let mut global = create_scoring_record_3d(3, 3, AlignmentType::Affine, false);
+        perform_affine_alignment(&mut global, &reference, &read, &scoring);
+        let mut local = create_scoring_record_3d(3, 3, AlignmentType::Affine, true);
+        perform_affine_alignment(&mut local, &reference, &read, &scoring);
+
+        assert_eq!(global.scores[[1, 1, 0]], -11.0);
+        assert_eq!(global.scores[[2, 2, 0]], -1.0);
+        assert_eq!(local.scores[[1, 1, 0]], 0.0);
+        assert_eq!(local.scores[[2, 2, 0]], 10.0);
+        // gap matrices have no zero floor: local opens from the floored 0.0 match cell (0 - 15 - 5),
+        // global extends its existing gap (-25 - 5)
+        assert_eq!(local.scores[[2, 1, 1]], -20.0);
+        assert_eq!(global.scores[[2, 1, 1]], -30.0);
+    }
+
+    #[test]
+    fn local_3d_score_never_negative_in_match_matrix() {
+        let reference = str_to_fasta_vec("ACGTACGTTTGA");
+        let read = str_to_fasta_vec("TTTTGGGGCCCC");
+        let mut local = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, true);
+        perform_affine_alignment(&mut local, &reference, &read, &test_affine_scoring());
+        for x in 1..=reference.len() {
+            for y in 1..=read.len() {
+                assert!(local.scores[[x, y, 0]] >= 0.0, "negative local score at {},{}", x, y);
+            }
+        }
+    }
+
+    #[test]
+    fn update_3d_score_applies_final_gap_multiplier_only_at_last_row_or_column() {
+        let reference = str_to_fasta_vec("AC");
+        let read = str_to_fasta_vec("AC");
+        let scoring = AffineScoring { final_gap_multiplier: 0.5, ..test_affine_scoring() };
+
+        for is_local in [false, true] {
+            let mut mat = create_scoring_record_3d(3, 3, AlignmentType::Affine, is_local);
+            perform_affine_alignment(&mut mat, &reference, &read, &scoring);
+            // interior cell: full gap extension, (-15 - 5) * 0.5 - 5
+            assert_eq!(mat.scores[[1, 1, 1]], -15.0, "local = {}", is_local);
+            // last row / column: open from the (1,1) match with a halved extension, 10 - 15 - 2.5
+            assert_eq!(mat.scores[[2, 1, 1]], -7.5, "local = {}", is_local);
+            assert_eq!(mat.scores[[1, 2, 2]], -7.5, "local = {}", is_local);
+        }
+    }
+
+    #[test]
+    fn update_3d_score_reports_changes() {
+        let reference = str_to_fasta_vec("AC");
+        let read = str_to_fasta_vec("AC");
+        let scoring = test_affine_scoring();
+        for is_local in [false, true] {
+            let mut mat = create_scoring_record_3d(3, 3, AlignmentType::Affine, is_local);
+            perform_affine_alignment(&mut mat, &reference, &read, &scoring);
+            let update = if is_local { update_3d_score_local } else { update_3d_score };
+            // recomputing an up-to-date cell changes nothing
+            assert_eq!(update(&mut mat, &reference, &read, &scoring, 2, 2), (false, false, false));
+            mat.scores[[2, 2, 0]] = 0.5;
+            assert_eq!(update(&mut mat, &reference, &read, &scoring, 2, 2), (true, false, false));
+            assert_eq!(mat.scores[[2, 2, 0]], 20.0);
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn update_3d_score_rejects_local_matrix() {
+        let seq = str_to_fasta_vec("AC");
+        let mut mat = create_scoring_record_3d(3, 3, AlignmentType::Affine, true);
+        update_3d_score(&mut mat, &seq, &seq, &test_affine_scoring(), 1, 1);
+    }
+
+    #[test]
+    fn update_sub_vector3d_recomputes_corrupted_run() {
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCT");
+        let read = str_to_fasta_vec("CTACTCTACTGAAC");
+        let scoring = test_affine_scoring();
+        let mut original = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, true);
+        perform_affine_alignment(&mut original, &reference, &read, &scoring);
+
+        // down a column: corrupt rows 4.. of column 5, then refresh starting below (3,5)
+        let mut by_row = original.clone();
+        for x in 4..=reference.len() {
+            for z in 0..3 { by_row.scores[[x, 5, z]] = 999.0; }
+        }
+        let count = update_sub_vector3d(&mut by_row, &reference, &read, &scoring, 3, 5, true);
+        assert_eq!(count, reference.len() - 3);
+        assert_eq!(by_row.scores, original.scores);
+        // nothing left to fix
+        assert_eq!(update_sub_vector3d(&mut by_row, &reference, &read, &scoring, 3, 5, true), 0);
+
+        // along a row: corrupt columns 6.. of row 4, then refresh starting right of (4,5)
+        let mut by_col = original.clone();
+        for y in 6..=read.len() {
+            for z in 0..3 { by_col.scores[[4, y, z]] = 999.0; }
+        }
+        let count = update_sub_vector3d(&mut by_col, &reference, &read, &scoring, 4, 5, false);
+        assert_eq!(count, read.len() - 5);
+        assert_eq!(by_col.scores, original.scores);
+    }
+
+    #[test]
+    fn update_sub_vector3d_stops_at_first_unchanged_cell() {
+        let reference = str_to_fasta_vec("CCAATCTACTACTGCT");
+        let read = str_to_fasta_vec("CTACTCTACTGAAC");
+        let scoring = test_affine_scoring();
+        let mut original = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, true);
+        perform_affine_alignment(&mut original, &reference, &read, &scoring);
+
+        // a corrupted cell below an up-to-date one is not reached
+        let mut mat = original.clone();
+        for z in 0..3 { mat.scores[[6, 5, z]] = 999.0; }
+        assert_eq!(update_sub_vector3d(&mut mat, &reference, &read, &scoring, 3, 5, true), 0);
+        assert_eq!(mat.scores[[6, 5, 0]], 999.0);
+    }
+
+    #[test]
+    fn banded_alignment_matches_unbanded_when_band_is_wide_enough() {
+        // a 10 bp deletion; the band (centred on the scaled diagonal) must reach ~5 cells off it
+        let reference = str_to_fasta_vec(TEST_AMPLICON);
+        let mut read = reference.clone();
+        read.drain(25..35);
+        let scoring = test_affine_scoring();
+
+        let mut full = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment(&mut full, &reference, &read, &scoring);
+        let full_result = perform_3d_global_traceback(&mut full, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+        assert_eq!(full_result.cigar_string, vec![AlignmentTag::MatchMismatch(25), AlignmentTag::Del(10), AlignmentTag::MatchMismatch(25)]);
+        assert_eq!(full_result.score, 435.0);
+
+        for bandwidth in [8usize, 12, 60] {
+            let mut banded = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+            perform_affine_alignment_bandwidth(&mut banded, &reference, &read, &scoring, &bandwidth);
+            let banded_result = perform_3d_global_traceback(&mut banded, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+            assert_eq!(banded_result.cigar_string, full_result.cigar_string, "bandwidth {}", bandwidth);
+            assert_eq!(banded_result.score, full_result.score, "bandwidth {}", bandwidth);
+            assert_eq!(banded_result.reference_aligned, full_result.reference_aligned, "bandwidth {}", bandwidth);
+            assert_eq!(banded_result.read_aligned, full_result.read_aligned, "bandwidth {}", bandwidth);
+        }
+    }
+
+    #[test]
+    fn banded_alignment_degrades_when_band_is_too_narrow() {
+        let reference = str_to_fasta_vec(TEST_AMPLICON);
+        let mut read = reference.clone();
+        read.drain(25..35);
+        let scoring = test_affine_scoring();
+
+        let mut banded = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment_bandwidth(&mut banded, &reference, &read, &scoring, &5);
+        // cells outside the band are never computed
+        assert_eq!(banded.scores[[60, 1, 0]], 0.0);
+        assert_eq!(banded.scores[[1, 50, 0]], 0.0);
+
+        let result = perform_3d_global_traceback(&mut banded, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+        // the single 10 bp deletion no longer fits, so it is split up and scores below the optimum (435)
+        assert_eq!(result.score, 420.0);
+        assert_eq!(result.cigar_string, vec![
+            AlignmentTag::MatchMismatch(24),
+            AlignmentTag::Del(7),
+            AlignmentTag::MatchMismatch(1),
+            AlignmentTag::Del(3),
+            AlignmentTag::MatchMismatch(25),
+        ]);
+        // still a complete global alignment of both sequences
+        assert_eq!(ungapped(&result.reference_aligned), reference);
+        assert_eq!(ungapped(&result.read_aligned), read);
+    }
+
+    #[test]
+    fn banded_alignment_zero_band_only_initialises_borders() {
+        let reference = str_to_fasta_vec("ACGTACGT");
+        let read = str_to_fasta_vec("ACGTACGT");
+        let mut mat = create_scoring_record_3d(9, 9, AlignmentType::Affine, false);
+        perform_affine_alignment_bandwidth(&mut mat, &reference, &read, &test_affine_scoring(), &0);
+
+        assert_eq!(mat.scores[[8, 0, 1]], -55.0);
+        assert_eq!(mat.scores[[0, 8, 2]], -55.0);
+        for x in 1..=8 {
+            for y in 1..=8 {
+                for z in 0..3 {
+                    assert_eq!(mat.scores[[x, y, z]], 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn to_cigar_string_matches_only() {
+        let result = AlignmentResult::from_match_segment(b"ACGTACGT", b"ACGAACGT", &"ref".to_string(), &"read".to_string(), 0, 0, &test_affine_scoring());
+        assert_eq!(cigar_ops(&result), vec![Op::new(Kind::Match, 8)]);
+    }
+
+    #[test]
+    fn to_cigar_string_mixed_ops() {
+        let mut result = AlignmentResult::from_match_segment(b"A", b"A", &"ref".to_string(), &"read".to_string(), 0, 0, &test_affine_scoring());
+        result.cigar_string = vec![
+            AlignmentTag::SoftClip(2),
+            AlignmentTag::MatchMismatch(3),
+            AlignmentTag::Ins(2),
+            AlignmentTag::MatchMismatch(4),
+            AlignmentTag::Del(1),
+            AlignmentTag::MatchMismatch(2),
+            AlignmentTag::HardClip(5),
+        ];
+        let cigar = result.to_cigar_string();
+        assert_eq!(cigar.len(), 7);
+        assert_eq!(cigar.iter().map(|op| op.unwrap()).collect::<Vec<Op>>(), vec![
+            Op::new(Kind::SoftClip, 2),
+            Op::new(Kind::Match, 3),
+            Op::new(Kind::Insertion, 2),
+            Op::new(Kind::Match, 4),
+            Op::new(Kind::Deletion, 1),
+            Op::new(Kind::Match, 2),
+            Op::new(Kind::HardClip, 5),
+        ]);
+        assert_eq!(cigar.alignment_span().unwrap(), 10);
+        assert_eq!(cigar.read_length().unwrap(), 13);
+    }
+
+    #[test]
+    fn to_cigar_string_from_real_alignment_with_insertion_and_deletion() {
+        // delete the A at reference index 12 and insert a G between reference 20 (T) and 21 (A)
+        let reference = str_to_fasta_vec("GCCTCCACGGCCACTAGTATTATGCCCAGT");
+        let read = str_to_fasta_vec("GCCTCCACGGCCCTAGTATTGATGCCCAGT");
+        let mut mat = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment(&mut mat, &reference, &read, &test_affine_scoring());
+        let result = perform_3d_global_traceback(&mut mat, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+
+        assert_eq!(cigar_ops(&result), vec![
+            Op::new(Kind::Match, 12),
+            Op::new(Kind::Deletion, 1),
+            Op::new(Kind::Match, 8),
+            Op::new(Kind::Insertion, 1),
+            Op::new(Kind::Match, 9),
+        ]);
+        let cigar = result.to_cigar_string();
+        assert_eq!(cigar.alignment_span().unwrap(), reference.len());
+        assert_eq!(cigar.read_length().unwrap(), read.len());
+    }
+
+    #[test]
+    #[should_panic(expected = "inversion open")]
+    fn to_cigar_string_rejects_unstripped_inversion_markers() {
+        // callers must run take_inversion_events() before converting to a SAM CIGAR
+        let mut result = AlignmentResult::from_match_segment(b"AAAA", b"AAAA", &"ref".to_string(), &"read".to_string(), 0, 0, &test_affine_scoring());
+        result.cigar_string = vec![AlignmentTag::MatchMismatch(1), AlignmentTag::InversionOpen, AlignmentTag::MatchMismatch(2), AlignmentTag::InversionClose, AlignmentTag::MatchMismatch(1)];
+        let _ = result.to_cigar_string();
+    }
 }
