@@ -981,4 +981,344 @@ mod tests {
             true
         );
     }
+
+    use crate::read_strategies::sequence_layout::ReadPosition::{Index1, Index2};
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // 60bp fragment without long repeats, so the overlap alignment is unambiguous
+    const FRAGMENT: &[u8] = b"ACGTTGCAAGCTTCGATCCGTAGGCATTACGGATCAGTCCATGGTACCTGAGCTTAAGCT";
+
+    fn layout(merge: Option<MergeStrategy>, reads: Vec<ReadPosition>) -> SequenceLayout {
+        SequenceLayout {
+            aligner: None,
+            merge,
+            reads,
+            known_strand: true,
+            references: BTreeMap::new(),
+        }
+    }
+
+    fn r1(orientation: AlignedReadOrientation) -> ReadPosition {
+        Read1 { orientation }
+    }
+
+    fn r2(orientation: AlignedReadOrientation) -> ReadPosition {
+        Read2 { orientation }
+    }
+
+    fn paired_set(r1_seq: &[u8], r1_q: &[u8], r2_seq: &[u8], r2_q: &[u8]) -> ReadSetContainer {
+        ReadSetContainer {
+            read_one: Record::with_attrs("pair1", None, r1_seq, r1_q),
+            read_two: Some(Record::with_attrs("pair1", None, r2_seq, r2_q)),
+            index_one: None,
+            index_two: None,
+        }
+    }
+
+    #[test]
+    fn test_contains_read_position_helpers() {
+        let fwd = AlignedReadOrientation::Forward;
+        let all = layout(
+            None,
+            vec![
+                r1(fwd.clone()),
+                r2(fwd.clone()),
+                Index1 { orientation: fwd.clone() },
+                Index2 { orientation: fwd.clone() },
+            ],
+        );
+        assert!(MergedReadSequence::contains_read1(&all));
+        assert!(MergedReadSequence::contains_read2(&all));
+        assert!(MergedReadSequence::contains_index1(&all));
+        assert!(MergedReadSequence::contains_index2(&all));
+
+        // each helper must match only its own position; spacers match nothing
+        let only = |p: ReadPosition| {
+            let l = layout(None, vec![Spacer { spacer_sequence: "AC".to_string() }, p]);
+            (
+                MergedReadSequence::contains_read1(&l),
+                MergedReadSequence::contains_read2(&l),
+                MergedReadSequence::contains_index1(&l),
+                MergedReadSequence::contains_index2(&l),
+            )
+        };
+        assert_eq!(only(r1(fwd.clone())), (true, false, false, false));
+        assert_eq!(only(r2(fwd.clone())), (false, true, false, false));
+        assert_eq!(only(Index1 { orientation: fwd.clone() }), (false, false, true, false));
+        assert_eq!(only(Index2 { orientation: fwd.clone() }), (false, false, false, true));
+
+        let empty = layout(None, vec![]);
+        assert!(!MergedReadSequence::contains_read1(&empty));
+        assert!(!MergedReadSequence::contains_read2(&empty));
+        assert!(!MergedReadSequence::contains_index1(&empty));
+        assert!(!MergedReadSequence::contains_index2(&empty));
+    }
+
+    #[test]
+    fn test_unified_read_pattern_reflects_layout() {
+        let fwd = AlignedReadOrientation::Forward;
+        let read_set = ReadSetContainer::new_from_read1(Record::with_attrs("x", None, b"ACGT", b"HHHH"));
+        let unified = UnifiedRead::new(
+            layout(None, vec![r1(fwd.clone()), Index1 { orientation: fwd.clone() }]),
+            read_set,
+        );
+        assert_eq!(unified.read_pattern, (true, false, true, false));
+    }
+
+    #[test]
+    fn test_decision_tree_align_merges_overlapping_pair() {
+        // read2 comes off the opposite strand; Align must reverse-complement it and
+        // rebuild the full fragment across the 20bp overlap.
+        let read1 = &FRAGMENT[0..40];
+        let read2 = reverse_complement(&FRAGMENT[20..60]);
+        let q1 = vec![b'I'; 40];
+        let q2 = vec![b'5'; 40];
+        let mut unified = UnifiedRead::new(
+            layout(
+                Some(MergeStrategy::Align),
+                vec![r1(AlignedReadOrientation::Forward), r2(AlignedReadOrientation::ReverseComplement)],
+            ),
+            paired_set(read1, &q1, &read2, &q2),
+        );
+
+        assert_eq!(u8s(unified.seq()), u8s(&FRAGMENT.to_vec()));
+        assert_eq!(unified.name(), &b"pair1".to_vec());
+        let quals = unified.quals.as_ref().unwrap();
+        assert_eq!(quals.len(), 60);
+        assert!(quals[0..20].iter().all(|q| *q == b'I'));
+        assert!(quals[40..60].iter().all(|q| *q == b'5'));
+        // agreeing overlap bases combine both qualities
+        let combined = combine_phred_scores(&b'I', &b'5', true);
+        assert!(quals[20..40].iter().all(|q| *q == combined));
+    }
+
+    #[test]
+    fn test_decision_tree_concatenate_modes_follow_layout_orientation() {
+        // Concatenate and ConcatenateBothForward both defer to the per-read orientation in the layout
+        for strategy in vec![MergeStrategy::Concatenate, MergeStrategy::ConcatenateBothForward] {
+            let mut unified = UnifiedRead::new(
+                layout(
+                    Some(strategy.clone()),
+                    vec![
+                        r1(AlignedReadOrientation::Forward),
+                        Spacer { spacer_sequence: "NN".to_string() },
+                        r2(AlignedReadOrientation::ReverseComplement),
+                    ],
+                ),
+                paired_set(b"AAAC", b"ABCD", b"GGGT", b"EFGH"),
+            );
+            assert_eq!(u8s(unified.seq()), "AAACNNACCC", "strategy {:?}", strategy);
+            assert_eq!(u8s(unified.quals.as_ref().unwrap()), "ABCDHHHGFE", "strategy {:?}", strategy);
+            assert_eq!(unified.name(), &b"pair1".to_vec());
+        }
+    }
+
+    #[test]
+    fn test_decision_tree_concatenate_with_index1() {
+        let mut read_set = paired_set(b"AAAA", b"ABCD", b"CCCC", b"EFGH");
+        read_set.index_one = Some(Record::with_attrs("pair1", None, b"GT", b"IJ"));
+        let fwd = AlignedReadOrientation::Forward;
+        let mut unified = UnifiedRead::new(
+            layout(
+                Some(MergeStrategy::Concatenate),
+                vec![Index1 { orientation: fwd.clone() }, r1(fwd.clone()), r2(fwd.clone())],
+            ),
+            read_set,
+        );
+        assert_eq!(u8s(unified.seq()), "GTAAAACCCC");
+        assert_eq!(u8s(unified.quals.as_ref().unwrap()), "IJABCDEFGH");
+    }
+
+    #[test]
+    fn test_decision_tree_read1_only_ignores_merge_strategy() {
+        // with only read1 in the layout, read2 is never used, whatever the merge mode
+        for merge in vec![None, Some(MergeStrategy::Align), Some(MergeStrategy::Concatenate)] {
+            let mut unified = UnifiedRead::new(
+                layout(merge.clone(), vec![r1(AlignedReadOrientation::Forward)]),
+                paired_set(b"AACG", b"ABCD", b"TTTT", b"EFGH"),
+            );
+            assert_eq!(u8s(unified.seq()), "AACG", "merge {:?}", merge);
+            assert_eq!(u8s(unified.quals.as_ref().unwrap()), "ABCD");
+            assert_eq!(unified.name(), &b"pair1".to_vec());
+        }
+    }
+
+    #[test]
+    fn test_decision_tree_name_uses_first_id_token() {
+        let mut unified = UnifiedRead::new(
+            layout(None, vec![r1(AlignedReadOrientation::Forward)]),
+            ReadSetContainer::new_from_read1(Record::with_attrs("read7 extra", None, b"ACGT", b"HHHH")),
+        );
+        assert_eq!(unified.name(), &b"read7".to_vec());
+        assert!(unified.seq.is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "We don't support this read structure yet")]
+    fn test_decision_tree_paired_without_merge_strategy_panics() {
+        let fwd = AlignedReadOrientation::Forward;
+        let mut unified = UnifiedRead::new(
+            layout(None, vec![r1(fwd.clone()), r2(fwd)]),
+            paired_set(b"AAAA", b"HHHH", b"CCCC", b"HHHH"),
+        );
+        unified.seq();
+    }
+
+    #[test]
+    #[should_panic(expected = "We don't support this read structure yet")]
+    fn test_decision_tree_align_with_index_panics() {
+        let fwd = AlignedReadOrientation::Forward;
+        let mut read_set = paired_set(b"AAAA", b"HHHH", b"CCCC", b"HHHH");
+        read_set.index_one = Some(Record::with_attrs("pair1", None, b"GT", b"HH"));
+        let mut unified = UnifiedRead::new(
+            layout(
+                Some(MergeStrategy::Align),
+                vec![r1(fwd.clone()), r2(fwd.clone()), Index1 { orientation: fwd }],
+            ),
+            read_set,
+        );
+        unified.seq();
+    }
+
+    #[test]
+    #[should_panic(expected = "We don't support this read structure yet")]
+    fn test_decision_tree_concatenate_with_both_indexes_panics() {
+        let fwd = AlignedReadOrientation::Forward;
+        let mut read_set = paired_set(b"AAAA", b"HHHH", b"CCCC", b"HHHH");
+        read_set.index_one = Some(Record::with_attrs("pair1", None, b"GT", b"HH"));
+        read_set.index_two = Some(Record::with_attrs("pair1", None, b"CA", b"HH"));
+        let mut unified = UnifiedRead::new(
+            layout(
+                Some(MergeStrategy::Concatenate),
+                vec![
+                    r1(fwd.clone()),
+                    r2(fwd.clone()),
+                    Index1 { orientation: fwd.clone() },
+                    Index2 { orientation: fwd },
+                ],
+            ),
+            read_set,
+        );
+        unified.seq();
+    }
+
+    #[test]
+    fn test_merge_fasta_bases_overlap_mismatch_higher_quality_wins() {
+        // read2 is passed already in read1's orientation (no reverse complement here)
+        let read1 = FRAGMENT[0..40].to_vec();
+        let mut read2 = FRAGMENT[20..60].to_vec();
+        // mismatch at fragment position 30 (read2 index 10)
+        read2[10] = if read2[10] == b'A' { b'C' } else { b'A' };
+        let name = String::from("pair");
+        let scoring = get_scoring_scheme();
+
+        // read1 confident at the mismatch: read1's base wins
+        let q1 = vec![b'I'; 40];
+        let mut q2 = vec![b'I'; 40];
+        q2[10] = b'+';
+        let merged = merge_fasta_bases_by_alignment(&read1, &name, &q1, &read2, &name, &q2, &scoring);
+        assert_eq!(u8s(&merged.read_bases), u8s(&FRAGMENT.to_vec()));
+        assert_eq!(merged.read_quals.len(), 60);
+        assert_eq!(merged.read_quals[30], combine_phred_scores(&b'I', &b'+', false));
+        assert_eq!(merged.read_quals[29], combine_phred_scores(&b'I', &b'I', true));
+
+        // read2 confident at the mismatch: read2's base wins
+        let mut q1 = vec![b'I'; 40];
+        q1[30] = b'+';
+        let q2 = vec![b'I'; 40];
+        let merged = merge_fasta_bases_by_alignment(&read1, &name, &q1, &read2, &name, &q2, &scoring);
+        let mut expected = FRAGMENT.to_vec();
+        expected[30] = read2[10];
+        assert_eq!(u8s(&merged.read_bases), u8s(&expected));
+        assert_eq!(merged.read_quals[30], combine_phred_scores(&b'+', &b'I', false));
+    }
+
+    #[test]
+    fn test_merge_fasta_bases_equal_quality_mismatch_prefers_read1() {
+        let read1 = FRAGMENT[0..40].to_vec();
+        let mut read2 = FRAGMENT[20..60].to_vec();
+        read2[10] = if read2[10] == b'A' { b'C' } else { b'A' };
+        let q = vec![b'F'; 40];
+        let name = String::from("pair");
+        let merged = merge_fasta_bases_by_alignment(&read1, &name, &q, &read2, &name, &q, &get_scoring_scheme());
+        assert_eq!(u8s(&merged.read_bases), u8s(&FRAGMENT.to_vec()));
+    }
+
+    #[test]
+    fn test_merge_fasta_bases_non_overlapping_keeps_each_reads_quals() {
+        let read1 = FRAGMENT[0..30].to_vec();
+        let read2 = b"GGGGGGGGGGGGGGGGGGGGGGGGGGGGGG".to_vec();
+        let q1: Vec<u8> = (0..30).map(|i| b'5' + (i % 10) as u8).collect();
+        let q2: Vec<u8> = (0..30).map(|i| b'+' + (i % 7) as u8).collect();
+        let name = String::from("pair");
+        let merged = merge_fasta_bases_by_alignment(&read1, &name, &q1, &read2, &name, &q2, &get_scoring_scheme());
+        let mut expected_bases = read1.clone();
+        expected_bases.extend(&read2);
+        let mut expected_quals = q1.clone();
+        expected_quals.extend(&q2);
+        assert_eq!(u8s(&merged.read_bases), u8s(&expected_bases));
+        assert_eq!(merged.read_quals, expected_quals);
+    }
+
+    #[test]
+    fn test_merge_reads_by_alignment_reverses_read2_quals() {
+        // non-overlapping pair: read2's bases are reverse-complemented and its quals reversed
+        let q1 = vec![b'I'; 20];
+        let q2: Vec<u8> = (0..20).map(|i| b'+' + i as u8).collect();
+        let rec1 = Record::with_attrs("p", None, b"AAAAAAAAAAAAAAAAAAAA", &q1);
+        let rec2 = Record::with_attrs("p", None, b"GGGGGGGGGGGGGGGGGGGT", &q2);
+        let merged = merge_reads_by_alignment(&rec1, &rec2, &get_scoring_scheme(), &sld());
+        assert_eq!(u8s(&merged.read_bases), "AAAAAAAAAAAAAAAAAAAAACCCCCCCCCCCCCCCCCCC");
+        let mut expected_quals = q1.clone();
+        expected_quals.extend(q2.iter().rev());
+        assert_eq!(merged.read_quals, expected_quals);
+    }
+
+    fn write_fastq(contents: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    #[test]
+    fn test_merged_iterator_yields_each_record_once() {
+        let r1_file = write_fastq("@a/1\nAAAA\n+\nABCD\n@b/1\nCCCC\n+\nEFGH\n@c/1\nGGGG\n+\nIJKL\n");
+        let r2_file = write_fastq("@a/2\nTTTA\n+\nabcd\n@b/2\nTTTC\n+\nefgh\n@c/2\nTTTG\n+\nijkl\n");
+        let iterator = ReadIterator::new(
+            r1_file.path().to_path_buf(),
+            Some(r2_file.path().to_path_buf()),
+            None,
+            None,
+        );
+        let fwd = AlignedReadOrientation::Forward;
+        let read_structure = layout(Some(MergeStrategy::Concatenate), vec![r1(fwd.clone()), r2(fwd)]);
+
+        let results: Vec<(String, String, String)> = merged_iterator(iterator, &read_structure)
+            .map(|mut unified| {
+                assert_eq!(unified.read_structure, read_structure);
+                let seq = u8s(unified.seq());
+                let quals = u8s(unified.quals.as_ref().unwrap());
+                (u8s(unified.name()), seq, quals)
+            })
+            .collect();
+
+        assert_eq!(
+            results,
+            vec![
+                ("a/1".to_string(), "AAAATTTA".to_string(), "ABCDabcd".to_string()),
+                ("b/1".to_string(), "CCCCTTTC".to_string(), "EFGHefgh".to_string()),
+                ("c/1".to_string(), "GGGGTTTG".to_string(), "IJKLijkl".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_merged_iterator_empty_input() {
+        let r1_file = write_fastq("");
+        let iterator = ReadIterator::new(r1_file.path().to_path_buf(), None, None, None);
+        let read_structure = layout(None, vec![r1(AlignedReadOrientation::Forward)]);
+        assert_eq!(merged_iterator(iterator, &read_structure).count(), 0);
+    }
 }
