@@ -16,7 +16,7 @@ use crate::alignment::alignment_matrix::{
 };
 use crate::alignment::scoring_functions::{AffineScoring, ConvexScoring, InversionScoring};
 use crate::linked_alignment::{
-    align_string_with_anchors, find_greedy_non_overlapping_segments, orient_by_longest_segment,
+    align_string_with_anchors, find_greedy_non_overlapping_segments, orientation_kmer_scores,
 };
 use crate::rayon::iter::ParallelBridge;
 use crate::rayon::iter::ParallelIterator;
@@ -1761,20 +1761,10 @@ pub fn align_to_reference_choices(
             let ref_base = &rm.references.values().next().unwrap();
             let ref_name = String::from_utf8(ref_base.name.clone()).unwrap();
             let (forward_oriented_seq, oriented_quals, reverse_complemented) = if !read_structure.known_strand {
-                let orientation_search =
-                    orient_by_longest_segment(&read, &ref_base.sequence, &ref_base.suffix_table);
-                let forward_seed_score = orientation_search
-                    .1
-                    .alignment_segments
-                    .iter()
-                    .map(|segment| segment.length)
-                    .sum::<usize>();
-                let reverse_seed_score = orientation_search
-                    .2
-                    .alignment_segments
-                    .iter()
-                    .map(|segment| segment.length)
-                    .sum::<usize>();
+                // count shared k-mers per orientation; a greedy colinear seed chain can be derailed
+                // by one early spurious hit near the reference end (e.g. palindromic amplicon ends)
+                let (forward_seed_score, reverse_seed_score) =
+                    orientation_kmer_scores(&read, &ref_base.suffix_table);
                 let orientation = match forward_seed_score.cmp(&reverse_seed_score) {
                     std::cmp::Ordering::Greater => true,
                     std::cmp::Ordering::Less => false,

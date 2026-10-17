@@ -34,6 +34,29 @@ pub fn orient_by_longest_segment(search_string: &Vec<u8>, reference: &Vec<u8>, s
     (fwd_score >= rev_score, fwd_score_mp, rev_score_mp)
 }
 
+/// score a read's forward and reverse-complement orientation by counting its seed-sized k-mers
+/// that occur anywhere in the reference. Unlike the greedy colinear chain used by
+/// `orient_by_longest_segment`, a single spurious early hit (e.g. read adapter sequence matching
+/// the end of a reference whose ends are reverse complements of each other) can't block the
+/// remaining true matches.
+///
+/// # Arguments
+///
+/// * `search_string` - a u8 Vec representing the search string
+/// * `seeds` - a suffix array lookup object for the reference
+pub fn orientation_kmer_scores(search_string: &[u8], seeds: &SuffixTableLookup) -> (usize, usize) {
+    let count_hits = |sequence: &[u8]| -> usize {
+        if sequence.len() < seeds.seed_size {
+            return 0;
+        }
+        sequence
+            .windows(seeds.seed_size)
+            .filter(|kmer| !seeds.suffix_table.positions_internal(kmer).is_empty())
+            .count()
+    };
+    (count_hits(search_string), count_hits(&bio::alphabets::dna::revcomp(search_string)))
+}
+
 
 #[allow(dead_code)]
 /// create an alignment string, with matching lengths, from a read, reference, and their CIGAR string
@@ -518,6 +541,24 @@ mod tests {
         assert_eq!(ar.aligned_read.len(), 4);
         assert_eq!(ar.aligned_ref.len(), 4);
         assert_eq!(ar.cigar_tags.len(), 1);
+    }
+
+    #[test]
+    fn orientation_kmer_scores_palindromic_ends_test() {
+        // the reference ends with the reverse complement of its start; the forward read carries a
+        // leading copy of that end sequence, which derails a greedy colinear chain toward reverse
+        let start = "GGTGCTGAAGAAAGTTGTCGGTGTC";
+        let middle = "TTAACCGTATCGTGTAGAGACTGCGTAGGTTTGCTAGACATTGTGCCGCATCAGGTACCAAATCGAGTAACCGTTGC";
+        let end = String::from_utf8(bio::alphabets::dna::revcomp(start.as_bytes())).unwrap();
+        let reference = format!("{}{}{}", start, middle, end).as_bytes().to_owned();
+        let read = format!("{}{}{}{}", end, start, middle, end).as_bytes().to_owned();
+        let reference_lookup = ReferenceManager::find_seeds(&reference, 8);
+
+        let (forward, reverse) = orientation_kmer_scores(&read, &reference_lookup);
+        assert!(forward > reverse, "forward {} should beat reverse {}", forward, reverse);
+
+        let (forward, reverse) = orientation_kmer_scores(&bio::alphabets::dna::revcomp(&read), &reference_lookup);
+        assert!(reverse > forward, "reverse {} should beat forward {}", reverse, forward);
     }
 
     #[test]
