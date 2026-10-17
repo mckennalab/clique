@@ -688,6 +688,502 @@ mod tests {
         ); // not corrected
     }
 
+    #[test]
+    fn test_push_keeps_only_tags_within_max_distance_of_length() {
+        let tempfile = NamedTempFile::new().unwrap();
+        let config = degenerate_config(10, 2);
+        let mut corrector =
+            SequenceCorrector::new(tempfile.path().to_path_buf(), &5000, config.clone());
+
+        // length 10 +/- 2 is accepted; gaps don't count toward the length
+        for (name, tag) in [
+            ("too_short", "AAAAAAA"),
+            ("shortest", "AAAAAAAA"),
+            ("gapped", "AAAA--AAAA"),
+            ("longest", "AAAAAAAAAAAA"),
+            ("too_long", "AAAAAAAAAAAAA"),
+        ] {
+            corrector.push(create_fake_read_set_container(
+                &name.to_string(),
+                &tag.to_string(),
+                &config,
+            ));
+        }
+
+        assert_eq!(corrector.processed_sequences, 5);
+        assert_eq!(corrector.buffer.len(), 3);
+        assert_eq!(corrector.hash_map.len(), 2);
+        assert_eq!(corrector.hash_map.get(b"AAAAAAAA".as_slice()), Some(&2));
+        assert!(!corrector.hash_map.contains_key(b"AAAAAAA".as_slice()));
+        assert!(!corrector.hash_map.contains_key(b"AAAAAAAAAAAAA".as_slice()));
+    }
+
+    #[test]
+    fn test_correct_degenerate_list_single_tag_is_resized_to_tag_length() {
+        let tempfile = NamedTempFile::new().unwrap();
+        let config = degenerate_config(10, 2);
+
+        let mut corrector =
+            SequenceCorrector::new(tempfile.path().to_path_buf(), &5000, config.clone());
+        corrector.push(create_fake_read_set_container(
+            &"short".to_string(),
+            &"AAAAA-TTTT".to_string(),
+            &config,
+        ));
+        let list = corrector.correct_degenerate_list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            list.get(b"AAAAATTTT-".as_slice()),
+            Some(&b"AAAAATTTT-".to_vec())
+        );
+
+        let mut corrector =
+            SequenceCorrector::new(tempfile.path().to_path_buf(), &5000, config.clone());
+        corrector.push(create_fake_read_set_container(
+            &"long".to_string(),
+            &"AAAAATTTTTGG".to_string(),
+            &config,
+        ));
+        let list = corrector.correct_degenerate_list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            list.get(b"AAAAATTTTT".as_slice()),
+            Some(&b"AAAAATTTTT".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_correct_degenerate_list_does_not_merge_beyond_max_distance() {
+        let tempfile = NamedTempFile::new().unwrap();
+        let config = degenerate_config(10, 2);
+        let mut corrector =
+            SequenceCorrector::new(tempfile.path().to_path_buf(), &5000, config.clone());
+        for _ in 0..20 {
+            corrector.push(create_fake_read_set_container(
+                &"dominant".to_string(),
+                &"AAAAAAAAAA".to_string(),
+                &config,
+            ));
+        }
+        // two mismatches: within max_distance, swallowed by the dominant tag
+        corrector.push(create_fake_read_set_container(
+            &"two_off".to_string(),
+            &"AAAAAAAATT".to_string(),
+            &config,
+        ));
+        // three mismatches: beyond max_distance, stays its own cluster
+        corrector.push(create_fake_read_set_container(
+            &"three_off".to_string(),
+            &"AAAAAAAGGG".to_string(),
+            &config,
+        ));
+
+        let list = corrector.correct_degenerate_list();
+        assert_eq!(
+            list.get(b"AAAAAAAATT".as_slice()),
+            Some(&b"AAAAAAAAAA".to_vec())
+        );
+        assert_eq!(
+            list.get(b"AAAAAAAGGG".as_slice()),
+            Some(&b"AAAAAAAGGG".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_close_degenerate_list_writes_corrected_reads() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = degenerate_config(10, 2);
+        let mut corrector = create_tag_buffer_with_set_anchor_seq_count(
+            &10,
+            &directory.path().join("buffer.sharded"),
+            &config,
+        );
+
+        let (count, reads) = close_into_shards(&directory, |sender| {
+            corrector.close_degenerate_list(sender)
+        });
+
+        assert_eq!(count, 22);
+        assert_eq!(reads.len(), 22);
+        let mut corrected_counts: HashMap<(Vec<u8>, Vec<u8>), usize> = HashMap::new();
+        reads.iter().for_each(|read| {
+            assert!(read.ordered_unsorted_keys.is_empty());
+            assert_eq!(read.ordered_sorting_keys.len(), 1);
+            let (symbol, key) = &read.ordered_sorting_keys[0];
+            assert_eq!(*symbol, config.symbol);
+            assert_eq!(key.key, config.symbol);
+            *corrected_counts
+                .entry((key.original.clone(), key.corrected.clone()))
+                .or_insert(0) += 1;
+        });
+        let expected: HashMap<(Vec<u8>, Vec<u8>), usize> = [
+            (("AAAAATTTTT", "AAAAATTTTT"), 10),
+            (("AAAAATTTGT", "AAAAATTTTT"), 1),
+            (("GGGGGCCCCC", "GGGGGCCCCC"), 10),
+            (("GCGGGCCCCC", "GGGGGCCCCC"), 1),
+        ]
+        .iter()
+        .map(|((o, c), n)| ((o.as_bytes().to_vec(), c.as_bytes().to_vec()), *n))
+        .collect();
+        assert_eq!(corrected_counts, expected);
+
+        // the corrector is reset so it can take the next UMI group
+        assert!(corrector.buffer.is_empty());
+        assert!(corrector.hash_map.is_empty());
+    }
+
+    #[test]
+    fn test_dump_buffer_to_disk_spills_and_close_reads_back_all_reads() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = degenerate_config(10, 2);
+        let mut corrector =
+            SequenceCorrector::new(directory.path().join("spill.sharded"), &3, config.clone());
+
+        for i in 0..8 {
+            corrector.push(create_fake_read_set_container(
+                &format!("dominant{}", i),
+                &"AAAAAAAAAA".to_string(),
+                &config,
+            ));
+        }
+        corrector.push(create_fake_read_set_container(
+            &"error".to_string(),
+            &"AAAAAAAAAT".to_string(),
+            &config,
+        ));
+
+        // the fourth read overflowed the buffer, everything since went to disk
+        assert!(corrector.buffer.is_empty());
+        assert!(corrector.shard_writer.is_some());
+        assert!(corrector.shard_sender.is_some());
+
+        let (count, reads) = close_into_shards(&directory, |sender| {
+            corrector.close_degenerate_list(sender)
+        });
+
+        assert_eq!(count, 9);
+        assert_eq!(reads.len(), 9);
+        reads.iter().for_each(|read| {
+            assert_eq!(read.ordered_sorting_keys[0].1.corrected, b"AAAAAAAAAA".to_vec());
+        });
+        assert_eq!(
+            reads
+                .iter()
+                .filter(|read| read.aligned_read.read_name == "error")
+                .count(),
+            1
+        );
+        assert!(corrector.shard_writer.is_none());
+        assert!(corrector.shard_sender.is_none());
+    }
+
+    #[test]
+    fn test_add_corrected_known_tag_without_match_is_dropped() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = known_config("unused.txt", 10, 1, false);
+        let corrector =
+            SequenceCorrector::new(directory.path().join("buffer.sharded"), &5000, config.clone());
+        let mut correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
+        correction.insert(b"AAAAAAAAA-".to_vec(), b"AAAAAAAAAA".to_vec());
+
+        let mut results = Vec::new();
+        let (_count, reads) = close_into_shards(&directory, |sender| {
+            // the lookup key is the gapless tag padded to tag.length
+            results.push(corrector.add_corrected(
+                &correction,
+                create_fake_read_set_container(&"hit".to_string(), &"AAAA-AAAAA".to_string(), &config),
+                sender,
+            ));
+            results.push(corrector.add_corrected(
+                &correction,
+                create_fake_read_set_container(&"miss".to_string(), &"CCCCCCCCCC".to_string(), &config),
+                sender,
+            ));
+            0
+        });
+
+        assert_eq!(results, vec![true, false]);
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].aligned_read.read_name, "hit");
+        assert_eq!(reads[0].ordered_sorting_keys[0].1.original, b"AAAAAAAAA-".to_vec());
+        assert_eq!(reads[0].ordered_sorting_keys[0].1.corrected, b"AAAAAAAAAA".to_vec());
+    }
+
+    #[test]
+    #[should_panic(expected = "Unable to find match for key")]
+    fn test_add_corrected_degenerate_tag_without_match_panics() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = degenerate_config(10, 2);
+        let corrector =
+            SequenceCorrector::new(directory.path().join("buffer.sharded"), &5000, config.clone());
+        let correction: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
+        close_into_shards(&directory, |sender| {
+            corrector.add_corrected(
+                &correction,
+                create_fake_read_set_container(&"miss".to_string(), &"CCCCCCCCCC".to_string(), &config),
+                sender,
+            );
+            0
+        });
+    }
+
+    #[test]
+    fn test_close_hamming_known_list_corrects_within_max_distance() {
+        let directory = tempfile::tempdir().unwrap();
+        let (corrected, count) = run_known_list(&directory, 1, false, &known_list_test_tags());
+
+        assert_eq!(count, 3);
+        assert_eq!(corrected.get("exact"), Some(&"AAAAAAAAAA".to_string()));
+        assert_eq!(corrected.get("one_off"), Some(&"AAAAAAAAAA".to_string()));
+        assert_eq!(corrected.get("other"), Some(&"CCCCCGGGGG".to_string()));
+        assert_eq!(corrected.get("two_off"), None);
+        assert_eq!(corrected.get("ambiguous"), None);
+        assert_eq!(corrected.get("unknown"), None);
+    }
+
+    #[test]
+    fn test_close_trie_known_list_corrects_within_max_distance() {
+        let directory = tempfile::tempdir().unwrap();
+        let (corrected, count) = run_known_list(&directory, 1, true, &known_list_test_tags());
+
+        assert_eq!(count, 3);
+        assert_eq!(corrected.get("exact"), Some(&"AAAAAAAAAA".to_string()));
+        assert_eq!(corrected.get("one_off"), Some(&"AAAAAAAAAA".to_string()));
+        assert_eq!(corrected.get("other"), Some(&"CCCCCGGGGG".to_string()));
+        assert_eq!(corrected.get("two_off"), None);
+        assert_eq!(corrected.get("ambiguous"), None);
+        assert_eq!(corrected.get("unknown"), None);
+    }
+
+    #[test]
+    fn test_hamming_and_trie_known_lists_agree_on_substitutions() {
+        for max_distance in [1, 2] {
+            let hamming_directory = tempfile::tempdir().unwrap();
+            let trie_directory = tempfile::tempdir().unwrap();
+            let hamming =
+                run_known_list(&hamming_directory, max_distance, false, &known_list_test_tags());
+            let trie = run_known_list(&trie_directory, max_distance, true, &known_list_test_tags());
+            assert_eq!(hamming, trie, "max_distance {}", max_distance);
+        }
+    }
+
+    #[test]
+    fn test_known_list_max_distance_selects_correctable_tags() {
+        for levenshtein in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (corrected, count) =
+                run_known_list(&directory, 2, levenshtein, &known_list_test_tags());
+            // two mismatches now correct; the ambiguous tag is still tied between two entries
+            assert_eq!(count, 4, "levenshtein {}", levenshtein);
+            assert_eq!(corrected.get("two_off"), Some(&"AAAAAAAAAA".to_string()));
+            assert_eq!(corrected.get("ambiguous"), None);
+            assert_eq!(corrected.get("unknown"), None);
+        }
+    }
+
+    #[test]
+    fn test_close_trie_known_list_corrects_indels_hamming_does_not() {
+        // a deletion in the middle shifts the rest of the tag: one edit, but two Hamming mismatches
+        let tags = vec![("deletion", "CCCCGGGGG")];
+        let trie_directory = tempfile::tempdir().unwrap();
+        let hamming_directory = tempfile::tempdir().unwrap();
+        let (trie, trie_count) = run_known_list(&trie_directory, 1, true, &tags);
+        let (hamming, hamming_count) = run_known_list(&hamming_directory, 1, false, &tags);
+
+        assert_eq!(trie_count, 1);
+        assert_eq!(trie.get("deletion"), Some(&"CCCCCGGGGG".to_string()));
+        assert_eq!(hamming_count, 0);
+        assert!(hamming.is_empty());
+    }
+
+    #[test]
+    fn test_close_hamming_known_list_corrects_tag_with_extra_base() {
+        // push accepts tags up to length + max_distance; the lookup key is truncated to length
+        let directory = tempfile::tempdir().unwrap();
+        let (corrected, count) =
+            run_known_list(&directory, 1, false, &vec![("insertion", "AAAAAAAAAAA")]);
+        assert_eq!(count, 1);
+        assert_eq!(corrected.get("insertion"), Some(&"AAAAAAAAAA".to_string()));
+    }
+
+    #[test]
+    #[ignore = "bug: correct_known_list passes the untruncated tag to Trie::chained_search, which asserts len <= tag length"]
+    fn test_close_trie_known_list_corrects_tag_with_extra_base() {
+        let directory = tempfile::tempdir().unwrap();
+        let (corrected, count) =
+            run_known_list(&directory, 1, true, &vec![("insertion", "AAAAAAAAAAA")]);
+        assert_eq!(count, 1);
+        assert_eq!(corrected.get("insertion"), Some(&"AAAAAAAAAA".to_string()));
+    }
+
+    #[test]
+    #[should_panic(expected = "Called Hamming correction for a Levenshtein-distance known list")]
+    fn test_close_hamming_known_list_rejects_levenshtein_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = known_config("allowlist.txt", 10, 1, true);
+        let mut corrector =
+            SequenceCorrector::new(directory.path().join("buffer.sharded"), &5000, config.clone());
+        let mut lookups = LookupCollection {
+            ret_trie: HashMap::new(),
+            ret_known_lookup: HashMap::new(),
+        };
+        close_into_shards(&directory, |sender| {
+            corrector.close_hamming_known_list(sender, &config, &mut lookups)
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "Called trie correction for a Hamming-distance known list")]
+    fn test_close_trie_known_list_rejects_hamming_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = known_config("allowlist.txt", 10, 1, false);
+        let mut corrector =
+            SequenceCorrector::new(directory.path().join("buffer.sharded"), &5000, config.clone());
+        let mut lookups = LookupCollection {
+            ret_trie: HashMap::new(),
+            ret_known_lookup: HashMap::new(),
+        };
+        close_into_shards(&directory, |sender| {
+            corrector.close_trie_known_list(sender, &config, &mut lookups)
+        });
+    }
+
+    const KNOWN_LIST: [&str; 4] = ["AAAAAAAAAA", "CCCCCGGGGG", "TTTTTTTTCC", "TTTTTTTTAA"];
+
+    fn known_list_test_tags() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("exact", "AAAAAAAAAA"),
+            ("one_off", "AAAAAAAAAT"),
+            ("other", "CCCCCGGGGA"),
+            ("two_off", "AAAAAAAATT"),
+            ("ambiguous", "TTTTTTTTCA"),
+            ("unknown", "GTGTGTGTGT"),
+        ]
+    }
+
+    /// Runs a known-list correction (Hamming or trie) of `tags` against `KNOWN_LIST`, returning
+    /// read name -> corrected tag for every read written out, and the reported read count.
+    fn run_known_list(
+        directory: &tempfile::TempDir,
+        max_distance: usize,
+        levenshtein: bool,
+        tags: &Vec<(&str, &str)>,
+    ) -> (HashMap<String, String>, usize) {
+        let allowlist = directory.path().join("allowlist.txt");
+        std::fs::write(&allowlist, KNOWN_LIST.join("\n")).unwrap();
+        let config = known_config(&allowlist.to_string_lossy(), 10, max_distance, levenshtein);
+
+        let mut lookups = LookupCollection {
+            ret_trie: HashMap::new(),
+            ret_known_lookup: HashMap::new(),
+        };
+        if levenshtein {
+            let mut trie = Trie::new(config.length);
+            KNOWN_LIST.iter().for_each(|known| {
+                trie.insert(known.as_bytes(), None, &config.max_distance);
+            });
+            lookups.ret_trie.insert(KnownLookupKey::from_config(&config), trie);
+        } else {
+            lookups.ret_known_lookup.insert(
+                KnownLookupKey::from_config(&config),
+                crate::umis::known_list::KnownList::new(&config),
+            );
+        }
+
+        let mut corrector =
+            SequenceCorrector::new(directory.path().join("buffer.sharded"), &5000, config.clone());
+        tags.iter().for_each(|(name, tag)| {
+            corrector.push(create_fake_read_set_container(
+                &name.to_string(),
+                &tag.to_string(),
+                &config,
+            ));
+        });
+
+        let (count, reads) = close_into_shards(directory, |sender| {
+            if levenshtein {
+                corrector.close_trie_known_list(sender, &config, &mut lookups)
+            } else {
+                corrector.close_hamming_known_list(sender, &config, &mut lookups)
+            }
+        });
+        assert_eq!(count, reads.len());
+        let corrected = reads
+            .iter()
+            .map(|read| {
+                (
+                    read.aligned_read.read_name.clone(),
+                    u8s(&read.ordered_sorting_keys[0].1.corrected),
+                )
+            })
+            .collect();
+        (corrected, count)
+    }
+
+    /// Hands `close` a sender backed by a shard file in `directory`, then reads back what it wrote.
+    fn close_into_shards<F>(
+        directory: &tempfile::TempDir,
+        close: F,
+    ) -> (usize, Vec<SortingReadSetContainer>)
+    where
+        F: FnOnce(&mut ShardSender<SortingReadSetContainer>) -> usize,
+    {
+        let output = directory.path().join("output.sharded");
+        let mut writer: ShardWriter<SortingReadSetContainer> =
+            ShardWriter::new(&output, 32, 256, 1 << 16).unwrap();
+        let mut sender = writer.get_sender();
+        let count = close(&mut sender);
+        sender.finished().unwrap();
+        writer.finish().unwrap();
+
+        let reader: ShardReader<SortingReadSetContainer> = ShardReader::open(&output).unwrap();
+        let reads = reader
+            .iter_range(&Range::all())
+            .unwrap()
+            .map(|read| read.unwrap())
+            .collect();
+        (count, reads)
+    }
+
+    fn degenerate_config(length: usize, max_distance: usize) -> UMIConfiguration {
+        UMIConfiguration {
+            symbol: '1',
+            file: None,
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::DegenerateTag,
+            length,
+            order: 0,
+            pad: None,
+            max_distance,
+            maximum_subsequences: Some(5000),
+            minimum_collapsing_difference: Some(5.0),
+            max_gaps: None,
+            levenshtein_distance: None,
+        }
+    }
+
+    fn known_config(
+        file: &str,
+        length: usize,
+        max_distance: usize,
+        levenshtein: bool,
+    ) -> UMIConfiguration {
+        UMIConfiguration {
+            symbol: '1',
+            file: Some(file.to_string()),
+            reverse_complement_sequences: None,
+            sort_type: UMISortType::KnownTag,
+            length,
+            order: 0,
+            pad: None,
+            max_distance,
+            maximum_subsequences: Some(5000),
+            minimum_collapsing_difference: None,
+            max_gaps: None,
+            levenshtein_distance: Some(levenshtein),
+        }
+    }
+
     fn create_tag_buffer_with_set_anchor_seq_count(
         count: &usize,
         path: &PathBuf,
