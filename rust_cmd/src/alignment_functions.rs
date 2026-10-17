@@ -3464,4 +3464,603 @@ mod tests {
             alignment.to_sam_record(&0, &std::collections::HashMap::new(), None);
     }
 
+    use crate::alignment_functions::{search_multiple_references, select_best_alignment};
+    use crate::reference::discriminating::DiscriminatingClassifier;
+    use crate::reference::idf::IdfIndex;
+    use crate::reference::poa::PoaGraph;
+
+    fn scored_alignment(ref_name: &str, score: Option<f64>) -> AlignmentWithRef {
+        let mut alignment = cache_alignment(false);
+        alignment.ref_name = ref_name.as_bytes().to_vec();
+        match score {
+            Some(score) => alignment.alignment.as_mut().unwrap().score = score,
+            None => alignment.alignment = None,
+        }
+        alignment
+    }
+
+    #[test]
+    fn select_best_alignment_prefers_strictly_higher_reverse_score() {
+        let chosen = select_best_alignment(
+            Some(scored_alignment("forward", Some(10.0))),
+            Some(scored_alignment("reverse", Some(10.5))),
+        )
+        .unwrap();
+        assert_eq!(chosen.ref_name, b"reverse");
+
+        let chosen = select_best_alignment(
+            Some(scored_alignment("forward", Some(-3.0))),
+            Some(scored_alignment("reverse", Some(-7.0))),
+        )
+        .unwrap();
+        assert_eq!(chosen.ref_name, b"forward");
+    }
+
+    #[test]
+    fn select_best_alignment_keeps_forward_on_tie() {
+        let chosen = select_best_alignment(
+            Some(scored_alignment("forward", Some(42.0))),
+            Some(scored_alignment("reverse", Some(42.0))),
+        )
+        .unwrap();
+        assert_eq!(chosen.ref_name, b"forward");
+    }
+
+    #[test]
+    fn select_best_alignment_treats_missing_alignment_as_worst_score() {
+        let chosen = select_best_alignment(
+            Some(scored_alignment("forward", None)),
+            Some(scored_alignment("reverse", Some(-1000.0))),
+        )
+        .unwrap();
+        assert_eq!(chosen.ref_name, b"reverse");
+
+        // Both empty: the forward candidate is kept, as for any other tie.
+        let chosen = select_best_alignment(
+            Some(scored_alignment("forward", None)),
+            Some(scored_alignment("reverse", None)),
+        )
+        .unwrap();
+        assert_eq!(chosen.ref_name, b"forward");
+    }
+
+    #[test]
+    fn select_best_alignment_passes_through_a_single_candidate() {
+        let only_forward = select_best_alignment(Some(scored_alignment("forward", Some(1.0))), None);
+        assert_eq!(only_forward.unwrap().ref_name, b"forward");
+        let only_reverse = select_best_alignment(None, Some(scored_alignment("reverse", None)));
+        assert_eq!(only_reverse.unwrap().ref_name, b"reverse");
+        assert!(select_best_alignment(None, None).is_none());
+    }
+
+    const PANEL_LEFT: &str = "GATTACAGCTCGAGTCCATG";
+    const PANEL_RIGHT: &str = "CGTAGGCATTGACCTTAGCG";
+    const PANEL_MIDDLES: [(&str, &str); 3] = [
+        ("ref_a", "TCGAATGCAGGT"),
+        ("ref_b", "GCTTAGCATCCA"),
+        ("ref_c", "ATGGCTAACGTC"),
+    ];
+
+    fn panel_sequence(middle: &str) -> String {
+        format!("{}{}{}", PANEL_LEFT, middle, PANEL_RIGHT)
+    }
+
+    /// A three-reference panel sharing flanks and differing in a 12bp core.
+    /// `rename` relabels references so that a router built from the relabelled
+    /// panel deliberately sends reads to a reference other than the best one.
+    fn panel_layout(rename: &[(&str, &str)]) -> SequenceLayout {
+        let mut references = BTreeMap::new();
+        for (name, middle) in PANEL_MIDDLES {
+            let name = rename
+                .iter()
+                .find(|(from, _to)| *from == name)
+                .map(|(_from, to)| *to)
+                .unwrap_or(name);
+            references.insert(
+                name.to_string(),
+                ReferenceRecord {
+                    sequence: panel_sequence(middle),
+                    umi_configurations: BTreeMap::new(),
+                    targets: vec![],
+                    target_types: vec![],
+                    target_locations: None,
+                    prime_edits: BTreeMap::new(),
+                },
+            );
+        }
+        SequenceLayout {
+            aligner: None,
+            merge: None,
+            reads: vec![ReadPosition::Read1 {
+                orientation: AlignedReadOrientation::Forward,
+            }],
+            known_strand: true,
+            references,
+        }
+    }
+
+    fn renamed_panel_pairs(rename: &[(&str, &str)]) -> Vec<(String, Vec<u8>)> {
+        panel_layout(rename)
+            .references
+            .iter()
+            .map(|(name, record)| (name.clone(), record.sequence.as_bytes().to_vec()))
+            .collect()
+    }
+
+    fn search_panel(
+        read: &Vec<u8>,
+        fast_lookup: bool,
+        classifier: Option<&DiscriminatingClassifier>,
+        idf: Option<&IdfIndex>,
+        poa: Option<&PoaGraph>,
+    ) -> AlignmentWithRef {
+        let reference_manager = ReferenceManager::from_yaml_input(&panel_layout(&[]), 8, 4);
+        let mut alignment_matrix = create_scoring_record_3d(
+            reference_manager.longest_ref + 1,
+            read.len() + 1,
+            AlignmentType::Affine,
+            false,
+        );
+        search_multiple_references(
+            &"panel_read".to_string(),
+            read,
+            None,
+            &reference_manager,
+            fast_lookup,
+            &mut alignment_matrix,
+            &AffineScoring::default_dna(),
+            classifier,
+            idf,
+            poa,
+        )
+        .expect("panel read should align")
+    }
+
+    // Relabellings that prove each router's choice is the one aligned to: a
+    // ref_a read is routed to ref_b by POA, to ref_c by IDF and to ref_b by the
+    // discriminating classifier.
+    const POA_ROUTE: [(&str, &str); 2] = [("ref_a", "ref_b"), ("ref_b", "ref_a")];
+    const IDF_ROUTE: [(&str, &str); 2] = [("ref_a", "ref_c"), ("ref_c", "ref_a")];
+    const CLASSIFIER_ROUTE: [(&str, &str); 2] = [("ref_a", "ref_b"), ("ref_b", "ref_a")];
+
+    fn misrouting_poa() -> PoaGraph {
+        let pairs = renamed_panel_pairs(&POA_ROUTE)
+            .into_iter()
+            .map(|(name, sequence)| (name.into_bytes(), sequence))
+            .collect::<Vec<_>>();
+        PoaGraph::from_references(&pairs).unwrap()
+    }
+
+    fn misrouting_idf(min_margin_ratio: f64) -> IdfIndex {
+        let renamed = ReferenceManager::from_yaml_input(&panel_layout(&IDF_ROUTE), 8, 4);
+        IdfIndex::from_reference_manager(&renamed, min_margin_ratio)
+    }
+
+    fn misrouting_classifier() -> DiscriminatingClassifier {
+        DiscriminatingClassifier::new(&renamed_panel_pairs(&CLASSIFIER_ROUTE), 1).unwrap()
+    }
+
+    #[test]
+    fn search_multiple_references_without_routers_picks_best_scoring_reference() {
+        for (name, middle) in PANEL_MIDDLES {
+            let read = panel_sequence(middle).into_bytes();
+            for fast_lookup in [true, false] {
+                let result = search_panel(&read, fast_lookup, None, None, None);
+                assert_eq!(result.ref_name, name.as_bytes(), "fast_lookup = {}", fast_lookup);
+                assert_eq!(result.alignment.unwrap().read_aligned, read);
+                assert!(!result.reverse_complemented);
+                assert!(result.classification.is_none());
+                assert!(result.idf_info.is_none());
+                assert!(result.poa_info.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn search_multiple_references_aligns_to_the_classifier_choice() {
+        let read = panel_sequence(PANEL_MIDDLES[0].1).into_bytes();
+        let classifier = misrouting_classifier();
+        let result = search_panel(&read, false, Some(&classifier), None, None);
+        assert_eq!(result.ref_name, b"ref_b");
+        assert_eq!(result.ref_sequence, panel_sequence(PANEL_MIDDLES[1].1).into_bytes());
+        let info = result.classification.expect("classifier confidence attached");
+        assert!(!info.ambiguous);
+        assert!(info.informative_positions > 0);
+        assert!(result.idf_info.is_none());
+        assert!(result.poa_info.is_none());
+    }
+
+    #[test]
+    fn search_multiple_references_aligns_to_the_idf_choice_before_classifier() {
+        let read = panel_sequence(PANEL_MIDDLES[0].1).into_bytes();
+        let idf = misrouting_idf(0.05);
+        let classifier = misrouting_classifier();
+        let result = search_panel(&read, false, Some(&classifier), Some(&idf), None);
+        assert_eq!(result.ref_name, b"ref_c");
+        let info = result.idf_info.expect("IDF confidence attached");
+        assert!(!info.ambiguous);
+        assert!(info.informative_kmers > 0);
+        // A confident IDF call does not consult the classifier.
+        assert!(result.classification.is_none());
+        assert!(result.poa_info.is_none());
+    }
+
+    #[test]
+    fn search_multiple_references_defers_ambiguous_idf_calls_to_classifier() {
+        let read = panel_sequence(PANEL_MIDDLES[0].1).into_bytes();
+        // A margin floor above 1.0 makes every IDF call ambiguous.
+        let idf = misrouting_idf(1.5);
+        let classifier = misrouting_classifier();
+
+        let refined = search_panel(&read, false, Some(&classifier), Some(&idf), None);
+        assert_eq!(refined.ref_name, b"ref_b");
+        assert!(refined.idf_info.expect("IDF confidence attached").ambiguous);
+        assert!(refined.classification.is_some());
+
+        // Without a classifier the ambiguous IDF best guess is still used.
+        let unrefined = search_panel(&read, false, None, Some(&idf), None);
+        assert_eq!(unrefined.ref_name, b"ref_c");
+        assert!(unrefined.classification.is_none());
+    }
+
+    #[test]
+    fn search_multiple_references_falls_back_to_full_search_without_idf_signal() {
+        // An index over flank-only references has no discriminating k-mers, so
+        // IDF names no reference and every panel reference is aligned.
+        let mut flank_only_layout = panel_layout(&[]);
+        for record in flank_only_layout.references.values_mut() {
+            record.sequence = format!("{}{}", PANEL_LEFT, PANEL_RIGHT);
+        }
+        let flank_reference_manager = ReferenceManager::from_yaml_input(&flank_only_layout, 8, 4);
+        let no_signal = IdfIndex::from_reference_manager(&flank_reference_manager, 0.05);
+
+        let read = panel_sequence(PANEL_MIDDLES[2].1).into_bytes();
+        let result = search_panel(&read, false, None, Some(&no_signal), None);
+        assert_eq!(result.ref_name, b"ref_c");
+        let info = result.idf_info.expect("IDF confidence attached");
+        assert_eq!(info.informative_kmers, 0);
+        assert!(info.ambiguous);
+    }
+
+    #[test]
+    fn search_multiple_references_poa_takes_precedence_over_other_routers() {
+        let read = panel_sequence(PANEL_MIDDLES[0].1).into_bytes();
+        let poa = misrouting_poa();
+        let idf = misrouting_idf(0.05);
+        let classifier = misrouting_classifier();
+        let result = search_panel(&read, true, Some(&classifier), Some(&idf), Some(&poa));
+        assert_eq!(result.ref_name, b"ref_b");
+        let info = result.poa_info.expect("POA confidence attached");
+        assert!(!info.ambiguous);
+        assert!(info.informative_columns > 0);
+        assert!(result.idf_info.is_none());
+        assert!(result.classification.is_none());
+    }
+
+    fn masked_alignment(reference_aligned: &[u8], read_aligned: &[u8]) -> AlignmentWithRef {
+        let mut alignment = cache_alignment(false);
+        alignment.ref_sequence = reference_aligned.to_vec();
+        let result = alignment.alignment.as_mut().unwrap();
+        result.reference_aligned = reference_aligned.to_vec();
+        result.read_aligned = read_aligned.to_vec();
+        result.cigar_string = vec![AlignmentTag::MatchMismatch(reference_aligned.len())];
+        alignment
+    }
+
+    fn two_position_mask(allow_reverse: bool) -> DegenerateCacheMask {
+        DegenerateCacheMask {
+            read_length: 6,
+            positions: vec![1, 4],
+            allow_reverse,
+        }
+    }
+
+    #[test]
+    fn masked_key_collapses_only_degenerate_positions() {
+        let mask = two_position_mask(true);
+        let key = mask.masked_key(b"ACGTAC", false).unwrap();
+        assert_eq!(&key[2..], &[b'A', 0, b'G', b'T', 0, b'C']);
+        assert_eq!(mask.masked_key(b"ATGTGC", false).unwrap(), key);
+        // Any change outside the masked positions yields a different key.
+        for position in [0, 2, 3, 5] {
+            let mut read = b"ACGTAC".to_vec();
+            read[position] = b'N';
+            assert_ne!(mask.masked_key(&read, false).unwrap(), key, "position {}", position);
+        }
+        // Masked keys never collide with the exact key of the same bytes.
+        assert_ne!(key, exact_cache_key(b"ACGTAC"));
+    }
+
+    #[test]
+    fn masked_key_mirrors_positions_for_reverse_reads() {
+        // Reference positions 0 and 2 are raw-read positions 5 and 3 when the
+        // read aligned as its reverse complement.
+        let mask = DegenerateCacheMask {
+            read_length: 6,
+            positions: vec![0, 2],
+            allow_reverse: true,
+        };
+        let forward = mask.masked_key(b"ACGTAC", false).unwrap();
+        let reverse = mask.masked_key(b"ACGTAC", true).unwrap();
+        assert_eq!(&forward[2..], &[0, b'C', 0, b'T', b'A', b'C']);
+        assert_eq!(&reverse[2..], &[b'A', b'C', b'G', 0, b'A', 0]);
+        assert_eq!(mask.masked_key(b"ACGGAT", true).unwrap(), reverse);
+        assert_ne!(mask.masked_key(b"TCGTAC", true).unwrap(), reverse);
+
+        // A symmetric mask gives identical masked bytes, but the orientation tag
+        // keeps forward and reverse entries apart.
+        let symmetric = two_position_mask(true);
+        let forward = symmetric.masked_key(b"ACGTAC", false).unwrap();
+        let reverse = symmetric.masked_key(b"ACGTAC", true).unwrap();
+        assert_eq!(forward[2..], reverse[2..]);
+        assert_ne!(forward, reverse);
+    }
+
+    #[test]
+    fn masked_key_refuses_wrong_length_and_disallowed_reverse() {
+        let mask = two_position_mask(false);
+        assert!(mask.masked_key(b"ACGTA", false).is_none());
+        assert!(mask.masked_key(b"ACGTACG", false).is_none());
+        assert!(mask.masked_key(b"ACGTAC", true).is_none());
+        assert!(mask.masked_key(b"ACGTAC", false).is_some());
+    }
+
+    #[test]
+    fn lookup_keys_tries_exact_then_forward_then_reverse_masks() {
+        let unmasked = AlignmentCache::new(4, None);
+        assert_eq!(unmasked.lookup_keys(b"ACGTAC"), vec![(exact_cache_key(b"ACGTAC"), false)]);
+        assert_eq!(unmasked.masked_positions(), 0);
+
+        let mask = DegenerateCacheMask {
+            read_length: 6,
+            positions: vec![0, 2],
+            allow_reverse: true,
+        };
+        let both = AlignmentCache::new(4, Some(mask.clone()));
+        assert_eq!(
+            both.lookup_keys(b"ACGTAC"),
+            vec![
+                (exact_cache_key(b"ACGTAC"), false),
+                (mask.masked_key(b"ACGTAC", false).unwrap(), true),
+                (mask.masked_key(b"ACGTAC", true).unwrap(), true),
+            ]
+        );
+        assert_eq!(both.masked_positions(), 2);
+
+        let forward_only = AlignmentCache::new(4, Some(two_position_mask(false)));
+        assert_eq!(forward_only.lookup_keys(b"ACGTAC").len(), 2);
+        // A read of the wrong length can only hit the exact key.
+        assert_eq!(forward_only.lookup_keys(b"ACGT"), vec![(exact_cache_key(b"ACGT"), false)]);
+    }
+
+    #[test]
+    fn can_mask_alignment_requires_ungapped_digit_aligned_result() {
+        let mask = two_position_mask(true);
+        assert!(mask.can_mask_alignment(&masked_alignment(b"A0GT1C", b"ACGTAC")));
+
+        let mut no_result = masked_alignment(b"A0GT1C", b"ACGTAC");
+        no_result.alignment = None;
+        assert!(!mask.can_mask_alignment(&no_result));
+        // A masked position that is an ordinary reference base.
+        assert!(!mask.can_mask_alignment(&masked_alignment(b"A0GTAC", b"ACGTAC")));
+        // Gapped alignments shift coordinates, even at the expected length.
+        assert!(!mask.can_mask_alignment(&masked_alignment(b"A0G-1C", b"ACGTAC")));
+        assert!(!mask.can_mask_alignment(&masked_alignment(b"A0GT1C", b"AC-TAC")));
+        assert!(!mask.can_mask_alignment(&masked_alignment(b"A0GT1CA", b"ACGTACA")));
+        let mut inverted = masked_alignment(b"A0GT1C", b"ACGTAC");
+        inverted.alignment.as_mut().unwrap().cigar_string = vec![
+            AlignmentTag::MatchMismatch(1),
+            AlignmentTag::InversionOpen,
+            AlignmentTag::MatchMismatch(4),
+            AlignmentTag::InversionClose,
+            AlignmentTag::MatchMismatch(1),
+        ];
+        assert!(!mask.can_mask_alignment(&inverted));
+    }
+
+    #[test]
+    fn unsafe_alignment_is_cached_under_exact_key_only() {
+        let mut cache = AlignmentCache::new(4, Some(two_position_mask(false)));
+        // The reference lacks a digit at masked position 4, so masking is refused.
+        cache.insert(b"ACGTAC".to_vec(), &masked_alignment(b"A0GTAC", b"ACGTAC"));
+        assert!(cache.entries.contains_key(exact_cache_key(b"ACGTAC").as_slice()));
+        assert!(cache.get(b"ATGTGC", "masked_variant", None).is_none());
+        assert!(cache.get(b"ACGTAC", "exact", None).is_some());
+        assert_eq!(cache.policy_stats().masked_hits, 0);
+    }
+
+    #[test]
+    fn masked_cache_misses_reads_differing_outside_degenerate_positions() {
+        let mut cache = AlignmentCache::new(4, Some(two_position_mask(false)));
+        cache.insert(b"ACGTAC".to_vec(), &masked_alignment(b"A0GT1C", b"ACGTAC"));
+        assert!(!cache.entries.contains_key(exact_cache_key(b"ACGTAC").as_slice()));
+        assert!(cache.get(b"ACCTAC", "outside_mask", None).is_none());
+        let hit = cache
+            .get(b"AGGTTC", "inside_mask", None)
+            .expect("only the degenerate positions differ");
+        assert_eq!(hit.alignment.unwrap().read_aligned, b"AGGTTC");
+        assert_eq!(cache.policy_stats().masked_hits, 1);
+    }
+
+    #[test]
+    fn next_stamp_increases_and_wraps() {
+        let mut cache = AlignmentCache::new(1, None);
+        assert_eq!(cache.next_stamp(), 1);
+        assert_eq!(cache.next_stamp(), 2);
+        cache.clock = u64::MAX - 1;
+        assert_eq!(cache.next_stamp(), u64::MAX);
+        assert_eq!(cache.next_stamp(), 0);
+    }
+
+    fn bucket_contents(cache: &AlignmentCache) -> Vec<Vec<(Vec<u8>, u64)>> {
+        cache
+            .frequency_buckets
+            .iter()
+            .map(|bucket| bucket.iter().cloned().collect())
+            .collect()
+    }
+
+    #[test]
+    fn least_frequent_resident_breaks_ties_by_age_and_skips_stale_records() {
+        let mut empty = AlignmentCache::new(3, None);
+        assert!(empty.least_frequent_resident().is_none());
+
+        let mut cache = AlignmentCache::new(3, None);
+        for sequence in [b"AAAA".as_slice(), b"CCCC".as_slice(), b"GGGG".as_slice()] {
+            cache.insert(sequence.to_vec(), &cache_alignment(false));
+        }
+        assert_eq!(
+            cache.least_frequent_resident(),
+            Some((1, exact_cache_key(b"AAAA"), 1))
+        );
+
+        // Touching AAAA leaves a stale frequency-1 record behind; it is dropped.
+        assert!(cache.get(b"AAAA", "touch", None).is_some());
+        assert_eq!(cache.frequency_records, 4);
+        assert_eq!(
+            cache.least_frequent_resident(),
+            Some((1, exact_cache_key(b"CCCC"), 2))
+        );
+        assert_eq!(cache.frequency_records, 3);
+    }
+
+    #[test]
+    fn least_frequent_resident_rejects_restamped_record_at_same_frequency() {
+        // Capacity 4 keeps all 33 observations below the 40-sample aging point.
+        let mut cache = AlignmentCache::new(4, None);
+        for sequence in [b"AAAA".as_slice(), b"CCCC".as_slice()] {
+            cache.insert(sequence.to_vec(), &cache_alignment(false));
+            for _ in 0..15 {
+                assert!(cache.get(sequence, "saturate", None).is_some());
+            }
+        }
+        // AAAA stays at the saturated count but becomes the most recent entry.
+        assert!(cache.get(b"AAAA", "refresh", None).is_some());
+        assert_eq!(cache.entries[exact_cache_key(b"AAAA").as_slice()].frequency, 15);
+        assert_eq!(cache.entries[exact_cache_key(b"CCCC").as_slice()].frequency, 15);
+        let (frequency, victim, _stamp) = cache.least_frequent_resident().unwrap();
+        assert_eq!((frequency, victim), (15, exact_cache_key(b"CCCC")));
+    }
+
+    #[test]
+    fn rebuild_frequency_buckets_keeps_one_ordered_record_per_resident() {
+        let mut cache = AlignmentCache::new(8, None);
+        for sequence in [b"AAAA".as_slice(), b"CCCC".as_slice(), b"GGGG".as_slice()] {
+            cache.insert(sequence.to_vec(), &cache_alignment(false));
+        }
+        assert!(cache.get(b"AAAA", "touch", None).is_some());
+        assert!(cache.get(b"GGGG", "touch", None).is_some());
+        assert!(cache.get(b"AAAA", "touch", None).is_some());
+        assert_eq!(cache.frequency_records, 6);
+
+        cache.rebuild_frequency_buckets();
+        assert_eq!(cache.frequency_records, 3);
+        let buckets = bucket_contents(&cache);
+        assert_eq!(buckets[1], vec![(exact_cache_key(b"CCCC"), 2)]);
+        assert_eq!(buckets[2], vec![(exact_cache_key(b"GGGG"), 5)]);
+        assert_eq!(buckets[3], vec![(exact_cache_key(b"AAAA"), 6)]);
+        assert_eq!(buckets.iter().map(Vec::len).sum::<usize>(), 3);
+
+        // Within a bucket, records are restored oldest first.
+        let mut tied = AlignmentCache::new(8, None);
+        for sequence in [b"TTTT".as_slice(), b"GGGG".as_slice(), b"CCCC".as_slice()] {
+            tied.insert(sequence.to_vec(), &cache_alignment(false));
+        }
+        tied.frequency_buckets[1].make_contiguous().reverse();
+        tied.rebuild_frequency_buckets();
+        assert_eq!(
+            bucket_contents(&tied)[1],
+            vec![
+                (exact_cache_key(b"TTTT"), 1),
+                (exact_cache_key(b"GGGG"), 2),
+                (exact_cache_key(b"CCCC"), 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn push_frequency_record_compacts_stale_records() {
+        let mut cache = AlignmentCache::new(1, None);
+        cache.insert(b"AAAA".to_vec(), &cache_alignment(false));
+        for _ in 0..8 {
+            assert!(cache.get(b"AAAA", "hit", None).is_some());
+            assert!(cache.frequency_records <= 4);
+            assert_eq!(
+                cache.frequency_records,
+                cache.frequency_buckets.iter().map(|bucket| bucket.len()).sum::<usize>()
+            );
+        }
+        let resident = &cache.entries[exact_cache_key(b"AAAA").as_slice()];
+        let (frequency, stamp) = (resident.frequency, resident.last_used);
+        assert_eq!(
+            cache.least_frequent_resident(),
+            Some((frequency, exact_cache_key(b"AAAA"), stamp))
+        );
+    }
+
+    #[test]
+    fn age_resident_frequencies_refreshes_entries_from_sketch() {
+        let mut cache = AlignmentCache::new(4, None);
+        cache.insert(b"AAAA".to_vec(), &cache_alignment(false));
+        for _ in 0..5 {
+            assert!(cache.get(b"AAAA", "hot", None).is_some());
+        }
+        cache.insert(b"CCCC".to_vec(), &cache_alignment(false));
+        for counter in &mut cache.frequency.counters {
+            *counter >>= 1;
+        }
+        cache.age_resident_frequencies();
+        assert_eq!(cache.entries[exact_cache_key(b"AAAA").as_slice()].frequency, 3);
+        assert_eq!(cache.entries[exact_cache_key(b"CCCC").as_slice()].frequency, 0);
+        assert_eq!(cache.frequency_records, 2);
+        let (frequency, victim, _stamp) = cache.least_frequent_resident().unwrap();
+        assert_eq!((frequency, victim), (0, exact_cache_key(b"CCCC")));
+    }
+
+    #[test]
+    fn sketch_aging_halves_untouched_resident_frequencies() {
+        // Capacity 2 ages the sketch every 20 observations.
+        let mut cache = AlignmentCache::new(2, None);
+        cache.insert(b"AAAA".to_vec(), &cache_alignment(false));
+        cache.insert(b"CCCC".to_vec(), &cache_alignment(false));
+        assert!(cache.get(b"CCCC", "warm", None).is_some());
+        for _ in 0..16 {
+            assert!(cache.get(b"AAAA", "hot", None).is_some());
+        }
+        assert_eq!(cache.entries[exact_cache_key(b"AAAA").as_slice()].frequency, 15);
+        assert_eq!(cache.entries[exact_cache_key(b"CCCC").as_slice()].frequency, 2);
+
+        // The 20th observation halves the sketch; CCCC was not touched but its
+        // resident frequency and bucket must follow.
+        assert!(cache.get(b"AAAA", "hot", None).is_some());
+        assert_eq!(cache.entries[exact_cache_key(b"AAAA").as_slice()].frequency, 7);
+        assert_eq!(cache.entries[exact_cache_key(b"CCCC").as_slice()].frequency, 1);
+        let (frequency, victim, _stamp) = cache.least_frequent_resident().unwrap();
+        assert_eq!((frequency, victim), (1, exact_cache_key(b"CCCC")));
+    }
+
+    #[test]
+    fn aged_frequencies_let_a_new_hot_key_replace_a_formerly_hot_one() {
+        // Capacity 1 ages the sketch every 10 observations, so AAAA's early
+        // popularity decays instead of pinning it.
+        let mut cache = AlignmentCache::new(1, None);
+        cache.insert(b"AAAA".to_vec(), &cache_alignment(false));
+        for _ in 0..30 {
+            assert!(cache.get(b"AAAA", "old_hot", None).is_some());
+        }
+        let resident = cache.entries[exact_cache_key(b"AAAA").as_slice()].frequency;
+        assert!(resident < 15);
+
+        let mut observations = 0;
+        while !cache.entries.contains_key(exact_cache_key(b"CCCC").as_slice()) {
+            assert!(cache.get(b"CCCC", "new_hot", None).is_none());
+            cache.insert(b"CCCC".to_vec(), &cache_alignment(false));
+            observations += 1;
+            assert!(observations <= 15, "CCCC was never admitted");
+        }
+        assert!(!cache.entries.contains_key(exact_cache_key(b"AAAA").as_slice()));
+        assert_eq!(cache.policy_stats().evictions, 1);
+        assert_eq!(cache.policy_stats().rejections, observations - 1);
+    }
+
 }
