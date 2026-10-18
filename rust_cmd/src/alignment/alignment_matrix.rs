@@ -414,14 +414,29 @@ pub fn perform_affine_alignment_bandwidth(alignment: &mut Alignment<Ix3>,
         false => { update_3d_score }
     };
 
+    // the band must be at least as wide as the diagonal's slope so consecutive rows overlap and
+    // the final cell is reachable
+    let min_bandwidth = (sequence2.len() + 1 + sequence1.len()) / (sequence1.len() + 1) + 1;
+    let bandwidth = max(*bandwidth, min_bandwidth) as i64;
+
     for x in 1..(sequence1.len() + 1) {
         let y_bounds = ((x as f64 / (sequence1.len() + 1) as f64) * (sequence2.len() + 1) as f64) as i64;
         //println!("y bounds {} {} {}",y_bounds,(x as f64 / (sequence1.len() + 1) as f64),(sequence2.len() + 1) as f64);
 
-        let y_bounds = (max(1, y_bounds - (*bandwidth as i64)), min(sequence2.len() as i64 + 1, y_bounds + (*bandwidth as i64)));
+        let y_bounds = (max(1, y_bounds - bandwidth), min(sequence2.len() as i64 + 1, y_bounds + bandwidth + 1));
         //println!("y bounds {} {} from x = {} bandwidth = {}",y_bounds.0,y_bounds.1,x,bandwidth);
         assert!(y_bounds.0 >= 0);
         assert!(y_bounds.1 >= 0);
+        // cells outside the band are never scored: make them unusable, with a traceback that still
+        // moves, so a path can't pick up a stale score or stall on a zero-length step
+        for y in (1..(y_bounds.0 as usize)).chain((y_bounds.1 as usize)..(sequence2.len() + 1)) {
+            for z in 0..3 {
+                alignment.scores[[x, y, z]] = MAX_NEG_SCORE;
+            }
+            alignment.traceback[[x, y, 0]] = AlignmentDirection::Diag(1);
+            alignment.traceback[[x, y, 1]] = AlignmentDirection::Up(1);
+            alignment.traceback[[x, y, 2]] = AlignmentDirection::Left(1);
+        }
         for y in (y_bounds.0)..(y_bounds.1) {
             update_function(alignment, sequence1, sequence2, scoring_function, x, y as usize);
         }
@@ -2505,28 +2520,23 @@ mod tests {
         let scoring = test_affine_scoring();
 
         let mut banded = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
-        perform_affine_alignment_bandwidth(&mut banded, &reference, &read, &scoring, &5);
-        // cells outside the band are never computed
-        assert_eq!(banded.scores[[60, 1, 0]], 0.0);
-        assert_eq!(banded.scores[[1, 50, 0]], 0.0);
+        perform_affine_alignment_bandwidth(&mut banded, &reference, &read, &scoring, &3);
+        // cells outside the band are never computed and can't be used
+        assert_eq!(banded.scores[[60, 1, 0]], MAX_NEG_SCORE);
+        assert_eq!(banded.scores[[1, 50, 0]], MAX_NEG_SCORE);
 
         let result = perform_3d_global_traceback(&mut banded, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
-        // the single 10 bp deletion no longer fits, so it is split up and scores below the optimum (435)
-        assert_eq!(result.score, 420.0);
-        assert_eq!(result.cigar_string, vec![
-            AlignmentTag::MatchMismatch(24),
-            AlignmentTag::Del(7),
-            AlignmentTag::MatchMismatch(1),
-            AlignmentTag::Del(3),
-            AlignmentTag::MatchMismatch(25),
-        ]);
+        // the single 10 bp deletion no longer fits, so it scores below the optimum (435)
+        assert!(result.score < 435.0, "score {}", result.score);
+        assert!(result.score > MAX_NEG_SCORE, "score {}", result.score);
+        assert_ne!(result.cigar_string, vec![AlignmentTag::MatchMismatch(25), AlignmentTag::Del(10), AlignmentTag::MatchMismatch(25)]);
         // still a complete global alignment of both sequences
         assert_eq!(ungapped(&result.reference_aligned), reference);
         assert_eq!(ungapped(&result.read_aligned), read);
     }
 
     #[test]
-    fn banded_alignment_zero_band_only_initialises_borders() {
+    fn banded_alignment_zero_band_still_aligns_the_diagonal() {
         let reference = str_to_fasta_vec("ACGTACGT");
         let read = str_to_fasta_vec("ACGTACGT");
         let mut mat = create_scoring_record_3d(9, 9, AlignmentType::Affine, false);
@@ -2534,13 +2544,40 @@ mod tests {
 
         assert_eq!(mat.scores[[8, 0, 1]], -55.0);
         assert_eq!(mat.scores[[0, 8, 2]], -55.0);
-        for x in 1..=8 {
-            for y in 1..=8 {
-                for z in 0..3 {
-                    assert_eq!(mat.scores[[x, y, z]], 0.0);
-                }
-            }
+        // far off the diagonal stays unusable
+        assert_eq!(mat.scores[[8, 1, 0]], MAX_NEG_SCORE);
+        assert_eq!(mat.scores[[1, 8, 0]], MAX_NEG_SCORE);
+
+        let result = perform_3d_global_traceback(&mut mat, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+        assert_eq!(result.cigar_string, vec![AlignmentTag::MatchMismatch(8)]);
+    }
+
+    #[test]
+    fn banded_alignment_narrow_band_terminates_with_complete_alignment() {
+        // bands of 0-2 used to leave unscored cells with zero-length tracebacks, hanging the traceback
+        let reference = str_to_fasta_vec(TEST_AMPLICON);
+        let mut read = reference.clone();
+        read.drain(25..35);
+        let scoring = test_affine_scoring();
+
+        for bandwidth in [0usize, 1, 2] {
+            let mut banded = create_scoring_record_3d(reference.len() + 1, read.len() + 1, AlignmentType::Affine, false);
+            perform_affine_alignment_bandwidth(&mut banded, &reference, &read, &scoring, &bandwidth);
+            let result = perform_3d_global_traceback(&mut banded, None, &reference, &read, &"ref".to_string(), &"read".to_string(), None, None);
+            assert_eq!(ungapped(&result.reference_aligned), reference, "bandwidth {}", bandwidth);
+            assert_eq!(ungapped(&result.read_aligned), read, "bandwidth {}", bandwidth);
+            assert!(result.score > MAX_NEG_SCORE, "bandwidth {} reached an unscored cell", bandwidth);
+            assert!(result.score <= 435.0, "bandwidth {} beat the unbanded optimum", bandwidth);
         }
+
+        // a read much longer than the reference still reaches the final cell
+        let long_read = str_to_fasta_vec(&format!("{}{}", TEST_AMPLICON, TEST_AMPLICON));
+        let short_reference = str_to_fasta_vec(&TEST_AMPLICON[..20]);
+        let mut banded = create_scoring_record_3d(short_reference.len() + 1, long_read.len() + 1, AlignmentType::Affine, false);
+        perform_affine_alignment_bandwidth(&mut banded, &short_reference, &long_read, &scoring, &0);
+        let result = perform_3d_global_traceback(&mut banded, None, &short_reference, &long_read, &"ref".to_string(), &"read".to_string(), None, None);
+        assert_eq!(ungapped(&result.read_aligned), long_read);
+        assert!(result.score > MAX_NEG_SCORE);
     }
 
     #[test]

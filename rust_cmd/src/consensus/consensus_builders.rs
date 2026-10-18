@@ -501,6 +501,12 @@ pub fn calculate_conc_qual_score(alignments: &Vec<Vec<u8>>, quality_scores: &Vec
             bases.push(base);
             quals.push(qual);
         });
+        // a column of only uninformative bases (e.g. N) has no evidence to call from
+        if bases.iter().all(|b| !matches!(b, b'A' | b'a' | b'C' | b'c' | b'G' | b'g' | b'T' | b't' | b'-')) {
+            conc.push(b'N');
+            final_quals.push(0);
+            return;
+        }
         let qual_scores = combine_qual_scores(vec![bases.as_slice()].as_slice(), vec![quals.as_slice()].as_slice(), &reference[index], &0.99);
         let index_of_max: usize = qual_scores
             .iter()
@@ -560,7 +566,7 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], reference_b
         b'C' | b'c' => { allele_props[1] = (*reference_prob).log2(); }
         b'G' | b'g' => { allele_props[2] = (*reference_prob).log2(); }
         b'T' | b't' => { allele_props[3] = (*reference_prob).log2(); }
-        b'N' | b'n' => { allele_props[4] = (*reference_prob).log2(); }
+        // an N reference carries no prior; slot 4 is a gap (deletion) and the reference never has one
         _ => {
             debug!("unaccounted for quality score");
         }
@@ -579,7 +585,8 @@ pub(crate) fn combine_qual_scores(bases: &[&[u8]], scores: &[&[u8]], reference_b
                 b'C' | b'c' => { 1 }
                 b'G' | b'g' => { 2 }
                 b'T' | b't' => { 3 }
-                b'N' | b'n' => { 4 }
+                b'-' => { 4 }
+                // N and anything else is uninformative and skipped
                 _ => {
                     debug!("unaccounted for quality score");
                     5
@@ -1452,13 +1459,30 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "suspected bug: gaps never contribute to the call, so a deletion shared by every read is reported as the reference base"]
     fn test_calculate_conc_qual_score_calls_shared_deletion() {
         let (bases, _) = calculate_conc_qual_score(
             &vec![b"ACGT".to_vec(), b"A-GT".to_vec(), b"A-GT".to_vec(), b"A-GT".to_vec()],
             &vec![vec![40; 3]; 3],
         );
         assert_eq!(bases, b"A-GT");
+    }
+
+    #[test]
+    fn test_calculate_conc_qual_score_n_is_never_called_as_gap() {
+        // N reads at an N reference position: no evidence, so the call is N, not a gap
+        let (bases, quals) = calculate_conc_qual_score(
+            &vec![b"ANGT".to_vec(), b"ANGT".to_vec(), b"ANGT".to_vec()],
+            &vec![vec![40; 4]; 2],
+        );
+        assert_eq!(bases, b"ANGT");
+        assert_eq!(quals[1], 0);
+
+        // an N among real bases is ignored rather than voting
+        let (bases, _) = calculate_conc_qual_score(
+            &vec![b"ACGT".to_vec(), b"ANGT".to_vec(), b"ATGT".to_vec(), b"ATGT".to_vec()],
+            &vec![vec![40; 4]; 3],
+        );
+        assert_eq!(bases, b"ATGT");
     }
 
     #[test]

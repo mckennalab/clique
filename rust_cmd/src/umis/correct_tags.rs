@@ -132,10 +132,12 @@ impl SequenceCorrector {
 
         let mut matched_to_set : HashSet<Vec<u8>> = HashSet::default();
 
+        // search with keys truncated to `tag.length`, as the Hamming and degenerate paths do:
+        // push keeps tags up to `length + max_distance` long, but the trie only holds `length`
         let mut sorted_tags: Vec<(Vec<u8>, usize)> = self
             .hash_map
             .iter()
-            .map(|(x, y)| (x.clone(), *y))
+            .map(|(x, y)| (x.iter().take(self.tag.length).cloned().collect::<Vec<u8>>(), *y))
             .collect::<Vec<(Vec<u8>, usize)>>();
 
         sorted_tags.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1007,7 +1009,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "bug: correct_known_list passes the untruncated tag to Trie::chained_search, which asserts len <= tag length"]
     fn test_close_trie_known_list_corrects_tag_with_extra_base() {
         let directory = tempfile::tempdir().unwrap();
         let (corrected, count) =
